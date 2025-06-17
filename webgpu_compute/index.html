@@ -47,6 +47,9 @@ OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         </style>
         <script src="src/UI.js"></script>
         <script src="src/Renderer.js"></script>
+        <script src="src/ShaderLoader.js"></script>
+        <script src="src/ComputeHelper.js"></script>
+        <script src="src/ParticleSimulation.js"></script>
         <script>
 
 // From https://stackoverflow.com/a/47593316/2315602
@@ -66,362 +69,17 @@ function randomSeed() {
     return (Math.random() * (2 ** 32)) >>> 0;
 }
 
-const particleDescription = 
-`
-struct Particle
-{
-    x : f32,
-    y : f32,
-    vx : f32,
-    vy : f32,
-    species : f32,
-}
-`;
 
-const speciesDescription =
-`
-struct Species
-{
-    color : vec4f,
-}
-`;
 
-const forceDescription =
-`
-struct Force
-{
-    strength: f32, // positive if attraction
-    radius: f32,
-    collisionStrength : f32,
-    collisionRadius: f32,
-}
-`;
+// Shader code moved to separate .wgsl files in src/shaders/
 
-const simulationOptionsDescription =
-`
-struct SimulationOptions
-{
-    left : f32,
-    right : f32,
-    bottom : f32,
-    top : f32,
-    friction : f32,
-    dt : f32,
-    binSize : f32,
-    speciesCount : f32,
-    centralForce : f32,
-    loopingBorders : f32,
-    actionX : f32,
-    actionY : f32,
-    actionVX : f32,
-    actionVY : f32,
-    actionForce : f32,
-    actionRadius : f32,
-}
 
-struct BinInfo
-{
-    gridSize : vec2i,
-    binId : vec2i,
-    binIndex : i32,
-}
 
-fn getBinInfo(position : vec2f, simulationOptions : SimulationOptions) -> BinInfo
-{
-    let gridSize = vec2i(
-        i32(ceil((simulationOptions.right - simulationOptions.left) / simulationOptions.binSize)),
-        i32(ceil((simulationOptions.top - simulationOptions.bottom) / simulationOptions.binSize)),
-    );
 
-    let binId = vec2i(
-        clamp(i32(floor((position.x - simulationOptions.left) / simulationOptions.binSize)), 0, gridSize.x - 1),
-        clamp(i32(floor((position.y - simulationOptions.bottom) / simulationOptions.binSize)), 0, gridSize.y - 1)
-    );
 
-    let binIndex = binId.y * gridSize.x + binId.x;
 
-    return BinInfo(gridSize, binId, binIndex);
-}
-`;
 
-const binFillSizeShader = 
-`
-${particleDescription}
-${simulationOptionsDescription}
 
-@group(0) @binding(0) var<storage, read> particles : array<Particle>;
-
-@group(1) @binding(0) var<uniform> simulationOptions : SimulationOptions;
-
-@group(2) @binding(0) var<storage, read_write> binSize : array<atomic<u32>>;
-
-@compute @workgroup_size(64)
-fn clearBinSize(@builtin(global_invocation_id) id : vec3u)
-{
-    if (id.x >= arrayLength(&binSize)) {
-        return;
-    }
-
-    atomicStore(&binSize[id.x], 0u);
-}
-
-@compute @workgroup_size(64)
-fn fillBinSize(@builtin(global_invocation_id) id : vec3u)
-{
-    if (id.x >= arrayLength(&particles)) {
-        return;
-    }
-
-    let particle = particles[id.x];
-
-    let binIndex = getBinInfo(vec2f(particle.x, particle.y), simulationOptions).binIndex;
-
-    atomicAdd(&binSize[binIndex + 1], 1u);
-}
-`;
-
-const binPrefixSumShader = 
-`
-@group(0) @binding(0) var<storage, read> source : array<u32>;
-@group(0) @binding(1) var<storage, read_write> destination : array<u32>;
-@group(0) @binding(2) var<uniform> stepSize : u32;
-
-@compute @workgroup_size(64)
-fn prefixSumStep(@builtin(global_invocation_id) id : vec3u)
-{
-    if (id.x >= arrayLength(&source)) {
-        return;
-    }
-
-    if (id.x < stepSize) {
-        destination[id.x] = source[id.x];
-    } else {
-        destination[id.x] = source[id.x - stepSize] + source[id.x];
-    }
-}
-`;
-
-const particleSortShader = 
-`
-${particleDescription}
-${simulationOptionsDescription}
-
-@group(0) @binding(0) var<storage, read> source : array<Particle>;
-@group(0) @binding(1) var<storage, read_write> destination : array<Particle>;
-@group(0) @binding(2) var<storage, read> binOffset : array<u32>;
-@group(0) @binding(3) var<storage, read_write> binSize : array<atomic<u32>>;
-
-@group(1) @binding(0) var<uniform> simulationOptions : SimulationOptions;
-
-@compute @workgroup_size(64)
-fn clearBinSize(@builtin(global_invocation_id) id : vec3u)
-{
-    if (id.x >= arrayLength(&binSize)) {
-        return;
-    }
-
-    atomicStore(&binSize[id.x], 0u);
-}
-
-@compute @workgroup_size(64)
-fn sortParticles(@builtin(global_invocation_id) id : vec3u)
-{
-    if (id.x >= arrayLength(&source)) {
-        return;
-    }
-
-    let particle = source[id.x];
-
-    let binIndex = getBinInfo(vec2f(particle.x, particle.y), simulationOptions).binIndex;
-
-    let newParticleIndex = binOffset[binIndex] + atomicAdd(&binSize[binIndex], 1);
-    destination[newParticleIndex] = particle;
-}
-`;
-
-const particleComputeForcesShader = 
-`
-${particleDescription}
-${forceDescription}
-${simulationOptionsDescription}
-
-@group(0) @binding(0) var<storage, read> particlesSource : array<Particle>;
-@group(0) @binding(1) var<storage, read_write> particlesDestination : array<Particle>;
-@group(0) @binding(2) var<storage, read> binOffset : array<u32>;
-@group(0) @binding(3) var<storage, read> forces : array<Force>;
-
-@group(1) @binding(0) var<uniform> simulationOptions : SimulationOptions;
-
-@compute @workgroup_size(64)
-fn computeForces(@builtin(global_invocation_id) id : vec3u)
-{
-    if (id.x >= arrayLength(&particlesSource)) {
-        return;
-    }
-
-    var particle = particlesSource[id.x];
-    let species = u32(particle.species);
-
-    let binInfo = getBinInfo(vec2f(particle.x, particle.y), simulationOptions);
-
-    let loopingBorders = simulationOptions.loopingBorders == 1.0;
-
-    var binXMin = binInfo.binId.x - 1;
-    var binYMin = binInfo.binId.y - 1;
-
-    var binXMax = binInfo.binId.x + 1;
-    var binYMax = binInfo.binId.y + 1;
-
-    if (!loopingBorders) {
-        binXMin = max(0, binXMin);
-        binYMin = max(0, binYMin);
-        binXMax = min(binInfo.gridSize.x - 1, binXMax);
-        binYMax = min(binInfo.gridSize.y - 1, binYMax);
-    }
-
-    let width = simulationOptions.right - simulationOptions.left;
-    let height = simulationOptions.top - simulationOptions.bottom;
-
-    var totalForce = vec2f(0.0, 0.0);
-
-    let particlePosition = vec2f(particle.x, particle.y);
-
-    totalForce -= particlePosition * simulationOptions.centralForce;
-
-    for (var binX = binXMin; binX <= binXMax; binX += 1) {
-        for (var binY = binYMin; binY <= binYMax; binY += 1) {
-            var realBinX = (binX + binInfo.gridSize.x) % binInfo.gridSize.x;
-            var realBinY = (binY + binInfo.gridSize.y) % binInfo.gridSize.y;
-
-            let binIndex = realBinY * binInfo.gridSize.x + realBinX;
-            let binStart = binOffset[binIndex];
-            let binEnd = binOffset[binIndex + 1];
-
-            for (var j = binStart; j < binEnd; j += 1) {
-                if (j == id.x) {
-                    continue;
-                }
-
-                let other = particlesSource[j];
-                let otherSpecies = u32(other.species);
-
-                let force = forces[species * u32(simulationOptions.speciesCount) + otherSpecies];
-
-                var r = vec2f(other.x, other.y) - particlePosition;
-
-                if (loopingBorders) {
-                    if (abs(r.x) >= width * 0.5) {
-                        r.x -= sign(r.x) * width;
-                    }
-
-                    if (abs(r.y) >= height * 0.5) {
-                        r.y -= sign(r.y) * height;
-                    }
-                }
-
-                let d = length(r);
-                if (d > 0.0 && d < force.radius) {
-                    let n = r / d;
-
-                    totalForce += force.strength * max(0.0, 1.0 - d / force.radius) * n;
-                    totalForce -= force.collisionStrength * max(0.0, 1.0 - d / force.collisionRadius) * n;
-                }
-            }
-        }
-    }
-
-    // Assume mass = 1
-    particle.vx += totalForce.x * simulationOptions.dt;
-    particle.vy += totalForce.y * simulationOptions.dt;
-
-    particlesDestination[id.x] = particle;
-}
-`;
-
-const particleAdvanceShader =
-`
-${particleDescription}
-${simulationOptionsDescription}
-
-@group(0) @binding(0) var<storage, read_write> particles : array<Particle>;
-
-@group(1) @binding(0) var<uniform> simulationOptions : SimulationOptions;
-
-@compute @workgroup_size(64)
-fn particleAdvance(@builtin(global_invocation_id) id : vec3u)
-{
-    if (id.x >= arrayLength(&particles)) {
-        return;
-    }
-
-    let width = simulationOptions.right - simulationOptions.left;
-    let height = simulationOptions.top - simulationOptions.bottom;
-
-    var particle = particles[id.x];
-
-    var actionR = vec2f(particle.x, particle.y) - vec2f(simulationOptions.actionX, simulationOptions.actionY);
-    if (simulationOptions.loopingBorders == 1.0) {
-        if (abs(actionR.x) >= width * 0.5) {
-            actionR.x -= sign(actionR.x) * width;
-        }
-
-        if (abs(actionR.y) >= height * 0.5) {
-            actionR.y -= sign(actionR.y) * height;
-        }
-    }
-    let actionFactor = simulationOptions.actionForce * exp(- dot(actionR, actionR) / (simulationOptions.actionRadius * simulationOptions.actionRadius));
-    particle.vx += simulationOptions.actionVX * actionFactor;
-    particle.vy += simulationOptions.actionVY * actionFactor;
-
-    particle.vx *= simulationOptions.friction;
-    particle.vy *= simulationOptions.friction;
-
-    particle.x += particle.vx * simulationOptions.dt;
-    particle.y += particle.vy * simulationOptions.dt;
-
-    let loopingBorders = simulationOptions.loopingBorders == 1.0;
-
-    if (loopingBorders) {
-        if (particle.x < simulationOptions.left) {
-            particle.x += width;
-        }
-    
-        if (particle.x > simulationOptions.right) {
-            particle.x -= width;
-        }
-
-        if (particle.y < simulationOptions.bottom) {
-            particle.y += height;
-        }
-    
-        if (particle.y > simulationOptions.top) {
-            particle.y -= height;
-        }
-    } else {
-        if (particle.x < simulationOptions.left) {
-            particle.x = simulationOptions.left;
-            particle.vx *= -1.0;
-        }
-
-        if (particle.x > simulationOptions.right) {
-            particle.x = simulationOptions.right;
-            particle.vx *= -1.0;
-        }
-
-        if (particle.y < simulationOptions.bottom) {
-            particle.y = simulationOptions.bottom;
-            particle.vy *= -1.0;
-        }
-
-        if (particle.y > simulationOptions.top) {
-            particle.y = simulationOptions.top;
-            particle.vy *= -1.0;
-        }
-    }
-
-    particles[id.x] = particle;
-}
-`;
 
 // Particle rendering shader moved to Renderer.js
 
@@ -465,6 +123,8 @@ var device;
 
 /** @type {Renderer} */
 var renderer;
+/** @type {ParticleSimulation} */
+var simulation;
 
 const hdrFormat = 'rgba16float';
 
@@ -481,80 +141,11 @@ var friction = 10.0;
 var centralForce = 0.0;
 var symmetricForces = false;
 var loopingBorders = false;
-var gridSize = [Math.ceil((simulationBox[0][1] - simulationBox[0][0]) / maxForceRadius), Math.ceil((simulationBox[1][1] - simulationBox[1][0]) / maxForceRadius)];
-var binCount = gridSize[0] * gridSize[1];
-var prefixSumIterations = Math.ceil(Math.ceil(Math.log2(binCount + 1)) / 2) * 2;
 
 var customRules = false;
 
 /** @type {SystemDescription} */
 var currentSystemDescription;
-
-/** @type {GPUBuffer} */
-var speciesBuffer;
-/** @type {GPUBuffer} */
-var forcesBuffer;
-/** @type {GPUBuffer} */
-var particleBuffer;
-/** @type {GPUBuffer} */
-var particleTempBuffer;
-/** @type {GPUBuffer} */
-var binOffsetBuffer;
-/** @type {GPUBuffer} */
-var binOffsetTempBuffer;
-/** @type {GPUBuffer} */
-var binPrefixSumStepSizeBuffer;
-/** @type {GPUBuffer} */
-var simulationOptionsBuffer;
-
-/** @type {GPUBindGroupLayout} */
-var particleBufferBindGroupLayout;
-/** @type {GPUBindGroupLayout} */
-var particleBufferReadOnlyBindGroupLayout;
-/** @type {GPUBindGroupLayout} */
-var cameraBindGroupLayout;
-/** @type {GPUBindGroupLayout} */
-var simulationOptionsBindGroupLayout;
-/** @type {GPUBindGroupLayout} */
-var binFillSizeBindGroupLayout;
-/** @type {GPUBindGroupLayout} */
-var binPrefixSumBindGroupLayout;
-/** @type {GPUBindGroupLayout} */
-var particleSortBindGroupLayout;
-/** @type {GPUBindGroupLayout} */
-var particleComputeForcesBindGroupLayout;
-/** @type {GPUBindGroupLayout} */
-var composeBindGroupLayout;
-
-/** @type {GPUBindGroup} */
-var particleBufferBindGroup;
-/** @type {GPUBindGroup} */
-var particleBufferReadOnlyBindGroup;
-/** @type {GPUBindGroup} */
-var binFillSizeBindGroup;
-/** @type {GPUBindGroup[]} */
-var binPrefixSumBindGroup = [null, null];
-/** @type {GPUBindGroup} */
-var particleSortBindGroup;
-/** @type {GPUBindGroup} */
-var particleComputeForcesBindGroup;
-/** @type {GPUBindGroup} */
-var simulationOptionsBindGroup;
-
-/** @type {GPUComputePipeline} */
-var binClearSizePipeline;
-/** @type {GPUComputePipeline} */
-var binFillSizePipeline;
-/** @type {GPUComputePipeline} */
-var binPrefixSumPipeline;
-/** @type {GPUComputePipeline} */
-var particleSortClearSizePipeline;
-/** @type {GPUComputePipeline} */
-var particleSortPipeline;
-/** @type {GPUComputePipeline} */
-var particleComputeForcesPipeline;
-/** @type {GPUComputePipeline} */
-var particleAdvancePipeline;
 
 // Camera variables moved to Renderer class
 
@@ -628,7 +219,6 @@ function redraw()
     }
 
     const now = window.performance.now() / 1000.0;
-
     const dt = now - lastFrameTimestamp;
     lastFrameTimestamp = now;
 
@@ -636,13 +226,11 @@ function redraw()
     
     // Update camera using Renderer
     const pixelsPerUnit = renderer.updateCameraSmooth(dt, uiState);
-
     UI.updatePanelVisibility(dt);
 
+    // Prepare simulation parameters
     const simDt = Math.min(0.025, dt);
-
     const frictionFactor = Math.exp(- simDt * friction);
-
     const actionX = uiState.actionPoint ? renderer.cameraCenter[0] + renderer.cameraExtentX * (2.0 * uiState.actionPoint[0] / canvas.width - 1.0) : 0.0;
     const actionY = uiState.actionPoint ? renderer.cameraCenter[1] + renderer.cameraExtentY * (1.0 - 2.0 * uiState.actionPoint[1] / canvas.height) : 0.0;
     const actionVX = uiState.actionDrag ? renderer.cameraExtentX * (2.0 * uiState.actionDrag[0] / canvas.width) : 0.0;
@@ -652,7 +240,24 @@ function redraw()
 
     UI.clearActionDrag();
 
-    device.queue.writeBuffer(simulationOptionsBuffer, 0, new Float32Array([simulationBox[0][0], simulationBox[0][1], simulationBox[1][0], simulationBox[1][1], frictionFactor, simDt, maxForceRadius, speciesCount, centralForce, loopingBorders ? 1.0 : 0.0, actionX, actionY, actionVX, actionVY, actionForce, actionRadius]));
+    const simulationParams = {
+        left: simulationBox[0][0],
+        right: simulationBox[0][1], 
+        bottom: simulationBox[1][0],
+        top: simulationBox[1][1],
+        friction: frictionFactor,
+        dt: simDt,
+        binSize: maxForceRadius,
+        speciesCount: speciesCount,
+        centralForce: centralForce,
+        loopingBorders: loopingBorders,
+        actionX: actionX,
+        actionY: actionY,
+        actionVX: actionVX,
+        actionVY: actionVY,
+        actionForce: actionForce,
+        actionRadius: actionRadius
+    };
 
     /** @type {QueryHelper | undefined} */
     var queryHelper;
@@ -665,73 +270,22 @@ function redraw()
         queryHelper.start();
     }
  
-    /** @type {GPUCommandEncoder} */
     const encoder = device.createCommandEncoder({});
 
     if (!paused) {
-        encoder.copyBufferToBuffer(particleBuffer, 0, particleTempBuffer, 0, particleBuffer.size);
-
-        /** @type {GPUComputePassEncoder} */
-        const binningComputePass = encoder.beginComputePass({
-            ...(timestampQuerySupported) && {timestampWrites: queryHelper.next()},
-        });
-
-        binningComputePass.setBindGroup(0, particleBufferReadOnlyBindGroup);
-        binningComputePass.setBindGroup(1, simulationOptionsBindGroup);
-        binningComputePass.setBindGroup(2, binFillSizeBindGroup);
-        binningComputePass.setPipeline(binClearSizePipeline);
-        binningComputePass.dispatchWorkgroups(Math.ceil((binCount + 1) / 64));
-        binningComputePass.setPipeline(binFillSizePipeline);
-        binningComputePass.dispatchWorkgroups(Math.ceil(particleCount / 64));
-
-        binningComputePass.setPipeline(binPrefixSumPipeline);
-        for (var i = 0; i < prefixSumIterations; ++i) {
-            binningComputePass.setBindGroup(0, binPrefixSumBindGroup[i % 2], [i * 256]);
-            binningComputePass.dispatchWorkgroups(Math.ceil((binCount + 1) / 64));
-        }
-
-        binningComputePass.setBindGroup(0, particleSortBindGroup);
-        binningComputePass.setPipeline(particleSortClearSizePipeline);
-        binningComputePass.dispatchWorkgroups(Math.ceil((binCount + 1) / 64));
-        binningComputePass.setPipeline(particleSortPipeline);
-        binningComputePass.dispatchWorkgroups(Math.ceil(particleCount / 64));
-
-        binningComputePass.end();
-
-        /** @type {GPUComputePassEncoder} */
-        const forcesComputePass = encoder.beginComputePass({
-            ...(timestampQuerySupported) && {timestampWrites: queryHelper.next()},
-        });
-
-        forcesComputePass.setBindGroup(0, particleComputeForcesBindGroup);
-        forcesComputePass.setBindGroup(1, simulationOptionsBindGroup);
-        forcesComputePass.setPipeline(particleComputeForcesPipeline);
-        forcesComputePass.dispatchWorkgroups(Math.ceil(particleCount / 64));
-
-        forcesComputePass.end();
-
-        /** @type {GPUComputePassEncoder} */
-        const advanceComputePass = encoder.beginComputePass({
-            ...(timestampQuerySupported) && {timestampWrites: queryHelper.next()},
-        });
-
-        advanceComputePass.setBindGroup(0, particleBufferBindGroup);
-        advanceComputePass.setBindGroup(1, simulationOptionsBindGroup);
-        advanceComputePass.setPipeline(particleAdvancePipeline);
-        advanceComputePass.dispatchWorkgroups(Math.ceil(particleCount / 64));
-
-        advanceComputePass.end();
+        // Run simulation step - all complexity hidden!
+        simulation.step(encoder, simulationParams, queryHelper);
     }
  
     // Render using the Renderer class
-    renderer.render(encoder, particleBufferReadOnlyBindGroup, particleCount, pixelsPerUnit, queryHelper);
+    const particleBindGroup = simulation.getParticleBindGroupForRendering();
+    renderer.render(encoder, particleBindGroup, particleCount, pixelsPerUnit, queryHelper);
 
     if (timestampQuerySupported) {
         encoder.resolveQuerySet(queryHelper.querySet, 0, queryHelper.querySet.count, queryHelper.resolveBuffer, 0);
         encoder.copyBufferToBuffer(queryHelper.resolveBuffer, 0, queryHelper.readBuffer, 0, queryHelper.resolveBuffer.size);
     }
  
-    /** @type {GPUCommandBuffer} */
     const commandBuffer = encoder.finish();
     device.queue.submit([commandBuffer]);
 
@@ -751,9 +305,7 @@ function redraw()
     }
 
     ++framesInFlight;
-
     device.queue.onSubmittedWorkDone().then(() => { --framesInFlight; });
-
     ++frameID;
 
     requestAnimationFrame(redraw);
@@ -766,304 +318,45 @@ function redraw()
  */
 function reloadForces(systemDescription)
 {
-    const forces = new Float32Array(speciesCount * speciesCount * 4);
-    for (var i = 0; i < speciesCount; ++i)
-    {
-        for (var j = 0; j < speciesCount; ++j)
-        {
-            forces[4 * (i * speciesCount + j) + 0] = systemDescription.species[i].forces[j].strength;
-            forces[4 * (i * speciesCount + j) + 1] = systemDescription.species[i].forces[j].radius;
-            forces[4 * (i * speciesCount + j) + 2] = Math.abs(systemDescription.species[i].forces[j].collisionStrength);
-            forces[4 * (i * speciesCount + j) + 3] = systemDescription.species[i].forces[j].collisionRadius;
-        }
-    }
-    
-    device.queue.writeBuffer(forcesBuffer, 0, forces);
+    simulation.updateForces(systemDescription);
 }
 
 /**
  * @param {SystemDescription} systemDescription - System description to load
  */
-function loadSystem(systemDescription)
+async function loadSystem(systemDescription)
 {
     currentSystemDescription = systemDescription;
 
-    particleCount = systemDescription.particleCount;
-    speciesCount = systemDescription.species.length;
-
+    // Set default values if not provided
     if (systemDescription.friction == undefined)
         systemDescription.friction = 10.0;
-
     if (systemDescription.centralForce == undefined)
         systemDescription.centralForce = 0.0;
-
     if (systemDescription.symmetricForces == undefined)
         systemDescription.symmetricForces = false;
-
     if (systemDescription.loopingBorders == undefined)
         systemDescription.loopingBorders = false;
 
+    // Update global variables
+    particleCount = systemDescription.particleCount;
+    speciesCount = systemDescription.species.length;
     friction = systemDescription.friction;
     centralForce = systemDescription.centralForce;
     symmetricForces = systemDescription.symmetricForces;
     loopingBorders = systemDescription.loopingBorders;
-
     customRules = false;
 
+    // Update simulation box
     const W = Math.round(systemDescription.simulationSize[0] / 64) * 32;
     const H = Math.round(systemDescription.simulationSize[1] / 64) * 32;
-
     simulationBox = [[-W, W], [-H, H]];
 
+    // Update UI
     UI.updateUIElements();
 
-    gridSize = [Math.ceil(systemDescription.simulationSize[0] / maxForceRadius), Math.ceil(systemDescription.simulationSize[1] / maxForceRadius)];
-    binCount = gridSize[0] * gridSize[1];
-    prefixSumIterations = Math.ceil(Math.ceil(Math.log2(binCount + 1)) / 2) * 2;
-
-    const species = new Float32Array(speciesCount * 4);
-    for (var i = 0; i < speciesCount; ++i)
-    {
-        species[4 * i + 0] = systemDescription.species[i].color[0];
-        species[4 * i + 1] = systemDescription.species[i].color[1];
-        species[4 * i + 2] = systemDescription.species[i].color[2];
-        species[4 * i + 3] = 1.0;
-    }
-
-    speciesBuffer = device.createBuffer({
-        size: speciesCount * 16,
-        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.STORAGE,
-    });
-    
-    device.queue.writeBuffer(speciesBuffer, 0, species);
-
-    forcesBuffer = device.createBuffer({
-        size: speciesCount * speciesCount * 16,
-        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.STORAGE,
-    });
-
-    reloadForces(systemDescription);
-
-    const initialParticles = new Float32Array(particleCount * 5);
-
-    for (var i = 0; i < speciesCount; ++i)
-        if (systemDescription.species[i].spawnWeight == undefined)
-            systemDescription.species[i].spawnWeight = 1.0;
-
-    var speciesWeightSum = 0.0;
-    for (var i = 0; i < speciesCount; ++i)
-        speciesWeightSum += systemDescription.species[i].spawnWeight;
-
-    for (var i = 0; i < particleCount; ++i)
-    {
-        var speciesPick = Math.random() * speciesWeightSum;
-
-        var speciesId = speciesCount - 1;
-        for (var j = 0; j < speciesCount; ++j) {
-            if (speciesPick < systemDescription.species[j].spawnWeight) {
-                speciesId = j;
-                break;
-            }
-            speciesPick -= systemDescription.species[j].spawnWeight;
-        }
-
-        initialParticles[5 * i + 0] = simulationBox[0][0] + Math.random() * (simulationBox[0][1] - simulationBox[0][0]);
-        initialParticles[5 * i + 1] = simulationBox[1][0] + Math.random() * (simulationBox[1][1] - simulationBox[1][0]);
-        initialParticles[5 * i + 2] = initialVelocity * (-1.0 + Math.random() * 2.0);
-        initialParticles[5 * i + 3] = initialVelocity * (-1.0 + Math.random() * 2.0);
-        initialParticles[5 * i + 4] = speciesId;
-    }
-
-    particleBuffer = device.createBuffer({
-        size: particleCount * 20,
-        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC | GPUBufferUsage.STORAGE,
-    });
-
-    device.queue.writeBuffer(particleBuffer, 0, initialParticles);
-
-    particleTempBuffer = device.createBuffer({
-        size: particleBuffer.size,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-    });
-
-    binOffsetBuffer = device.createBuffer({
-        size: (binCount + 1) * 4,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
-    });
-
-    binOffsetTempBuffer = device.createBuffer({
-        size: (binCount + 1) * 4,
-        usage: GPUBufferUsage.STORAGE,
-    });
-
-    const binPrefixSumStepSize = new Uint32Array(prefixSumIterations * 64);
-    for (var i = 0; i < prefixSumIterations; ++i)
-        binPrefixSumStepSize[i * 64] = Math.pow(2, i);
-
-    binPrefixSumStepSizeBuffer = device.createBuffer({
-        size: prefixSumIterations * 256,
-        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.UNIFORM,
-    });
-
-    device.queue.writeBuffer(binPrefixSumStepSizeBuffer, 0, binPrefixSumStepSize);
-
-    particleBufferBindGroup = device.createBindGroup({
-        layout: particleBufferBindGroupLayout,
-        entries: [
-            {
-                binding: 0,
-                resource: {
-                    buffer: particleBuffer,
-                },
-            },
-            {
-                binding: 1,
-                resource: {
-                    buffer: forcesBuffer,
-                },
-            },
-        ],
-    });
-
-    particleBufferReadOnlyBindGroup = device.createBindGroup({
-        layout: particleBufferReadOnlyBindGroupLayout,
-        entries: [
-            {
-                binding: 0,
-                resource: {
-                    buffer: particleBuffer,
-                },
-            },
-            {
-                binding: 1,
-                resource: {
-                    buffer: speciesBuffer,
-                },
-            },
-        ],
-    });
-
-    binFillSizeBindGroup = device.createBindGroup({
-        layout: binFillSizeBindGroupLayout,
-        entries: [
-            {
-                binding: 0,
-                resource: {
-                    buffer: binOffsetBuffer,
-                },
-            },
-        ],
-    });
-
-    binPrefixSumBindGroup[0] = device.createBindGroup({
-        layout: binPrefixSumBindGroupLayout,
-        entries: [
-            {
-                binding: 0,
-                resource: {
-                    buffer: binOffsetBuffer,
-                },
-            },
-            {
-                binding: 1,
-                resource: {
-                    buffer: binOffsetTempBuffer,
-                },
-            },
-            {
-                binding: 2,
-                resource: {
-                    buffer: binPrefixSumStepSizeBuffer,
-                    size: 4,
-                },
-            },
-        ],
-    });
-
-    binPrefixSumBindGroup[1] = device.createBindGroup({
-        layout: binPrefixSumBindGroupLayout,
-        entries: [
-            {
-                binding: 0,
-                resource: {
-                    buffer: binOffsetTempBuffer,
-                },
-            },
-            {
-                binding: 1,
-                resource: {
-                    buffer: binOffsetBuffer,
-                },
-            },
-            {
-                binding: 2,
-                resource: {
-                    buffer: binPrefixSumStepSizeBuffer,
-                    size: 4,
-                },
-            },
-        ],
-    });
-
-    particleSortBindGroup = device.createBindGroup({
-        layout: particleSortBindGroupLayout,
-        entries: [
-            {
-                binding: 0,
-                resource: {
-                    buffer: particleBuffer,
-                },
-            },
-            {
-                binding: 1,
-                resource: {
-                    buffer: particleTempBuffer,
-                },
-            },
-            {
-                binding: 2,
-                resource: {
-                    buffer: binOffsetBuffer,
-                },
-            },
-            {
-                binding: 3,
-                resource: {
-                    buffer: binOffsetTempBuffer,
-                },
-            },
-        ],
-    });
-
-    particleComputeForcesBindGroup = device.createBindGroup({
-        layout: particleComputeForcesBindGroupLayout,
-        entries: [
-            {
-                binding: 0,
-                resource: {
-                    buffer: particleTempBuffer,
-                },
-            },
-            {
-                binding: 1,
-                resource: {
-                    buffer: particleBuffer,
-                },
-            },
-            {
-                binding: 2,
-                resource: {
-                    buffer: binOffsetBuffer,
-                },
-            },
-            {
-                binding: 3,
-                resource: {
-                    buffer: forcesBuffer,
-                },
-            },
-        ],
-    });
+    // Initialize simulation with new system
+    await simulation.initialize(systemDescription);
 }
 
 /**
@@ -1271,312 +564,17 @@ async function init()
         format: surfaceFormat,
     });
 
-    // Camera buffer moved to Renderer class
+    // Initialize Simulation first
+    simulation = new ParticleSimulation(device);
     
-    simulationOptionsBuffer = device.createBuffer({
-        size: 64,
-        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.UNIFORM,
-    });
-
-    /** @type {GPUShaderModule} */
-    const binFillSizeShaderModule = device.createShaderModule({
-        code: binFillSizeShader,
-    });
-
-    /** @type {GPUShaderModule} */
-    const binPrefixSumShaderModule = device.createShaderModule({
-        code: binPrefixSumShader,
-    });
-
-    /** @type {GPUShaderModule} */
-    const particleSortShaderModule = device.createShaderModule({
-        code: particleSortShader,
-    });
-
-    /** @type {GPUShaderModule} */
-    const particleComputeForcesShaderModule = device.createShaderModule({
-        code: particleComputeForcesShader,
-    });
-
-    /** @type {GPUShaderModule} */
-    const particleAdvanceShaderModule = device.createShaderModule({
-        code: particleAdvanceShader,
-    });
-
-    // Rendering shader modules moved to Renderer class
-
-    particleBufferBindGroupLayout = device.createBindGroupLayout({
-        entries: [
-            {
-                binding: 0,
-                visibility: GPUShaderStage.COMPUTE,
-                buffer: {
-                    type: 'storage',
-                },
-            },
-            {
-                binding: 1,
-                visibility: GPUShaderStage.COMPUTE,
-                buffer: {
-                    type: 'read-only-storage',
-                },
-            },
-        ],
-    });
-
-    particleBufferReadOnlyBindGroupLayout = device.createBindGroupLayout({
-        entries: [
-            {
-                binding: 0,
-                visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
-                buffer: {
-                    type: 'read-only-storage',
-                },
-            },
-            {
-                binding: 1,
-                visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
-                buffer: {
-                    type: 'read-only-storage',
-                },
-            },
-        ],
-    });
-
-    // Camera bind group layout and bind group moved to Renderer class
-
-    simulationOptionsBindGroupLayout = device.createBindGroupLayout({
-        entries: [
-            {
-                binding: 0,
-                visibility: GPUShaderStage.COMPUTE,
-                buffer: {
-                    type: 'uniform',
-                },
-            },
-        ],
-    });
-
-    simulationOptionsBindGroup = device.createBindGroup({
-        layout: simulationOptionsBindGroupLayout,
-        entries: [
-            {
-                binding: 0,
-                resource: {
-                    buffer: simulationOptionsBuffer,
-                },
-            },
-        ],
-    });
-
-    binFillSizeBindGroupLayout = device.createBindGroupLayout({
-        entries: [
-            {
-                binding: 0,
-                visibility: GPUShaderStage.COMPUTE,
-                buffer: {
-                    type: 'storage',
-                },
-            },
-        ],
-    });
-
-    binPrefixSumBindGroupLayout = device.createBindGroupLayout({
-        entries: [
-            {
-                binding: 0,
-                visibility: GPUShaderStage.COMPUTE,
-                buffer: {
-                    type: 'read-only-storage',
-                },
-            },
-            {
-                binding: 1,
-                visibility: GPUShaderStage.COMPUTE,
-                buffer: {
-                    type: 'storage',
-                },
-            },
-            {
-                binding: 2,
-                visibility: GPUShaderStage.COMPUTE,
-                buffer: {
-                    type: 'uniform',
-                    hasDynamicOffset: true,
-                },
-            },
-        ],
-    });
-
-    particleSortBindGroupLayout = device.createBindGroupLayout({
-        entries: [
-            {
-                binding: 0,
-                visibility: GPUShaderStage.COMPUTE,
-                buffer: {
-                    type: 'read-only-storage',
-                },
-            },
-            {
-                binding: 1,
-                visibility: GPUShaderStage.COMPUTE,
-                buffer: {
-                    type: 'storage',
-                },
-            },
-            {
-                binding: 2,
-                visibility: GPUShaderStage.COMPUTE,
-                buffer: {
-                    type: 'read-only-storage',
-                },
-            },
-            {
-                binding: 3,
-                visibility: GPUShaderStage.COMPUTE,
-                buffer: {
-                    type: 'storage',
-                },
-            },
-        ],
-    });
-
-    particleComputeForcesBindGroupLayout = device.createBindGroupLayout({
-        entries: [
-            {
-                binding: 0,
-                visibility: GPUShaderStage.COMPUTE,
-                buffer: {
-                    type: 'read-only-storage',
-                },
-            },
-            {
-                binding: 1,
-                visibility: GPUShaderStage.COMPUTE,
-                buffer: {
-                    type: 'storage',
-                },
-            },
-            {
-                binding: 2,
-                visibility: GPUShaderStage.COMPUTE,
-                buffer: {
-                    type: 'read-only-storage',
-                },
-            },
-            {
-                binding: 3,
-                visibility: GPUShaderStage.COMPUTE,
-                buffer: {
-                    type: 'read-only-storage',
-                },
-            },
-        ],
-    });
-
-    // Rendering bind group layouts moved to Renderer class
-
-    binClearSizePipeline = device.createComputePipeline({
-        layout: device.createPipelineLayout({
-            bindGroupLayouts: [
-                particleBufferReadOnlyBindGroupLayout,
-                simulationOptionsBindGroupLayout,
-                binFillSizeBindGroupLayout,
-            ],
-        }),
-        compute: {
-            module: binFillSizeShaderModule,
-            entryPoint: 'clearBinSize',
-        },
-    });
-
-    binFillSizePipeline = device.createComputePipeline({
-        layout: device.createPipelineLayout({
-            bindGroupLayouts: [
-                particleBufferReadOnlyBindGroupLayout,
-                simulationOptionsBindGroupLayout,
-                binFillSizeBindGroupLayout,
-            ],
-        }),
-        compute: {
-            module: binFillSizeShaderModule,
-            entryPoint: 'fillBinSize',
-        },
-    });
-
-    binPrefixSumPipeline = device.createComputePipeline({
-        layout: device.createPipelineLayout({
-            bindGroupLayouts: [
-                binPrefixSumBindGroupLayout,
-            ],
-        }),
-        compute: {
-            module: binPrefixSumShaderModule,
-            entryPoint: 'prefixSumStep',
-        },
-    });
-
-    particleSortClearSizePipeline = device.createComputePipeline({
-        layout: device.createPipelineLayout({
-            bindGroupLayouts: [
-                particleSortBindGroupLayout,
-                simulationOptionsBindGroupLayout,
-            ],
-        }),
-        compute: {
-            module: particleSortShaderModule,
-            entryPoint: 'clearBinSize',
-        },
-    });
-
-    particleSortPipeline = device.createComputePipeline({
-        layout: device.createPipelineLayout({
-            bindGroupLayouts: [
-                particleSortBindGroupLayout,
-                simulationOptionsBindGroupLayout,
-            ],
-        }),
-        compute: {
-            module: particleSortShaderModule,
-            entryPoint: 'sortParticles',
-        },
-    });
-
-    particleComputeForcesPipeline = device.createComputePipeline({
-        layout: device.createPipelineLayout({
-            bindGroupLayouts: [
-                particleComputeForcesBindGroupLayout,
-                simulationOptionsBindGroupLayout,
-            ],
-        }),
-        compute: {
-            module: particleComputeForcesShaderModule,
-            entryPoint: 'computeForces',
-        },
-    });
-
-    particleAdvancePipeline = device.createComputePipeline({
-        layout: device.createPipelineLayout({
-            bindGroupLayouts: [
-                particleBufferBindGroupLayout,
-                simulationOptionsBindGroupLayout,
-            ],
-        }),
-        compute: {
-            module: particleAdvanceShaderModule,
-            entryPoint: 'particleAdvance',
-        },
-    });
-
-    // Render pipelines and texture creation moved to Renderer class
+    // Load initial system to create bind group layouts
+    await loadSystem(initialSystem());
     
-    // Initialize Renderer
+    // Initialize Renderer with the particle bind group layout
     renderer = new Renderer(device, context, canvas);
-    await renderer.initialize(particleBufferReadOnlyBindGroupLayout);
+    await renderer.initialize(simulation.getParticleBindGroupLayout());
     
     resize();
-
-    loadSystem(initialSystem());
     renderer.centerView(simulationBox);
 
     redraw();
