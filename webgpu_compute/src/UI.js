@@ -1,27 +1,31 @@
-// UI.js - User Interface handling for Particle Life 2D
-// Contains all UI-related functionality including event handlers, panels, and controls
+/**
+ * @fileoverview User Interface management for the particle simulation
+ */
 
 // UI State Variables
-let toolsPanelShown = true;
-let debugPanelShown = false;
-let mouseDrag = null;
-let actionPoint = null;
-let actionDrag = null;
-const activeTouches = new Map();
-let lastTouchTime = null;
-let isDoubleTap = false;
-let zoomAnchor = null;
+var actionPoint = null;
+var actionDrag = null;
+var mouseDrag = null;
+var zoomAnchor = null;
+
+var activeTouches = new Map();
+var lastTouchTime = 0.0;
+var isDoubleTap = false;
+
+var toolsPanelShown = true;
+var lastMenuToggleTime = 0.0;
+var lastPinchDistance = null;
 
 // UI Control Functions
 function pauseClicked() {
-    paused = !paused;
-    document.getElementById("pauseButton").innerText = paused ? "Continue" : "Pause";
+    togglePause();
+    document.getElementById("pauseButton").innerText = isPaused() ? "Continue" : "Pause";
 }
 
 function updateParticleCount() {
     const newParticleCount = Math.round(Math.pow(2, document.getElementById("particleCountSlider").value));
 
-    const systemDescription = currentSystemDescription;
+    const systemDescription = getCurrentSystemDescription();
     systemDescription.particleCount = newParticleCount;
     loadSystem(systemDescription);
 }
@@ -29,7 +33,7 @@ function updateParticleCount() {
 function updateSpeciesCount() {
     const newSpeciesCount = Math.round(document.getElementById("speciesCountSlider").value);
 
-    const systemDescription = currentSystemDescription;
+    const systemDescription = getCurrentSystemDescription();
     systemDescription.species = new Array(newSpeciesCount);
     systemDescription.seed = randomSeed();
     loadSystem(generateSystem(systemDescription));
@@ -39,7 +43,7 @@ function updateSimulationSize() {
     const newWidth = document.getElementById("simulationWidthSlider").value * 64;
     const newHeight = document.getElementById("simulationHeightSlider").value * 64;
 
-    const systemDescription = currentSystemDescription;
+    const systemDescription = getCurrentSystemDescription();
     systemDescription.simulationSize = [newWidth, newHeight];
     loadSystem(systemDescription);
 }
@@ -47,8 +51,8 @@ function updateSimulationSize() {
 function updateFriction() {
     const newFriction = document.getElementById("frictionSlider").value;
 
-    currentSystemDescription.friction = newFriction;
-    friction = newFriction;
+    const systemDescription = getCurrentSystemDescription();
+    systemDescription.friction = newFriction;
 
     document.getElementById("frictionText").innerText = `Friction: ${newFriction}`;
 }
@@ -56,8 +60,8 @@ function updateFriction() {
 function updateCentralForce() {
     const newCentralForce = document.getElementById("centralForceSlider").value / 10.0;
 
-    currentSystemDescription.centralForce = newCentralForce;
-    centralForce = newCentralForce;
+    const systemDescription = getCurrentSystemDescription();
+    systemDescription.centralForce = newCentralForce;
 
     document.getElementById("centralForceText").innerText = `Central force: ${newCentralForce}`;
 }
@@ -65,20 +69,20 @@ function updateCentralForce() {
 function updateSymmetricForces() {
     const newSymmetricForces = document.getElementById("symmetricForces").checked;
 
-    currentSystemDescription.symmetricForces = newSymmetricForces;
-    symmetricForces = newSymmetricForces;
+    const systemDescription = getCurrentSystemDescription();
+    systemDescription.symmetricForces = newSymmetricForces;
 
     if (newSymmetricForces) {
-        symmetrizeForces(currentSystemDescription);
-        reloadForces(currentSystemDescription);
+        symmetrizeForces(systemDescription);
+        reloadForces(systemDescription);
     }
 }
 
 function updateLoopingBorders() {
     const newLoopingBorders = document.getElementById("loopingBorders").checked;
 
-    currentSystemDescription.loopingBorders = newLoopingBorders;
-    loopingBorders = newLoopingBorders;
+    const systemDescription = getCurrentSystemDescription();
+    systemDescription.loopingBorders = newLoopingBorders;
 }
 
 async function saveSettings() {
@@ -93,7 +97,7 @@ async function saveSettings() {
     });
 
     const writable = await handle.createWritable();
-    await writable.write(JSON.stringify(currentSystemDescription, null, 2));
+    await writable.write(JSON.stringify(getCurrentSystemDescription(), null, 2));
     await writable.close();
 }
 
@@ -111,16 +115,15 @@ async function loadSettings() {
     const file = await handle.getFile();
     const data = await file.text();
     loadSystem(JSON.parse(data));
-    customRules = true;
+    // Note: customRules is now managed by Application class
 }
 
 async function copyUrl() {
-    if (customRules) {
-        alert("Copying URL might not work correctly with custom rules");
-    }
-
+    const systemDescription = getCurrentSystemDescription();
+    
     const location = window.location;
-    var url = location.protocol + "//" + location.host + location.pathname + `?particleCount=${particleCount}&speciesCount=${speciesCount}&friction=${friction}&centralForce=${centralForce}&symmetricForces=${symmetricForces}&loopingBorders=${loopingBorders}&seed=${currentSystemDescription.seed}`;
+    var url = location.protocol + "//" + location.host + location.pathname + 
+              `?particleCount=${systemDescription.particleCount}&speciesCount=${systemDescription.species.length}&friction=${systemDescription.friction}&centralForce=${systemDescription.centralForce}&symmetricForces=${systemDescription.symmetricForces}&loopingBorders=${systemDescription.loopingBorders}&seed=${systemDescription.seed}`;
 
     await navigator.clipboard.writeText(url);
 }
@@ -135,19 +138,14 @@ async function fullscreen() {
     }
 }
 
-function centerView() {
-    if (typeof renderer !== 'undefined' && renderer) {
-        renderer.centerView(simulationBox);
-    }
-    zoomAnchor = null;
-}
-
 // UI Event Handlers Setup
 function setupCanvasEventListeners() {
+    const canvas = document.getElementById("mainCanvas");
+    
     canvas.addEventListener('wheel', function(event) {
-        if (typeof renderer !== 'undefined' && renderer) {
+        if (app && app.renderer) {
             const factor = Math.pow(1.25, event.deltaY / 120);
-            renderer.setCameraTarget(renderer.cameraExtentXTarget * factor);
+            app.renderer.setCameraTarget(app.renderer.cameraExtentXTarget * factor);
 
             zoomAnchor = [
                 2.0 * event.x / canvas.width - 1.0,
@@ -190,11 +188,11 @@ function setupCanvasEventListeners() {
             actionPoint = [event.clientX, event.clientY];
         }
 
-        if (mouseDrag && typeof renderer !== 'undefined' && renderer) {
+        if (mouseDrag && app && app.renderer) {
             const delta = [event.clientX - mouseDrag[0], event.clientY - mouseDrag[1]];
 
-            renderer.cameraCenter[0] -= delta[0] / canvas.width * renderer.cameraExtentX * 2.0;
-            renderer.cameraCenter[1] += delta[1] / canvas.height * renderer.cameraExtentY * 2.0;
+            app.renderer.cameraCenter[0] -= delta[0] / canvas.width * app.renderer.cameraExtentX * 2.0;
+            app.renderer.cameraCenter[1] += delta[1] / canvas.height * app.renderer.cameraExtentY * 2.0;
 
             mouseDrag = [event.clientX, event.clientY];
         }
@@ -212,7 +210,7 @@ function setupCanvasEventListeners() {
             toolsPanelShown = !toolsPanelShown;
         }
 
-        const now = window.performance.now() / 1000.0;;
+        const now = window.performance.now() / 1000.0;
 
         if (activeTouches.size == 1 && (now - lastTouchTime) < 0.5) {
             isDoubleTap = true;
@@ -221,148 +219,166 @@ function setupCanvasEventListeners() {
         }
 
         lastTouchTime = now;
-
         event.preventDefault();
-    });
-
-    canvas.addEventListener("touchmove", function(event) {
-        const oldTouches = new Map(activeTouches);
-
-        for (const touch of event.changedTouches) {
-            activeTouches.set(touch.identifier, [touch.pageX, touch.pageY]);
-        }
-
-        if (oldTouches.size == 1 && activeTouches.size == 1) {
-            const oldPosition = oldTouches.entries().next().value[1];
-            const newPosition = activeTouches.entries().next().value[1];
-            const delta = [newPosition[0] - oldPosition[0], newPosition[1] - oldPosition[1]];
-
-            if (isDoubleTap) {
-                actionPoint = newPosition;
-                actionDrag = delta;
-            } else if (typeof renderer !== 'undefined' && renderer) {
-                renderer.cameraCenter[0] -= delta[0] / canvas.width * renderer.cameraExtentX * 2.0;
-                renderer.cameraCenter[1] += delta[1] / canvas.height * renderer.cameraExtentY * 2.0;
-            }
-        }
-
-        if (oldTouches.size == 2 && activeTouches.size == 2) {
-            const oldIterator = oldTouches.entries();
-            const newIterator = activeTouches.entries();
-
-            const oldPosition1 = oldIterator.next().value[1];
-            const oldPosition2 = oldIterator.next().value[1];
-
-            const newPosition1 = newIterator.next().value[1];
-            const newPosition2 = newIterator.next().value[1];
-
-            const oldCenter = [(oldPosition2[0] + oldPosition1[0]) / 2, (oldPosition2[1] + oldPosition1[1]) / 2];
-            const newCenter = [(newPosition2[0] + newPosition1[0]) / 2, (newPosition2[1] + newPosition1[1]) / 2];
-
-            zoomAnchor = [
-                2.0 * newCenter[0] / canvas.width - 1.0,
-                1.0 - 2.0 * newCenter[1] / canvas.height,
-            ];
-
-            const delta = [newCenter[0] - oldCenter[0], newCenter[1] - oldCenter[1]];
-
-            const oldDelta = [oldPosition2[0] - oldPosition1[0], oldPosition2[1] - oldPosition1[1]];
-            const newDelta = [newPosition2[0] - newPosition1[0], newPosition2[1] - newPosition1[1]];
-
-            const oldDistance = Math.sqrt(oldDelta[0] * oldDelta[0] + oldDelta[1] * oldDelta[1]);
-            const newDistance = Math.sqrt(newDelta[0] * newDelta[0] + newDelta[1] * newDelta[1]);
-
-            if (typeof renderer !== 'undefined' && renderer) {
-                renderer.cameraCenter[0] -= delta[0] / canvas.width * renderer.cameraExtentX * 2.0;
-                renderer.cameraCenter[1] += delta[1] / canvas.height * renderer.cameraExtentY * 2.0;
-                renderer.setCameraTarget(renderer.cameraExtentXTarget * oldDistance / newDistance);
-            }
-        }
-
-        event.preventDefault();
-    });
+    }, false);
 
     canvas.addEventListener("touchend", function(event) {
         for (const touch of event.changedTouches) {
             activeTouches.delete(touch.identifier);
         }
-        isDoubleTap = false;
-        actionPoint = null;
-        actionDrag = null;
-        event.preventDefault();
-    });
 
-    canvas.addEventListener("touchcancel", function(event) {
-        for (const touch of event.changedTouches) {
-            activeTouches.delete(touch.identifier);
+        if (activeTouches.size == 0) {
+            if (isDoubleTap) {
+                actionPoint = [touch.pageX, touch.pageY]
+                actionDrag = [0.0, 0.0];
+            } else {
+                actionPoint = null;
+                actionDrag = null;
+            }
+            mouseDrag = null;
         }
-        isDoubleTap = false;
-        actionPoint = null;
-        actionDrag = null;
-    });
+
+        event.preventDefault();
+    }, false);
+
+    canvas.addEventListener("touchmove", function(event) {
+        if (activeTouches.size == 1) {
+            const touch = event.changedTouches[0];
+
+            if (isDoubleTap) {
+                actionDrag = [touch.pageX - actionPoint[0], touch.pageY - actionPoint[1]];
+                actionPoint = [touch.pageX, touch.pageY];
+            } else {
+                if (!mouseDrag) {
+                    mouseDrag = activeTouches.get(touch.identifier);
+                }
+
+                if (app && app.renderer) {
+                    const delta = [touch.pageX - mouseDrag[0], touch.pageY - mouseDrag[1]];
+
+                    app.renderer.cameraCenter[0] -= delta[0] / canvas.width * app.renderer.cameraExtentX * 2.0;
+                    app.renderer.cameraCenter[1] += delta[1] / canvas.height * app.renderer.cameraExtentY * 2.0;
+                }
+
+                mouseDrag = [touch.pageX, touch.pageY];
+            }
+        }
+
+        if (activeTouches.size == 2) {
+            const touches = [...event.changedTouches];
+            const touch1 = touches[0];
+            const touch2 = touches[1];
+
+            const currentDistance = Math.sqrt(
+                (touch1.pageX - touch2.pageX) ** 2 + (touch1.pageY - touch2.pageY) ** 2
+            );
+
+            if (!lastPinchDistance) {
+                lastPinchDistance = currentDistance;
+            } else {
+                const factor = lastPinchDistance / currentDistance;
+                
+                if (app && app.renderer) {
+                    app.renderer.setCameraTarget(app.renderer.cameraExtentXTarget * factor);
+
+                    zoomAnchor = [
+                        2.0 * (touch1.pageX + touch2.pageX) / 2 / canvas.width - 1.0,
+                        1.0 - 2.0 * (touch1.pageY + touch2.pageY) / 2 / canvas.height,
+                    ];
+                }
+
+                lastPinchDistance = currentDistance;
+            }
+        }
+
+        event.preventDefault();
+    }, false);
 }
 
 function setupKeyboardEventListeners() {
-    window.addEventListener('keydown', function(event) {
-        if (event.key == ' ') {
-            pauseClicked();
-            event.preventDefault();
-        }
+    document.addEventListener('keydown', function(event) {
+        if (event.key == 's' || event.key == 'S') {
+            const now = window.performance.now() / 1000.0;
 
-        if (event.key == 'c') {
-            centerView();
-            event.preventDefault();
-        }
+            if ((now - lastMenuToggleTime) > 0.5) {
+                toolsPanelShown = !toolsPanelShown;
+                lastMenuToggleTime = now;
+            }
 
-        if (event.key == 's') {
-            toolsPanelShown = !toolsPanelShown;
-            event.preventDefault();
-        }
-
-        if (event.key == 'd') {
-            debugPanelShown = !debugPanelShown;
             event.preventDefault();
         }
     }, false);
 }
 
 function setupSliderEventListeners() {
-    for (var element of document.getElementsByClassName('slider')) {
-        const self = element;
-        self.addEventListener('wheel', function(event) {
-            self.value = Number(self.value) - event.deltaY / 120;
-            self.dispatchEvent(new Event('input'));
+    const sliders = document.querySelectorAll('input[type="range"]');
+    sliders.forEach(slider => {
+        slider.addEventListener('input', function() {
+            updateSliderText(this);
         });
+    });
+}
+
+function updateSliderText(slider) {
+    // Update text display for sliders
+    switch(slider.id) {
+        case 'particleCountSlider':
+            const particleCount = Math.round(Math.pow(2, slider.value));
+            document.getElementById("particleCountText").innerText = particleCount.toLocaleString() + " particles";
+            break;
+        case 'speciesCountSlider':
+            document.getElementById("speciesCountText").innerText = slider.value + " particle types";
+            break;
+        case 'simulationWidthSlider':
+            document.getElementById("simulationWidthText").innerText = "Width: " + (slider.value * 64);
+            break;
+        case 'simulationHeightSlider':
+            document.getElementById("simulationHeightText").innerText = "Height: " + (slider.value * 64);
+            break;
+        case 'frictionSlider':
+            document.getElementById("frictionText").innerText = "Friction: " + slider.value;
+            break;
+        case 'centralForceSlider':
+            document.getElementById("centralForceText").innerText = "Central force: " + (slider.value / 10.0);
+            break;
     }
 }
 
-// UI Update Functions
 function updateUIElements() {
-    document.getElementById("particleCountSlider").value = Math.round(Math.log2(particleCount));
-    document.getElementById("particleCountText").innerText = `${particleCount} particles`;
-    document.getElementById("speciesCountSlider").value = speciesCount;
-    document.getElementById("speciesCountText").innerText = `${speciesCount} particle types`;
-    document.getElementById("simulationWidthSlider").value = Math.round(currentSystemDescription.simulationSize[0] / 64);
-    document.getElementById("simulationWidthText").innerText = `Width: ${simulationBox[0][1] - simulationBox[0][0]}`;
-    document.getElementById("simulationHeightSlider").value = Math.round(currentSystemDescription.simulationSize[1] / 64);
-    document.getElementById("simulationHeightText").innerText = `Height: ${simulationBox[1][1] - simulationBox[1][0]}`;
-    document.getElementById("frictionSlider").value = Math.round(friction);
-    document.getElementById("frictionText").innerText = `Friction: ${friction}`;
-    document.getElementById("loopingBorders").checked = loopingBorders;
+    const systemDescription = getCurrentSystemDescription();
+    
+    document.getElementById("particleCountSlider").value = Math.log2(systemDescription.particleCount);
+    document.getElementById("particleCountText").innerText = systemDescription.particleCount.toLocaleString() + " particles";
+
+    document.getElementById("speciesCountSlider").value = systemDescription.species.length;
+    document.getElementById("speciesCountText").innerText = systemDescription.species.length + " particle types";
+
+    document.getElementById("simulationWidthSlider").value = Math.round(systemDescription.simulationSize[0] / 64);
+    document.getElementById("simulationWidthText").innerText = "Width: " + systemDescription.simulationSize[0];
+    document.getElementById("simulationHeightSlider").value = Math.round(systemDescription.simulationSize[1] / 64);
+    document.getElementById("simulationHeightText").innerText = "Height: " + systemDescription.simulationSize[1];
+
+    document.getElementById("frictionSlider").value = systemDescription.friction;
+    document.getElementById("frictionText").innerText = "Friction: " + systemDescription.friction;
+
+    document.getElementById("centralForceSlider").value = systemDescription.centralForce * 10;
+    document.getElementById("centralForceText").innerText = "Central force: " + systemDescription.centralForce;
+
+    document.getElementById("symmetricForces").checked = systemDescription.symmetricForces;
+    document.getElementById("loopingBorders").checked = systemDescription.loopingBorders;
 }
 
 function updatePanelVisibility(dt) {
     const toolsPanel = document.getElementById("toolsPanel");
-    var toolsPanelAlpha = Number(toolsPanel.style.opacity);
-    toolsPanelAlpha += ((toolsPanelShown ? 1.0 : 0.0) - toolsPanelAlpha) * (- Math.expm1(- 20 * dt));
-    toolsPanel.style.opacity = toolsPanelAlpha;
-    toolsPanel.style.visibility = (toolsPanelAlpha < 0.01) ? "hidden" : "visible";
-
     const debugPanel = document.getElementById("debugPanel");
-    var debugPanelAlpha = Number(debugPanel.style.opacity);
-    debugPanelAlpha += ((debugPanelShown ? 1.0 : 0.0) - debugPanelAlpha) * (- Math.expm1(- 20 * dt));
-    debugPanel.style.opacity = debugPanelAlpha;
-    debugPanel.style.visibility = (debugPanelAlpha < 0.01) ? "hidden" : "visible";
+
+    if (toolsPanelShown) {
+        toolsPanel.style.display = "block";
+        debugPanel.style.display = "block";
+    } else {
+        toolsPanel.style.display = "none";
+        debugPanel.style.display = "none";
+    }
 }
 
 function getActionState() {
@@ -374,33 +390,29 @@ function getActionState() {
 }
 
 function clearActionDrag() {
-    actionDrag = [0.0, 0.0];
+    actionDrag = null;
 }
 
-// UI Initialization
 function initializeUI() {
-    const buttonsTable = document.getElementById("buttonsTable");
-    const toolsPanelStyle = window.getComputedStyle(document.getElementById("toolsPanel"), null);
-    buttonsTable.style.width = buttonsTable.parentElement.clientWidth - parseFloat(toolsPanelStyle.getPropertyValue('padding-left')) - parseFloat(toolsPanelStyle.getPropertyValue('padding-right'));
-
-    setupSliderEventListeners();
     setupCanvasEventListeners();
     setupKeyboardEventListeners();
+    setupSliderEventListeners();
+}
 
-    if (!document.body.requestFullscreen) {
-        document.getElementById("fullscreenButton").style.display = 'none';
+// centerView function - calls the application's centerView method
+function centerView() {
+    if (window.app && window.app.renderer) {
+        window.app.centerView();
     }
 }
 
-// Export UI state getters for main application
+// Export UI object for global access
 window.UI = {
     initializeUI,
     updateUIElements,
     updatePanelVisibility,
     getActionState,
     clearActionDrag,
-    centerView,
-    pauseClicked,
     updateParticleCount,
     updateSpeciesCount,
     updateSimulationSize,
@@ -408,8 +420,10 @@ window.UI = {
     updateCentralForce,
     updateSymmetricForces,
     updateLoopingBorders,
+    pauseClicked,
     saveSettings,
     loadSettings,
     copyUrl,
-    fullscreen
-};
+    fullscreen,
+    centerView
+}; 
