@@ -45,6 +45,8 @@ OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 padding: 0 !important;
             }
         </style>
+        <script src="src/UI.js"></script>
+        <script src="src/Renderer.js"></script>
         <script>
 
 // From https://stackoverflow.com/a/47593316/2315602
@@ -421,216 +423,48 @@ fn particleAdvance(@builtin(global_invocation_id) id : vec3u)
 }
 `;
 
-const particleRenderShader =
-`
-${particleDescription}
-${speciesDescription}
+// Particle rendering shader moved to Renderer.js
 
-struct Camera
-{
-    center : vec2f,
-    extent : vec2f,
-    pixelsPerUnit : f32,
-}
+// Compose shader moved to Renderer.js
 
-@group(0) @binding(0) var<storage, read> particles : array<Particle>;
-@group(0) @binding(1) var<storage, read> species : array<Species>;
+/**
+ * @typedef {Object} SystemDescription
+ * @property {number} particleCount
+ * @property {Array} species
+ * @property {number[]} simulationSize
+ * @property {number} friction
+ * @property {number} centralForce
+ * @property {boolean} symmetricForces
+ * @property {boolean} loopingBorders
+ * @property {number} seed
+ */
 
-@group(1) @binding(0) var<uniform> camera : Camera;
+/**
+ * @typedef {Object} Species
+ * @property {number[]} color
+ * @property {Force[]} forces
+ * @property {number} spawnWeight
+ */
 
-struct CircleVertexOut
-{
-    @builtin(position) position : vec4f,
-    @location(0) offset : vec2f,
-    @location(1) color : vec4f,
-}
+/**
+ * @typedef {Object} Force
+ * @property {number} strength
+ * @property {number} radius
+ * @property {number} collisionStrength
+ * @property {number} collisionRadius
+ */
 
-const offsets = array<vec2f, 6>(
-    vec2f(-1.0, -1.0),
-    vec2f( 1.0, -1.0),
-    vec2f(-1.0,  1.0),
-    vec2f(-1.0,  1.0),
-    vec2f( 1.0, -1.0),
-    vec2f( 1.0,  1.0),
-);
-
-@vertex
-fn vertexGlow(@builtin(vertex_index) id : u32) -> CircleVertexOut
-{
-    let particle = particles[id / 6u];
-    let offset = offsets[id % 6u];
-    let position = vec2f(particle.x, particle.y) + 12.0 * offset;
-    return CircleVertexOut(
-        vec4f((position - camera.center) / camera.extent, 0.0, 1.0),
-        offset,
-        species[u32(particle.species)].color
-    );
-}
-
-@fragment
-fn fragmentGlow(in : CircleVertexOut) -> @location(0) vec4f
-{
-    let l = length(in.offset);
-    let alpha = exp(- 6.0 * l * l) / 64.0;
-    return in.color * vec4f(1.0, 1.0, 1.0, alpha);
-}
-
-@vertex
-fn vertexCircle(@builtin(vertex_index) id : u32) -> CircleVertexOut
-{
-    let particle = particles[id / 6u];
-    let offset = offsets[id % 6u] * 1.5;
-    let position = vec2f(particle.x, particle.y) + offset;
-    return CircleVertexOut(
-        vec4f((position - camera.center) / camera.extent, 0.0, 1.0),
-        offset,
-        species[u32(particle.species)].color
-    );
-}
-
-@fragment
-fn fragmentCircle(in : CircleVertexOut) -> @location(0) vec4f
-{
-    let alpha = clamp(camera.pixelsPerUnit - length(in.offset) * camera.pixelsPerUnit + 0.5, 0.0, 1.0);
-    return in.color * vec4f(1.0, 1.0, 1.0, alpha);
-}
-
-@vertex
-fn vertexPoint(@builtin(vertex_index) id : u32) -> CircleVertexOut
-{
-    let particle = particles[id / 6u];
-    let offset = 2.0 * offsets[id % 6u] / camera.pixelsPerUnit;
-    let position = vec2f(particle.x, particle.y) + offset;
-    return CircleVertexOut(
-        vec4f((position - camera.center) / camera.extent, 0.0, 1.0),
-        offset,
-        species[u32(particle.species)].color
-    );
-}
-
-const PI = 3.1415926535;
-
-@fragment
-fn fragmentPoint(in : CircleVertexOut) -> @location(0) vec4f
-{
-    let d = max(vec2(0.0), min(in.offset * camera.pixelsPerUnit + 0.5, vec2(camera.pixelsPerUnit)) - max(in.offset * camera.pixelsPerUnit - 0.5, - vec2(camera.pixelsPerUnit)));
-    let alpha = (PI / 4.0) * d.x * d.y;
-    return vec4f(in.color.rgb, in.color.a * alpha);
-}
-`;
-
-const composeShader =
-`
-@group(0) @binding(0) var hdrTexture : texture_2d<f32>;
-@group(0) @binding(1) var blueNoiseTexture : texture_2d<f32>;
-
-const vertices = array<vec2f, 3>(
-    vec2f(-1.0, -1.0),
-    vec2f( 3.0, -1.0),
-    vec2f(-1.0,  3.0),
-);
-
-struct VertexOut
-{
-    @builtin(position) position : vec4f,
-    @location(0) texcoord : vec2f,
-}
-
-@vertex
-fn vertexMain(@builtin(vertex_index) id : u32) -> VertexOut
-{
-    let vertex = vertices[id];
-    return VertexOut(
-        vec4f(vertex, 0.0, 1.0),
-        vertex * 0.5 + vec2f(0.5)
-    );
-}
-
-fn acesTonemap(x : vec3f) -> vec3f
-{
-    let a = 2.51;
-    let b = 0.03;
-    let c = 2.43;
-    let d = 0.59;
-    let e = 0.14;
-    return clamp((x*(a*x+b))/(x*(c*x+d)+e), vec3f(0.0), vec3f(1.0));
-}
-
-fn maxTonemap(x : vec3f) -> vec3f
-{
-    let m = max(1.0, max(x.r, max(x.g, x.b)));
-    return x / m;
-}
-
-fn uncharted2TonemapImpl(x : vec3f) -> vec3f
-{
-    let A = 0.15;
-    let B = 0.50;
-    let C = 0.10;
-    let D = 0.20;
-    let E = 0.02;
-    let F = 0.30;
-
-    return ((x*(A*x+C*B)+D*E)/(x*(A*x+B)+D*F))-E/F;
-}
-
-fn uncharted2Tonemap(x : vec3f) -> vec3f
-{
-    let exposure = 5.0;
-    let white = 10.0;
-    return uncharted2TonemapImpl(x * exposure) / uncharted2TonemapImpl(vec3f(white));
-}
-
-fn agxTonemap(x : vec3f) -> vec3f
-{
-    const M1 = mat3x3f(0.842, 0.0423, 0.0424, 0.0784, 0.878, 0.0784, 0.0792, 0.0792, 0.879);
-    const M2 = mat3x3f(1.2, -0.053, -0.053, -0.1, 1.15, -0.1, -0.1, -0.1, 1.15);
-    const c1 = 12.47393;
-    const c2 = 16.5;
-
-    var result = x * 0.5;
-    result = M1 * result;
-    result = clamp((log2(result) + c1) / c2, vec3f(0.0), vec3f(1.0));
-    result = 0.5 + 0.5 * sin(((-3.11 * result + 6.42) * result - 0.378) * result - 1.44);
-    result = M2 * result;
-
-    return result;
-}
-
-fn dither(x : vec3f, n : f32) -> vec3f
-{
-    let c = x * 255.0;
-    let c0 = floor(c);
-    let c1 = c0 + vec3f(1.0);
-    let dc = c - c0;
-
-    var r = c0;
-    if (dc.r > n) { r.r = c1.r; }
-    if (dc.g > n) { r.g = c1.g; }
-    if (dc.b > n) { r.b = c1.b; }
-
-    return r / 255.0;
-}
-
-@fragment
-fn fragmentMain(in : VertexOut) -> @location(0) vec4f
-{
-    var sample = textureLoad(hdrTexture, vec2i(in.position.xy), 0); 
-    let noise = textureLoad(blueNoiseTexture, vec2u(in.position.xy) % textureDimensions(blueNoiseTexture), 0).r;
-
-    var color = sample.rgb;
-    color = acesTonemap(color);
-    color = pow(color, vec3f(1.0 / 2.2));
-    color = dither(color, noise);
-
-    return vec4f(color, 1.0);
-}
-`;
-
+/** @type {HTMLCanvasElement} */
 var canvas;
+/** @type {GPUCanvasContext} */
 var context;
+/** @type {GPUTextureFormat} */
 var surfaceFormat;
+/** @type {GPUDevice} */
 var device;
+
+/** @type {Renderer} */
+var renderer;
 
 const hdrFormat = 'rgba16float';
 
@@ -653,100 +487,116 @@ var prefixSumIterations = Math.ceil(Math.ceil(Math.log2(binCount + 1)) / 2) * 2;
 
 var customRules = false;
 
+/** @type {SystemDescription} */
 var currentSystemDescription;
 
+/** @type {GPUBuffer} */
 var speciesBuffer;
+/** @type {GPUBuffer} */
 var forcesBuffer;
+/** @type {GPUBuffer} */
 var particleBuffer;
+/** @type {GPUBuffer} */
 var particleTempBuffer;
+/** @type {GPUBuffer} */
 var binOffsetBuffer;
+/** @type {GPUBuffer} */
 var binOffsetTempBuffer;
+/** @type {GPUBuffer} */
 var binPrefixSumStepSizeBuffer;
-var cameraBuffer;
+/** @type {GPUBuffer} */
 var simulationOptionsBuffer;
 
-var blueNoiseTexture;
-var blueNoiseTextureView;
-var hdrTexture;
-var hdrTextureView;
-
+/** @type {GPUBindGroupLayout} */
 var particleBufferBindGroupLayout;
+/** @type {GPUBindGroupLayout} */
 var particleBufferReadOnlyBindGroupLayout;
+/** @type {GPUBindGroupLayout} */
 var cameraBindGroupLayout;
+/** @type {GPUBindGroupLayout} */
 var simulationOptionsBindGroupLayout;
+/** @type {GPUBindGroupLayout} */
 var binFillSizeBindGroupLayout;
+/** @type {GPUBindGroupLayout} */
 var binPrefixSumBindGroupLayout;
+/** @type {GPUBindGroupLayout} */
 var particleSortBindGroupLayout;
+/** @type {GPUBindGroupLayout} */
 var particleComputeForcesBindGroupLayout;
+/** @type {GPUBindGroupLayout} */
 var composeBindGroupLayout;
 
+/** @type {GPUBindGroup} */
 var particleBufferBindGroup;
+/** @type {GPUBindGroup} */
 var particleBufferReadOnlyBindGroup;
+/** @type {GPUBindGroup} */
 var binFillSizeBindGroup;
+/** @type {GPUBindGroup[]} */
 var binPrefixSumBindGroup = [null, null];
+/** @type {GPUBindGroup} */
 var particleSortBindGroup;
+/** @type {GPUBindGroup} */
 var particleComputeForcesBindGroup;
-var cameraBindGroup;
+/** @type {GPUBindGroup} */
 var simulationOptionsBindGroup;
-var composeBindGroup;
 
+/** @type {GPUComputePipeline} */
 var binClearSizePipeline;
+/** @type {GPUComputePipeline} */
 var binFillSizePipeline;
+/** @type {GPUComputePipeline} */
 var binPrefixSumPipeline;
+/** @type {GPUComputePipeline} */
 var particleSortClearSizePipeline;
+/** @type {GPUComputePipeline} */
 var particleSortPipeline;
+/** @type {GPUComputePipeline} */
 var particleComputeForcesPipeline;
+/** @type {GPUComputePipeline} */
 var particleAdvancePipeline;
-var particleRenderGlowPipeline;
-var particleRenderPipeline;
-var particleRenderPointPipeline;
-var composePipeline;
 
-var cameraCenter = [0.0, 0.0];
-var cameraExtentX = simulationBox[0][1];
-var cameraExtentY = simulationBox[1][1];
-var cameraExtentXTarget = simulationBox[0][1];
-
-var zoomAnchor = null;
+// Camera variables moved to Renderer class
 
 var lastFrameTimestamp = window.performance.now() / 1000.0;
-
-var mouseDrag = null;
-var actionPoint = null;
-var actionDrag = null;
-
-const activeTouches = new Map();
-var lastTouchTime = null;
-var isDoubleTap = false;
 
 var frameID = 0;
 var framesInFlight = 0;
 
 var paused = false;
-var toolsPanelShown = true;
-var debugPanelShown = false;
 
+/** @type {QueryHelper[]} */
 var freeQueryHelpers = [];
 
+/**
+ * @constructor
+ * @description Helper class for timestamp queries
+ */
 function QueryHelper()
 {
+    /** @type {GPUQuerySet} */
     this.querySet = device.createQuerySet({
         count: 16,
         type: 'timestamp',
     });
 
+    /** @type {GPUBuffer} */
     this.resolveBuffer = device.createBuffer({
         size: 8 * 16,
         usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.QUERY_RESOLVE,
     });
 
+    /** @type {GPUBuffer} */
     this.readBuffer = device.createBuffer({
         size: 8 * 16,
         usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
     });
 
+    /** @type {number} */
     this.currentIndex = 0;
+    /** @type {() => void} */
     this.start = () => this.currentIndex = 0;
+    /** @type {() => {querySet: GPUQuerySet, beginningOfPassWriteIndex: number, endOfPassWriteIndex: number}} */
     this.next = () => {
         const result = {
             querySet: this.querySet,
@@ -758,6 +608,10 @@ function QueryHelper()
     };
 }
 
+/**
+ * @param {bigint} x - Execution time in nanoseconds
+ * @returns {string} Formatted execution time
+ */
 function formatExecutionTime(x) {
     var result = (Number(x) / 1000000).toFixed(2);
     while (result.length < 5) {
@@ -778,47 +632,29 @@ function redraw()
     const dt = now - lastFrameTimestamp;
     lastFrameTimestamp = now;
 
-    const aspectRatio = canvas.width / canvas.height;
-    const cameraExtentXDelta = (cameraExtentXTarget - cameraExtentX) * (- Math.expm1(- 20 * dt));
+    const uiState = UI.getActionState();
+    
+    // Update camera using Renderer
+    const pixelsPerUnit = renderer.updateCameraSmooth(dt, uiState);
 
-    cameraExtentX += cameraExtentXDelta;
-    cameraExtentY = cameraExtentX / aspectRatio;
-
-    if (zoomAnchor) {
-        cameraCenter[0] -= cameraExtentXDelta * zoomAnchor[0];
-        cameraCenter[1] -= cameraExtentXDelta * zoomAnchor[1] / aspectRatio;
-    }
-
-    const pixelsPerUnit = canvas.width / (2.0 * cameraExtentX);
-
-    const toolsPanel = document.getElementById("toolsPanel");
-    var toolsPanelAlpha = Number(toolsPanel.style.opacity);
-    toolsPanelAlpha += ((toolsPanelShown ? 1.0 : 0.0) - toolsPanelAlpha) * (- Math.expm1(- 20 * dt));
-    toolsPanel.style.opacity = toolsPanelAlpha;
-    toolsPanel.style.visibility = (toolsPanelAlpha < 0.01) ? "hidden" : "visible";
-
-    const debugPanel = document.getElementById("debugPanel");
-    var debugPanelAlpha = Number(debugPanel.style.opacity);
-    debugPanelAlpha += ((debugPanelShown ? 1.0 : 0.0) - debugPanelAlpha) * (- Math.expm1(- 20 * dt));
-    debugPanel.style.opacity = debugPanelAlpha;
-    debugPanel.style.visibility = (debugPanelAlpha < 0.01) ? "hidden" : "visible";
+    UI.updatePanelVisibility(dt);
 
     const simDt = Math.min(0.025, dt);
 
     const frictionFactor = Math.exp(- simDt * friction);
 
-    const actionX = actionPoint ? cameraCenter[0] + cameraExtentX * (2.0 * actionPoint[0] / canvas.width - 1.0) : 0.0;
-    const actionY = actionPoint ? cameraCenter[1] + cameraExtentY * (1.0 - 2.0 * actionPoint[1] / canvas.height) : 0.0;
-    const actionVX = actionDrag ? cameraExtentX * (2.0 * actionDrag[0] / canvas.width) : 0.0;
-    const actionVY = actionDrag ? cameraExtentY * (- 2.0 * actionDrag[1] / canvas.height) : 0.0;
-    const actionForce = actionPoint ? 20.0 : 0.0;
-    const actionRadius = cameraExtentX / 16.0;
+    const actionX = uiState.actionPoint ? renderer.cameraCenter[0] + renderer.cameraExtentX * (2.0 * uiState.actionPoint[0] / canvas.width - 1.0) : 0.0;
+    const actionY = uiState.actionPoint ? renderer.cameraCenter[1] + renderer.cameraExtentY * (1.0 - 2.0 * uiState.actionPoint[1] / canvas.height) : 0.0;
+    const actionVX = uiState.actionDrag ? renderer.cameraExtentX * (2.0 * uiState.actionDrag[0] / canvas.width) : 0.0;
+    const actionVY = uiState.actionDrag ? renderer.cameraExtentY * (- 2.0 * uiState.actionDrag[1] / canvas.height) : 0.0;
+    const actionForce = uiState.actionPoint ? 20.0 : 0.0;
+    const actionRadius = renderer.cameraExtentX / 16.0;
 
-    actionDrag = [0.0, 0.0];
+    UI.clearActionDrag();
 
     device.queue.writeBuffer(simulationOptionsBuffer, 0, new Float32Array([simulationBox[0][0], simulationBox[0][1], simulationBox[1][0], simulationBox[1][1], frictionFactor, simDt, maxForceRadius, speciesCount, centralForce, loopingBorders ? 1.0 : 0.0, actionX, actionY, actionVX, actionVY, actionForce, actionRadius]));
-    device.queue.writeBuffer(cameraBuffer, 0, new Float32Array([cameraCenter[0], cameraCenter[1], cameraExtentX, cameraExtentY, pixelsPerUnit]));
 
+    /** @type {QueryHelper | undefined} */
     var queryHelper;
     if (timestampQuerySupported) {
         if (freeQueryHelpers.length > 0) {
@@ -829,11 +665,13 @@ function redraw()
         queryHelper.start();
     }
  
+    /** @type {GPUCommandEncoder} */
     const encoder = device.createCommandEncoder({});
 
     if (!paused) {
         encoder.copyBufferToBuffer(particleBuffer, 0, particleTempBuffer, 0, particleBuffer.size);
 
+        /** @type {GPUComputePassEncoder} */
         const binningComputePass = encoder.beginComputePass({
             ...(timestampQuerySupported) && {timestampWrites: queryHelper.next()},
         });
@@ -860,6 +698,7 @@ function redraw()
 
         binningComputePass.end();
 
+        /** @type {GPUComputePassEncoder} */
         const forcesComputePass = encoder.beginComputePass({
             ...(timestampQuerySupported) && {timestampWrites: queryHelper.next()},
         });
@@ -871,6 +710,7 @@ function redraw()
 
         forcesComputePass.end();
 
+        /** @type {GPUComputePassEncoder} */
         const advanceComputePass = encoder.beginComputePass({
             ...(timestampQuerySupported) && {timestampWrites: queryHelper.next()},
         });
@@ -883,63 +723,15 @@ function redraw()
         advanceComputePass.end();
     }
  
-    const hdrRenderPass = encoder.beginRenderPass({
-        colorAttachments: [
-            {
-                view: hdrTextureView,
-                clearValue: [0.001, 0.001, 0.001, 0.0],
-                loadOp: 'clear',
-                storeOp: 'store',
-            },
-        ],
-        ...(timestampQuerySupported) && {timestampWrites: queryHelper.next()},
-        // timestampWrites: [
-        //     {
-        //         location: 'beginning',
-        //         querySet: queryHelper.querySet,
-        //         queryIndex: 6,
-        //     },
-        //     {
-        //         location: 'end',
-        //         querySet: queryHelper.querySet,
-        //         queryIndex: 7,
-        //     },
-        // ],
-    });
-    hdrRenderPass.setBindGroup(0, particleBufferReadOnlyBindGroup);
-    hdrRenderPass.setBindGroup(1, cameraBindGroup);
-    hdrRenderPass.setPipeline(particleRenderGlowPipeline);
-    hdrRenderPass.draw(particleCount * 6);
-    if (pixelsPerUnit < 1.0) {
-        hdrRenderPass.setPipeline(particleRenderPointPipeline);
-        hdrRenderPass.draw(particleCount * 6);
-    } else {
-        hdrRenderPass.setPipeline(particleRenderPipeline);
-        hdrRenderPass.draw(particleCount * 6);
-    }
-    hdrRenderPass.end();
- 
-    const composeRenderPass = encoder.beginRenderPass({
-        colorAttachments: [
-            {
-                view: context.getCurrentTexture().createView(),
-                clearValue: [0, 0, 0, 0],
-                loadOp: 'clear',
-                storeOp: 'store',
-            },
-        ],
-        ...(timestampQuerySupported) && {timestampWrites: queryHelper.next()},
-    });
-    composeRenderPass.setBindGroup(0, composeBindGroup);
-    composeRenderPass.setPipeline(composePipeline);
-    composeRenderPass.draw(3);
-    composeRenderPass.end();
+    // Render using the Renderer class
+    renderer.render(encoder, particleBufferReadOnlyBindGroup, particleCount, pixelsPerUnit, queryHelper);
 
     if (timestampQuerySupported) {
         encoder.resolveQuerySet(queryHelper.querySet, 0, queryHelper.querySet.count, queryHelper.resolveBuffer, 0);
         encoder.copyBufferToBuffer(queryHelper.resolveBuffer, 0, queryHelper.readBuffer, 0, queryHelper.resolveBuffer.size);
     }
  
+    /** @type {GPUCommandBuffer} */
     const commandBuffer = encoder.finish();
     device.queue.submit([commandBuffer]);
 
@@ -967,19 +759,11 @@ function redraw()
     requestAnimationFrame(redraw);
 }
 
-function centerView()
-{
-    cameraCenter = [0.0, 0.0];
-    zoomAnchor = null;
 
-    const aspectRatio = document.body.clientWidth / document.body.clientHeight;
 
-    if ((simulationBox[0][1] - simulationBox[0][0]) / (simulationBox[1][1] - simulationBox[1][0]) > aspectRatio)
-        cameraExtentXTarget = simulationBox[0][1];
-    else
-        cameraExtentXTarget = simulationBox[1][1] * aspectRatio;
-}
-
+/**
+ * @param {SystemDescription} systemDescription - System description with force data
+ */
 function reloadForces(systemDescription)
 {
     const forces = new Float32Array(speciesCount * speciesCount * 4);
@@ -997,6 +781,9 @@ function reloadForces(systemDescription)
     device.queue.writeBuffer(forcesBuffer, 0, forces);
 }
 
+/**
+ * @param {SystemDescription} systemDescription - System description to load
+ */
 function loadSystem(systemDescription)
 {
     currentSystemDescription = systemDescription;
@@ -1028,17 +815,7 @@ function loadSystem(systemDescription)
 
     simulationBox = [[-W, W], [-H, H]];
 
-    document.getElementById("particleCountSlider").value = Math.round(Math.log2(particleCount));
-    document.getElementById("particleCountText").innerText = `${particleCount} particles`;
-    document.getElementById("speciesCountSlider").value = speciesCount;
-    document.getElementById("speciesCountText").innerText = `${speciesCount} particle types`;
-    document.getElementById("simulationWidthSlider").value = Math.round(systemDescription.simulationSize[0] / 64);
-    document.getElementById("simulationWidthText").innerText = `Width: ${2 * W}`;
-    document.getElementById("simulationHeightSlider").value = Math.round(systemDescription.simulationSize[1] / 64);
-    document.getElementById("simulationHeightText").innerText = `Height: ${2 * H}`;
-    document.getElementById("frictionSlider").value = Math.round(friction);
-    document.getElementById("frictionText").innerText = `Friction: ${friction}`;
-    document.getElementById("loopingBorders").checked = loopingBorders;
+    UI.updateUIElements();
 
     gridSize = [Math.ceil(systemDescription.simulationSize[0] / maxForceRadius), Math.ceil(systemDescription.simulationSize[1] / maxForceRadius)];
     binCount = gridSize[0] * gridSize[1];
@@ -1289,6 +1066,9 @@ function loadSystem(systemDescription)
     });
 }
 
+/**
+ * @param {SystemDescription} systemDescription - System description to symmetrize
+ */
 function symmetrizeForces(systemDescription)
 {
     const speciesCount = systemDescription.species.length;
@@ -1315,6 +1095,10 @@ function symmetrizeForces(systemDescription)
     }
 }
 
+/**
+ * @param {SystemDescription} systemDescription - System description to generate
+ * @returns {SystemDescription} Generated system description
+ */
 function generateSystem(systemDescription)
 {
     const speciesCount = systemDescription.species.length;
@@ -1359,6 +1143,9 @@ function generateSystem(systemDescription)
     return systemDescription;
 }
 
+/**
+ * @returns {SystemDescription} Initial system description
+ */
 function initialSystem()
 {
     var particleCount = 65536;
@@ -1423,228 +1210,30 @@ function resize()
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
 
-    hdrTexture = device.createTexture({
-        format: hdrFormat,
-        size: [canvas.width, canvas.height, 1],
-        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-    });
-
-    hdrTextureView = hdrTexture.createView({});
-
-    composeBindGroup = device.createBindGroup({
-        layout: composeBindGroupLayout,
-        entries: [
-            {
-                binding: 0,
-                resource: hdrTextureView,
-            },
-            {
-                binding: 1,
-                resource: blueNoiseTextureView,
-            },
-        ],
-    });
+    // Resize renderer resources
+    if (renderer) {
+        renderer.resize();
+    }
 }
 
+/**
+ * @param {string} url - URL of the image to load
+ * @returns {Promise<ImageBitmap>} Loaded image bitmap
+ */
 async function loadImage(url) {
     const res = await fetch(url);
     const blob = await res.blob();
     return await createImageBitmap(blob, { colorSpaceConversion: 'none' });
 }
 
+/**
+ * @returns {Promise<void>} Initialization promise
+ */
 async function init()
 {
-    const buttonsTable = document.getElementById("buttonsTable");
-    const toolsPanelStyle = window.getComputedStyle(document.getElementById("toolsPanel"), null);
-    buttonsTable.style.width = buttonsTable.parentElement.clientWidth - parseFloat(toolsPanelStyle.getPropertyValue('padding-left')) - parseFloat(toolsPanelStyle.getPropertyValue('padding-right'));
-
-    for (var element of document.getElementsByClassName('slider')) {
-        const self = element;
-        self.addEventListener('wheel', function(event) {
-            self.value = Number(self.value) - event.deltaY / 120;
-            self.dispatchEvent(new Event('input'));
-        });
-    }
-
-    if (!document.body.requestFullscreen) {
-        document.getElementById("fullscreenButton").style.display = 'none';
-    }
-
     canvas = document.getElementById("mainCanvas");
-
-    canvas.addEventListener('wheel', function(event) {
-        const factor = Math.pow(1.25, event.deltaY / 120);
-        cameraExtentXTarget *= factor;
-
-        zoomAnchor = [
-            2.0 * event.x / canvas.width - 1.0,
-            1.0 - 2.0 * event.y / canvas.height,
-        ];
-
-        event.preventDefault();
-    }, false);    
-
-    canvas.addEventListener('mousedown', function(event) {
-        if (event.button == 0) {
-            actionPoint = [event.clientX, event.clientY];
-            actionDrag = [0.0, 0.0];
-        }
-        if (event.button == 2) {
-            mouseDrag = [event.clientX, event.clientY];
-        }
-        event.preventDefault();
-    }, false);
-
-    canvas.addEventListener('mouseup', function(event) {
-        if (event.button == 0) {
-            actionPoint = null;
-            actionDrag = null;
-        }
-        if (event.button == 2) {
-            mouseDrag = null;
-        }
-        event.preventDefault();
-    }, false);
-
-    canvas.addEventListener('contextmenu', function(event) {
-        event.preventDefault();
-    }, false);
-
-    canvas.addEventListener('mousemove', function(event) {
-        if (actionPoint) {
-            actionDrag = [event.clientX - actionPoint[0], event.clientY - actionPoint[1]];
-            actionPoint = [event.clientX, event.clientY];
-        }
-
-        if (mouseDrag) {
-            const delta = [event.clientX - mouseDrag[0], event.clientY - mouseDrag[1]];
-
-            cameraCenter[0] -= delta[0] / canvas.width * cameraExtentX * 2.0;
-            cameraCenter[1] += delta[1] / canvas.height * cameraExtentY * 2.0;
-
-            mouseDrag = [event.clientX, event.clientY];
-        }
-
-        event.preventDefault();
-    }, false);
-
-    canvas.addEventListener("touchstart", function(event) {
-        for (const touch of event.changedTouches) {
-            activeTouches.set(touch.identifier, [touch.pageX, touch.pageY]);
-        }
-
-        if (activeTouches.size == 3) {
-            toolsPanelShown = !toolsPanelShown;
-        }
-
-        const now = window.performance.now() / 1000.0;;
-
-        if (activeTouches.size == 1 && (now - lastTouchTime) < 0.5) {
-            isDoubleTap = true;
-        } else {
-            isDoubleTap = false;
-        }
-
-        lastTouchTime = now;
-
-        event.preventDefault();
-    });
-
-    canvas.addEventListener("touchmove", function(event) {
-        const oldTouches = new Map(activeTouches);
-
-        for (const touch of event.changedTouches) {
-            activeTouches.set(touch.identifier, [touch.pageX, touch.pageY]);
-        }
-
-        if (oldTouches.size == 1 && activeTouches.size == 1) {
-            const oldPosition = oldTouches.entries().next().value[1];
-            const newPosition = activeTouches.entries().next().value[1];
-            const delta = [newPosition[0] - oldPosition[0], newPosition[1] - oldPosition[1]];
-
-            if (isDoubleTap) {
-                actionPoint = newPosition;
-                actionDrag = delta;
-            } else {
-                cameraCenter[0] -= delta[0] / canvas.width * cameraExtentX * 2.0;
-                cameraCenter[1] += delta[1] / canvas.height * cameraExtentY * 2.0;
-            }
-        }
-
-        if (oldTouches.size == 2 && activeTouches.size == 2) {
-            const oldIterator = oldTouches.entries();
-            const newIterator = activeTouches.entries();
-
-            const oldPosition1 = oldIterator.next().value[1];
-            const oldPosition2 = oldIterator.next().value[1];
-
-            const newPosition1 = newIterator.next().value[1];
-            const newPosition2 = newIterator.next().value[1];
-
-            const oldCenter = [(oldPosition2[0] + oldPosition1[0]) / 2, (oldPosition2[1] + oldPosition1[1]) / 2];
-            const newCenter = [(newPosition2[0] + newPosition1[0]) / 2, (newPosition2[1] + newPosition1[1]) / 2];
-
-            zoomAnchor = [
-                2.0 * newCenter[0] / canvas.width - 1.0,
-                1.0 - 2.0 * newCenter[1] / canvas.height,
-            ];
-
-            const delta = [newCenter[0] - oldCenter[0], newCenter[1] - oldCenter[1]];
-
-            const oldDelta = [oldPosition2[0] - oldPosition1[0], oldPosition2[1] - oldPosition1[1]];
-            const newDelta = [newPosition2[0] - newPosition1[0], newPosition2[1] - newPosition1[1]];
-
-            const oldDistance = Math.sqrt(oldDelta[0] * oldDelta[0] + oldDelta[1] * oldDelta[1]);
-            const newDistance = Math.sqrt(newDelta[0] * newDelta[0] + newDelta[1] * newDelta[1]);
-
-            cameraCenter[0] -= delta[0] / canvas.width * cameraExtentX * 2.0;
-            cameraCenter[1] += delta[1] / canvas.height * cameraExtentY * 2.0;
-            cameraExtentXTarget *= oldDistance / newDistance;
-        }
-
-        event.preventDefault();
-    });
-
-    canvas.addEventListener("touchend", function(event) {
-        for (const touch of event.changedTouches) {
-            activeTouches.delete(touch.identifier);
-        }
-        isDoubleTap = false;
-        actionPoint = null;
-        actionDrag = null;
-        event.preventDefault();
-    });
-
-    canvas.addEventListener("touchcancel", function(event) {
-        for (const touch of event.changedTouches) {
-            activeTouches.delete(touch.identifier);
-        }
-        isDoubleTap = false;
-        actionPoint = null;
-        actionDrag = null;
-    });
-
-    window.addEventListener('keydown',function(event) {
-        if (event.key == ' ') {
-            pauseClicked();
-            event.preventDefault();
-        }
-
-        if (event.key == 'c') {
-            centerView();
-            event.preventDefault();
-        }
-
-        if (event.key == 's') {
-            toolsPanelShown = !toolsPanelShown;
-            event.preventDefault();
-        }
-
-        if (event.key == 'd') {
-            debugPanelShown = !debugPanelShown;
-            event.preventDefault();
-        }
-    }, false);
+    
+    UI.initializeUI();
 
     if (!navigator) {
         alert("Your browser doesn't support WebGPU (navigator is null)");
@@ -1656,6 +1245,7 @@ async function init()
         return;
     }
 
+    /** @type {GPUAdapter | null} */
     const adapter = await navigator.gpu?.requestAdapter();
 
     if (!adapter) {
@@ -1681,43 +1271,39 @@ async function init()
         format: surfaceFormat,
     });
 
-    cameraBuffer = device.createBuffer({
-        size: 24,
-        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.UNIFORM,
-    });
-
+    // Camera buffer moved to Renderer class
+    
     simulationOptionsBuffer = device.createBuffer({
         size: 64,
         usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.UNIFORM,
     });
 
+    /** @type {GPUShaderModule} */
     const binFillSizeShaderModule = device.createShaderModule({
         code: binFillSizeShader,
     });
 
+    /** @type {GPUShaderModule} */
     const binPrefixSumShaderModule = device.createShaderModule({
         code: binPrefixSumShader,
     });
 
+    /** @type {GPUShaderModule} */
     const particleSortShaderModule = device.createShaderModule({
         code: particleSortShader,
     });
 
+    /** @type {GPUShaderModule} */
     const particleComputeForcesShaderModule = device.createShaderModule({
         code: particleComputeForcesShader,
     });
 
+    /** @type {GPUShaderModule} */
     const particleAdvanceShaderModule = device.createShaderModule({
         code: particleAdvanceShader,
     });
 
-    const particleRenderShaderModule = device.createShaderModule({
-        code: particleRenderShader,
-    });
-
-    const composeShaderModule = device.createShaderModule({
-        code: composeShader,
-    });
+    // Rendering shader modules moved to Renderer class
 
     particleBufferBindGroupLayout = device.createBindGroupLayout({
         entries: [
@@ -1757,29 +1343,7 @@ async function init()
         ],
     });
 
-    cameraBindGroupLayout = device.createBindGroupLayout({
-        entries: [
-            {
-                binding: 0,
-                visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-                buffer: {
-                    type: 'uniform',
-                },
-            },
-        ],
-    });
-
-    cameraBindGroup = device.createBindGroup({
-        layout: cameraBindGroupLayout,
-        entries: [
-            {
-                binding: 0,
-                resource: {
-                    buffer: cameraBuffer,
-                },
-            },
-        ],
-    });
+    // Camera bind group layout and bind group moved to Renderer class
 
     simulationOptionsBindGroupLayout = device.createBindGroupLayout({
         entries: [
@@ -1910,20 +1474,7 @@ async function init()
         ],
     });
 
-    composeBindGroupLayout = device.createBindGroupLayout({
-        entries: [
-            {
-                binding: 0,
-                visibility: GPUShaderStage.FRAGMENT,
-                texture: {},
-            },
-            {
-                binding: 1,
-                visibility: GPUShaderStage.FRAGMENT,
-                texture: {},
-            },
-        ],
-    });
+    // Rendering bind group layouts moved to Renderer class
 
     binClearSizePipeline = device.createComputePipeline({
         layout: device.createPipelineLayout({
@@ -2017,153 +1568,16 @@ async function init()
         },
     });
 
-    particleRenderGlowPipeline = device.createRenderPipeline({
-        layout: device.createPipelineLayout({
-            bindGroupLayouts: [
-                particleBufferReadOnlyBindGroupLayout,
-                cameraBindGroupLayout,
-            ],
-        }),
-        vertex: {
-            module: particleRenderShaderModule,
-            entryPoint: 'vertexGlow',
-        },
-        primitive: {
-            topology: 'triangle-list',
-        },
-        fragment: {
-            module: particleRenderShaderModule,
-            entryPoint: 'fragmentGlow',
-            targets: [
-                {
-                    format: hdrFormat,
-                    blend: {
-                        color: {
-                            srcFactor: 'src-alpha',
-                            dstFactor: 'one',
-                        },
-                        alpha: {
-                            srcFactor: 'one',
-                            dstFactor: 'one',
-                        },
-                    },
-                },
-            ],
-        }
-    });
-
-    particleRenderPipeline = device.createRenderPipeline({
-        layout: device.createPipelineLayout({
-            bindGroupLayouts: [
-                particleBufferReadOnlyBindGroupLayout,
-                cameraBindGroupLayout,
-            ],
-        }),
-        vertex: {
-            module: particleRenderShaderModule,
-            entryPoint: 'vertexCircle',
-        },
-        primitive: {
-            topology: 'triangle-list',
-        },
-        fragment: {
-            module: particleRenderShaderModule,
-            entryPoint: 'fragmentCircle',
-            targets: [
-                {
-                    format: hdrFormat,
-                    blend: {
-                        color: {
-                            srcFactor: 'src-alpha',
-                            dstFactor: 'one',
-                        },
-                        alpha: {
-                            srcFactor: 'one',
-                            dstFactor: 'one',
-                        },
-                    },
-                },
-            ],
-        }
-    });
-
-    particleRenderPointPipeline = device.createRenderPipeline({
-        layout: device.createPipelineLayout({
-            bindGroupLayouts: [
-                particleBufferReadOnlyBindGroupLayout,
-                cameraBindGroupLayout,
-            ],
-        }),
-        vertex: {
-            module: particleRenderShaderModule,
-            entryPoint: 'vertexPoint',
-        },
-        primitive: {
-            topology: 'triangle-list',
-        },
-        fragment: {
-            module: particleRenderShaderModule,
-            entryPoint: 'fragmentPoint',
-            targets: [
-                {
-                    format: hdrFormat,
-                    blend: {
-                        color: {
-                            srcFactor: 'src-alpha',
-                            dstFactor: 'one',
-                        },
-                        alpha: {
-                            srcFactor: 'one',
-                            dstFactor: 'one',
-                        },
-                    },
-                },
-            ],
-        }
-    });
-
-    composePipeline = device.createRenderPipeline({
-        layout: device.createPipelineLayout({
-            bindGroupLayouts: [
-                composeBindGroupLayout,
-            ],
-        }),
-        vertex: {
-            module: composeShaderModule,
-            entryPoint: 'vertexMain',
-        },
-        primitive: {
-            topology: 'triangle-list',
-        },
-        fragment: {
-            module: composeShaderModule,
-            entryPoint: 'fragmentMain',
-            targets: [
-                {
-                    format: surfaceFormat,
-                },
-            ],
-        }
-    });
-
-    const blueNoiseImage = await loadImage("blue-noise.png");
-    blueNoiseTexture = device.createTexture({
-        format: 'rgba8unorm-srgb',
-        size: [blueNoiseImage.width, blueNoiseImage.height],
-        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
-    });
-    device.queue.copyExternalImageToTexture(
-        {source: blueNoiseImage},
-        {texture: blueNoiseTexture},
-        {width: blueNoiseImage.width, height: blueNoiseImage.height},
-    );
-
-    blueNoiseTextureView = blueNoiseTexture.createView({});
-
+    // Render pipelines and texture creation moved to Renderer class
+    
+    // Initialize Renderer
+    renderer = new Renderer(device, context, canvas);
+    await renderer.initialize(particleBufferReadOnlyBindGroupLayout);
+    
     resize();
 
     loadSystem(initialSystem());
-    centerView();
+    renderer.centerView(simulationBox);
 
     redraw();
 }
@@ -2171,140 +1585,7 @@ async function init()
 window.onload = init;
 window.onresize = resize;
 
-function pauseClicked()
-{
-    paused = !paused;
-    document.getElementById("pauseButton").innerText = paused ? "Continue" : "Pause";
-}
 
-function updateParticleCount()
-{
-    const newParticleCount = Math.round(Math.pow(2, document.getElementById("particleCountSlider").value));
-
-    const systemDescription = currentSystemDescription;
-    systemDescription.particleCount = newParticleCount;
-    loadSystem(systemDescription);
-}
-
-function updateSpeciesCount()
-{
-    const newSpeciesCount = Math.round(document.getElementById("speciesCountSlider").value);
-
-    const systemDescription = currentSystemDescription;
-    systemDescription.species = new Array(newSpeciesCount);
-    systemDescription.seed = randomSeed();
-    loadSystem(generateSystem(systemDescription));
-}
-
-function updateSimulationSize()
-{
-    const newWidth = document.getElementById("simulationWidthSlider").value * 64;
-    const newHeight = document.getElementById("simulationHeightSlider").value * 64;
-
-    const systemDescription = currentSystemDescription;
-    systemDescription.simulationSize = [newWidth, newHeight];
-    loadSystem(systemDescription);
-}
-
-function updateFriction()
-{
-    const newFriction = document.getElementById("frictionSlider").value;
-
-    currentSystemDescription.friction = newFriction;
-    friction = newFriction;
-
-    document.getElementById("frictionText").innerText = `Friction: ${newFriction}`;
-}
-
-function updateCentralForce()
-{
-    const newCentralForce = document.getElementById("centralForceSlider").value / 10.0;
-
-    currentSystemDescription.centralForce = newCentralForce;
-    centralForce = newCentralForce;
-
-    document.getElementById("centralForceText").innerText = `Central force: ${newCentralForce}`;
-}
-
-function updateSymmetricForces()
-{
-    const newSymmetricForces = document.getElementById("symmetricForces").checked;
-
-    currentSystemDescription.symmetricForces = newSymmetricForces;
-    symmetricForces = newSymmetricForces;
-
-    if (newSymmetricForces)
-    {
-        symmetrizeForces(currentSystemDescription);
-        reloadForces(currentSystemDescription);
-    }
-}
-
-function updateLoopingBorders()
-{
-    const newLoopingBorders = document.getElementById("loopingBorders").checked;
-
-    currentSystemDescription.loopingBorders = newLoopingBorders;
-    loopingBorders = newLoopingBorders;
-}
-
-async function saveSettings()
-{
-    const handle = await window.showSaveFilePicker({
-        id: "particle-life",
-        startIn: "downloads",
-        suggestedName: "particle-life-system.json",
-        types: [{
-            description: "JSON file",
-            accept: {"application/json": [".json"]},
-        }],
-    });
-
-    const writable = await handle.createWritable();
-    await writable.write(JSON.stringify(currentSystemDescription, null, 2));
-    await writable.close();
-}
-
-async function loadSettings()
-{
-    const [handle] = await window.showOpenFilePicker({
-        id: "particle-life",
-        startIn: "downloads",
-        suggestedName: "particle-life-system.json",
-        types: [{
-            description: "JSON file",
-            accept: {"application/json": [".json"]},
-        }],
-    });
-
-    const file = await handle.getFile();
-    const data = await file.text();
-    loadSystem(JSON.parse(data));
-    customRules = true;
-}
-
-async function copyUrl()
-{    
-    if (customRules) {
-        alert("Copying URL might not work correctly with custom rules");
-    }
-
-    const location = window.location;
-    var url = location.protocol + "//" + location.host + location.pathname + `?particleCount=${particleCount}&speciesCount=${speciesCount}&friction=${friction}&centralForce=${centralForce}&symmetricForces=${symmetricForces}&loopingBorders=${loopingBorders}&seed=${currentSystemDescription.seed}`;
-
-    await navigator.clipboard.writeText(url);
-}
-
-async function fullscreen()
-{
-    if (document.fullscreen) {
-        await document.exitFullscreen();
-        document.getElementById("fullscreenButton").innerText = "Fullscreen";
-    } else {
-        await document.body.requestFullscreen();
-        document.getElementById("fullscreenButton").innerText = "Exit fullscreen";
-    }
-}
 
         </script>
         <style>
@@ -2495,62 +1776,62 @@ async function fullscreen()
         <canvas id="mainCanvas"></canvas>
         <div id="toolsPanel" class="panel">
             <div class="sliderContainer">
-                <input type="range" min="10" max="20" value="16" class="slider" id="particleCountSlider" oninput="updateParticleCount();">
+                <input type="range" min="10" max="20" value="16" class="slider" id="particleCountSlider" oninput="UI.updateParticleCount();">
                 <span id="particleCountText">65536 particles</span>
             </div>
             <div class="rowBreak"></div>
             <div class="sliderContainer">
-                <input type="range" min="1" max="20" value="8" class="slider" id="speciesCountSlider" oninput="updateSpeciesCount();">
+                <input type="range" min="1" max="20" value="8" class="slider" id="speciesCountSlider" oninput="UI.updateSpeciesCount();">
                 <span id="speciesCountText">8 particle types</span>
             </div>
             <div class="rowBreak"></div>
             <div class="sliderContainer">
-                <input type="range" min="1" max="50" value="16" class="slider" id="simulationWidthSlider" oninput="updateSimulationSize();">
+                <input type="range" min="1" max="50" value="16" class="slider" id="simulationWidthSlider" oninput="UI.updateSimulationSize();">
                 <span id="simulationWidthText">Width: 1024</span>
             </div>
             <div class="rowBreak"></div>
             <div class="sliderContainer">
-                <input type="range" min="1" max="50" value="9" class="slider" id="simulationHeightSlider" oninput="updateSimulationSize();">
+                <input type="range" min="1" max="50" value="9" class="slider" id="simulationHeightSlider" oninput="UI.updateSimulationSize();">
                 <span id="simulationHeightText">Height: 576</span>
             </div>
             <div class="rowBreak"></div>
             <div class="sliderContainer">
-                <input type="range" min="0" max="100" value="10" class="slider" id="frictionSlider" oninput="updateFriction();">
+                <input type="range" min="0" max="100" value="10" class="slider" id="frictionSlider" oninput="UI.updateFriction();">
                 <span id="frictionText">Friction: 10</span>
             </div>
             <div class="rowBreak"></div>
             <div class="sliderContainer">
-                <input type="range" min="0" max="100" value="0" class="slider" id="centralForceSlider" oninput="updateCentralForce()">
+                <input type="range" min="0" max="100" value="0" class="slider" id="centralForceSlider" oninput="UI.updateCentralForce()">
                 <span id="centralForceText">Central force: 0</span>
             </div>
             <div class="rowBreak"></div>
             <label class="checkboxContainer">
                 Symmetric forces
-                <input type="checkbox" id="symmetricForces" onclick="updateSymmetricForces();" />
+                <input type="checkbox" id="symmetricForces" onclick="UI.updateSymmetricForces();" />
                 <span class="customCheckbox"></span>
             </label>
             <label class="checkboxContainer">
                 Looping borders
-                <input type="checkbox" id="loopingBorders" onclick="updateLoopingBorders();" />
+                <input type="checkbox" id="loopingBorders" onclick="UI.updateLoopingBorders();" />
                 <span class="customCheckbox"></span>
             </label>
             <div class="rowBreak"></div>
             <table id="buttonsTable">
                 <tr>
-                    <td><div class="button" id="pauseButton" onclick="pauseClicked();">Pause</div></td>
-                    <td><div class="button" id="centerViewButton" onclick="centerView();">Center view</div></td>
+                    <td><div class="button" id="pauseButton" onclick="UI.pauseClicked();">Pause</div></td>
+                    <td><div class="button" id="centerViewButton" onclick="UI.centerView();">Center view</div></td>
                 </tr>
                 <tr>
                     <td><div class="button" id="restartButton" onclick="loadSystem(currentSystemDescription);">Restart</div></td>
                     <td><div class="button" id="randomizeButton" onclick="currentSystemDescription.seed = randomSeed(); loadSystem(generateSystem(currentSystemDescription));">Randomize</div></td>
                 </tr>
                 <tr>
-                    <td><div class="button" id="saveSettingsButton" onclick="saveSettings();">Save system</div></td>
-                    <td><div class="button" id="loadSettingsButton" onclick="loadSettings();">Load system</div></td>
+                    <td><div class="button" id="saveSettingsButton" onclick="UI.saveSettings();">Save system</div></td>
+                    <td><div class="button" id="loadSettingsButton" onclick="UI.loadSettings();">Load system</div></td>
                 </tr>
                 <tr>
-                    <td><div class="button" id="copyUrlButton" onclick="copyUrl();">Copy URL</div></td>
-                    <td><div class="button" id="fullscreenButton" onclick="fullscreen();">Fullscreen</div></td>
+                    <td><div class="button" id="copyUrlButton" onclick="UI.copyUrl();">Copy URL</div></td>
+                    <td><div class="button" id="fullscreenButton" onclick="UI.fullscreen();">Fullscreen</div></td>
                 </tr>
             </table>
             
@@ -2562,4 +1843,5 @@ async function fullscreen()
             <div id="debugInfo">Debug info</div>
         </div>
     </body>
+    <script src="src/script.js"></script>
 </html>
