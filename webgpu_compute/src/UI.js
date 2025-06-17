@@ -415,6 +415,20 @@ function centerView() {
     }
 }
 
+// restartSystem function - calls the application's restartSystem method
+function restartSystem() {
+    if (app) {
+        app.restartSystem();
+    }
+}
+
+// randomizeSystem function - calls the application's randomizeSystem method
+function randomizeSystem() {
+    if (app) {
+        app.randomizeSystem();
+    }
+}
+
 // Export UI object for global access
 window.UI = {
     initializeUI,
@@ -434,5 +448,7 @@ window.UI = {
     loadSettings,
     copyUrl,
     fullscreen,
-    centerView
+    centerView,
+    restartSystem,
+    randomizeSystem
 }; 
