@@ -18,41 +18,44 @@ var lastPinchDistance = null;
 
 // UI Control Functions
 function pauseClicked() {
-    togglePause();
-    document.getElementById("pauseButton").innerText = isPaused() ? "Continue" : "Pause";
+    app.togglePause();
+    document.getElementById("pauseButton").innerText = app.isPaused() ? "Continue" : "Pause";
 }
 
 function updateParticleCount() {
     const newParticleCount = Math.round(Math.pow(2, document.getElementById("particleCountSlider").value));
 
-    const systemDescription = getCurrentSystemDescription();
+    const systemDescription = app.currentSystemDescription;
     systemDescription.particleCount = newParticleCount;
-    loadSystem(systemDescription);
+    app.loadSystem(systemDescription);
 }
 
 function updateSpeciesCount() {
     const newSpeciesCount = Math.round(document.getElementById("speciesCountSlider").value);
 
-    const systemDescription = getCurrentSystemDescription();
+    const systemDescription = app.currentSystemDescription;
     systemDescription.species = new Array(newSpeciesCount);
     systemDescription.seed = randomSeed();
-    loadSystem(generateSystem(systemDescription));
+    app.loadSystem(app.systemManager.generateSystem(systemDescription));
 }
 
 function updateSimulationSize() {
     const newWidth = document.getElementById("simulationWidthSlider").value * 64;
     const newHeight = document.getElementById("simulationHeightSlider").value * 64;
 
-    const systemDescription = getCurrentSystemDescription();
+    const systemDescription = app.currentSystemDescription;
     systemDescription.simulationSize = [newWidth, newHeight];
-    loadSystem(systemDescription);
+    app.loadSystem(systemDescription);
 }
 
 function updateFriction() {
     const newFriction = document.getElementById("frictionSlider").value;
 
-    const systemDescription = getCurrentSystemDescription();
+    const systemDescription = app.currentSystemDescription;
     systemDescription.friction = newFriction;
+    
+    // Update the application's property directly for immediate effect
+    app.friction = newFriction;
 
     document.getElementById("frictionText").innerText = `Friction: ${newFriction}`;
 }
@@ -60,8 +63,11 @@ function updateFriction() {
 function updateCentralForce() {
     const newCentralForce = document.getElementById("centralForceSlider").value / 10.0;
 
-    const systemDescription = getCurrentSystemDescription();
+    const systemDescription = app.currentSystemDescription;
     systemDescription.centralForce = newCentralForce;
+    
+    // Update the application's property directly for immediate effect
+    app.centralForce = newCentralForce;
 
     document.getElementById("centralForceText").innerText = `Central force: ${newCentralForce}`;
 }
@@ -69,20 +75,23 @@ function updateCentralForce() {
 function updateSymmetricForces() {
     const newSymmetricForces = document.getElementById("symmetricForces").checked;
 
-    const systemDescription = getCurrentSystemDescription();
+    const systemDescription = app.currentSystemDescription;
     systemDescription.symmetricForces = newSymmetricForces;
 
     if (newSymmetricForces) {
-        symmetrizeForces(systemDescription);
-        reloadForces(systemDescription);
+        app.systemManager.symmetrizeForces(systemDescription);
+        app.reloadForces(systemDescription);
     }
 }
 
 function updateLoopingBorders() {
     const newLoopingBorders = document.getElementById("loopingBorders").checked;
 
-    const systemDescription = getCurrentSystemDescription();
+    const systemDescription = app.currentSystemDescription;
     systemDescription.loopingBorders = newLoopingBorders;
+    
+    // Update the application's property directly for immediate effect
+    app.loopingBorders = newLoopingBorders;
 }
 
 async function saveSettings() {
@@ -97,7 +106,7 @@ async function saveSettings() {
     });
 
     const writable = await handle.createWritable();
-    await writable.write(JSON.stringify(getCurrentSystemDescription(), null, 2));
+    await writable.write(JSON.stringify(app.currentSystemDescription, null, 2));
     await writable.close();
 }
 
@@ -114,12 +123,12 @@ async function loadSettings() {
 
     const file = await handle.getFile();
     const data = await file.text();
-    loadSystem(JSON.parse(data));
+    app.loadSystem(JSON.parse(data));
     // Note: customRules is now managed by Application class
 }
 
 async function copyUrl() {
-    const systemDescription = getCurrentSystemDescription();
+    const systemDescription = app.currentSystemDescription;
     
     const location = window.location;
     var url = location.protocol + "//" + location.host + location.pathname + 
@@ -345,7 +354,7 @@ function updateSliderText(slider) {
 }
 
 function updateUIElements() {
-    const systemDescription = getCurrentSystemDescription();
+    const systemDescription = app.currentSystemDescription;
     
     document.getElementById("particleCountSlider").value = Math.log2(systemDescription.particleCount);
     document.getElementById("particleCountText").innerText = systemDescription.particleCount.toLocaleString() + " particles";
@@ -401,8 +410,8 @@ function initializeUI() {
 
 // centerView function - calls the application's centerView method
 function centerView() {
-    if (window.app && window.app.renderer) {
-        window.app.centerView();
+    if (app && app.renderer) {
+        app.centerView();
     }
 }
 
