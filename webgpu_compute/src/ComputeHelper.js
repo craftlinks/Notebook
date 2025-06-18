@@ -1,7 +1,7 @@
 /**
  * Helper class to simplify WebGPU compute operations
  */
-class ComputeHelper {
+export class ComputeHelper {
     /**
      * @param {GPUDevice} device 
      */

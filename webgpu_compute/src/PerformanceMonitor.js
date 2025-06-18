@@ -2,12 +2,14 @@
  * @fileoverview Performance monitoring utilities for WebGPU timestamp queries
  */
 
+import { formatExecutionTime } from './Utils.js';
+
 /**
  * @constructor
  * @description Helper class for timestamp queries
  * @param {GPUDevice} device - WebGPU device
  */
-function QueryHelper(device) {
+export function QueryHelper(device) {
     /** @type {GPUQuerySet} */
     this.querySet = device.createQuerySet({
         count: 16,
@@ -47,7 +49,7 @@ function QueryHelper(device) {
 /**
  * Performance monitor for managing query helpers and debug display
  */
-class PerformanceMonitor {
+export class PerformanceMonitor {
     constructor() {
         /** @type {QueryHelper[]} */
         this.freeQueryHelpers = [];

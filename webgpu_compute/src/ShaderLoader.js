@@ -2,7 +2,7 @@
  * Utility class for loading WGSL shader files
  * Provides async loading and caching of shader source code
  */
-class ShaderLoader {
+export class ShaderLoader {
     constructor() {
         /** @type {Map<string, string>} */
         this.shaderCache = new Map();

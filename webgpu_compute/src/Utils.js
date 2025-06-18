@@ -7,7 +7,7 @@
  * @param {number} a - Seed value
  * @returns {function(): number} Random number generator function
  */
-function splitmix32(a) {
+export function splitmix32(a) {
     return function() {
         a |= 0;
         a = a + 0x9e3779b9 | 0;
@@ -23,7 +23,7 @@ function splitmix32(a) {
  * Generate a random seed value
  * @returns {number} Random seed
  */
-function randomSeed() {
+export function randomSeed() {
     return (Math.random() * (2 ** 32)) >>> 0;
 }
 
@@ -32,7 +32,7 @@ function randomSeed() {
  * @param {bigint} x - Execution time in nanoseconds
  * @returns {string} Formatted execution time
  */
-function formatExecutionTime(x) {
+export function formatExecutionTime(x) {
     var result = (Number(x) / 1000000).toFixed(2);
     while (result.length < 5) {
         result = " " + result;
@@ -45,7 +45,7 @@ function formatExecutionTime(x) {
  * @param {string} url - URL of the image to load
  * @returns {Promise<ImageBitmap>} Loaded image bitmap
  */
-async function loadImage(url) {
+export async function loadImage(url) {
     const res = await fetch(url);
     const blob = await res.blob();
     return await createImageBitmap(blob, { colorSpaceConversion: 'none' });

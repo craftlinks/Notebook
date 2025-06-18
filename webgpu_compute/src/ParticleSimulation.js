@@ -2,7 +2,12 @@
  * Particle Life Simulation using WebGPU compute shaders
  * Abstracts away WebGPU boilerplate to focus on simulation logic
  */
-class ParticleSimulation {
+
+import { ComputeHelper } from './ComputeHelper.js';
+import { ShaderLoader } from './ShaderLoader.js';
+import { INITIAL_VELOCITY } from './Types.js';
+
+export class ParticleSimulation {
     /**
      * @param {GPUDevice} device 
      * @param {Object} config - Simulation configuration
@@ -416,8 +421,8 @@ class ParticleSimulation {
             // Set particle data (x, y, vx, vy, species)
             data[i * 5 + 0] = left + Math.random() * (right - left);
             data[i * 5 + 1] = bottom + Math.random() * (top - bottom);
-            data[i * 5 + 2] = initialVelocity * (-1.0 + Math.random() * 2.0);
-            data[i * 5 + 3] = initialVelocity * (-1.0 + Math.random() * 2.0);
+            data[i * 5 + 2] = INITIAL_VELOCITY * (-1.0 + Math.random() * 2.0);
+            data[i * 5 + 3] = INITIAL_VELOCITY * (-1.0 + Math.random() * 2.0);
             data[i * 5 + 4] = speciesId;
         }
         

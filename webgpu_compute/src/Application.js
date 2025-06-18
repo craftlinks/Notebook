@@ -2,10 +2,16 @@
  * @fileoverview Main application controller for the particle simulation
  */
 
+import { SystemManager } from './SystemManager.js';
+import { PerformanceMonitor } from './PerformanceMonitor.js';
+import { ParticleSimulation } from './ParticleSimulation.js';
+import { Renderer } from './Renderer.js';
+import { MAX_FORCE_RADIUS } from './Types.js';
+
 /**
  * Main application controller
  */
-class Application {
+export class Application {
     constructor() {
         // Core WebGPU objects
         /** @type {HTMLCanvasElement} */

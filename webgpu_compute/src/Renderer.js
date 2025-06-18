@@ -4,7 +4,7 @@
 /**
  * Renderer class handles all visualization aspects of the particle simulation
  */
-class Renderer {
+export class Renderer {
     /**
      * @param {GPUDevice} device - WebGPU device
      * @param {GPUCanvasContext} context - Canvas context
@@ -658,11 +658,4 @@ fn fragmentMain(in : VertexOut) -> @location(0) vec4f
         composeRenderPass.draw(3);
         composeRenderPass.end();
     }
-}
-
-// Export the Renderer class
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = Renderer;
-} else if (typeof window !== 'undefined') {
-    window.Renderer = Renderer;
 }

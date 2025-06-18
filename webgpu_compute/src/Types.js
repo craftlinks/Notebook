@@ -30,7 +30,7 @@
  */
 
 // Constants
-const HDR_FORMAT = 'rgba16float';
-const MAX_FORCE_RADIUS = 32.0;
-const MAX_FORCE_STRENGTH = 100.0;
-const INITIAL_VELOCITY = 10.0; 
+export const HDR_FORMAT = 'rgba16float';
+export const MAX_FORCE_RADIUS = 32.0;
+export const MAX_FORCE_STRENGTH = 100.0;
+export const INITIAL_VELOCITY = 10.0; 

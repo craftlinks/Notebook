@@ -2,6 +2,11 @@
  * @fileoverview User Interface management for the particle simulation
  */
 
+import { randomSeed } from './Utils.js';
+
+// Global application reference (set by main.js)
+let app = null;
+
 // UI State Variables
 var actionPoint = null;
 var actionDrag = null;
@@ -429,8 +434,14 @@ function randomizeSystem() {
     }
 }
 
-// Export UI object for global access
-window.UI = {
+// Set application reference
+function setApp(appInstance) {
+    app = appInstance;
+}
+
+// Export UI object for module access
+export const UI = {
+    setApp,
     initializeUI,
     updateUIElements,
     updatePanelVisibility,
@@ -451,4 +462,7 @@ window.UI = {
     centerView,
     restartSystem,
     randomizeSystem
-}; 
+};
+
+// Also set it globally for HTML event handlers
+window.UI = UI; 

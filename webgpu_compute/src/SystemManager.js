@@ -2,10 +2,13 @@
  * @fileoverview System generation and management utilities
  */
 
+import { splitmix32, randomSeed } from './Utils.js';
+import { MAX_FORCE_RADIUS, MAX_FORCE_STRENGTH } from './Types.js';
+
 /**
  * System manager for handling particle system generation and configuration
  */
-class SystemManager {
+export class SystemManager {
     constructor() {
         // Default system parameters
         this.defaultParams = {
