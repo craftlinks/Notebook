@@ -21,7 +21,7 @@ async function updateBasicExampleOutput() {
 
   try {
     // Import and run the basic compute shader from main.ts
-    const { initComputeShader } = await import('./main')
+    const { initComputeShader } = await import('./basic-example')
     basicComputeResult = await initComputeShader()
     
     outputElement.innerHTML = `

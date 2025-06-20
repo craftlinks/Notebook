@@ -58,13 +58,7 @@ async function initGameOfLife({ canvas }: { canvas?: HTMLCanvasElement } = {}) {
     
     // Count living neighbors
     const neighbors = int(0).toVar()
-    
-    // Check all 8 neighboring cells
-    const offsets = [
-      [-1, -1], [-1, 0], [-1, 1],
-      [ 0, -1],          [ 0, 1],
-      [ 1, -1], [ 1, 0], [ 1, 1]
-    ]
+  
     
     // Manual neighbor counting (TSL doesn't support dynamic loops over arrays)
     // @ts-ignore - TSL function call signature issue

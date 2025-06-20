@@ -38,10 +38,10 @@ async function initComputeShader() {
     output: Array.from(new Float32Array(outputArray))
   }
   
-  console.log('TSL Compute Shader Example:')
-  console.log('Input values:', result.input)
-  console.log('Output values (input * 2):', result.output)
-  console.log('Compute shaders executed successfully!')
+  // console.log('TSL Compute Shader Example:')
+  // console.log('Input values:', result.input)
+  // console.log('Output values (input * 2):', result.output)
+  console.log('Basic compute shader example executed successfully!')
   
   return result
 }
@@ -50,7 +50,7 @@ async function initComputeShader() {
 export { initComputeShader }
 
 // Run automatically for console output
-initComputeShader().catch(console.error)
+// initComputeShader().catch(console.error)
 
 console.log('TSL Check: Successfully imported and created TSL function')
 // console.log('TSL Function:', tslFunction)

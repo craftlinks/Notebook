@@ -370,6 +370,112 @@ async function initGameOfLife() {
 }</code></pre>
         </section>
 
+        <!-- Visualization Section -->
+        <section id="visualization" class="section">
+          <p class="section-intro">We've run the entire Game of Life simulation on the GPU. Now, how do we see it? A key advantage of TSL is its seamless integration with the Three.js rendering pipeline. We can visualize our simulation results without ever needing to bring the data back to the CPU, allowing for high-performance, real-time graphics.</p>
+          
+          <h4>Step 1: From Buffers to Pixels with <code>InstancedMesh</code></h4>
+          <p>Our simulation involves 4,096 cells, and we need to draw a quad for each one. Creating and managing 4,096 separate objects would be very inefficient for the CPU. The solution is <code>THREE.InstancedMesh</code>, a special object that allows us to draw thousands of identical geometries in a single command, each with unique properties like position and color.</p>
+          <pre class="code-block"><code class="language-typescript">// Create scene and camera for a 2D orthographic view
+const scene = new THREE.Scene();
+const camera = new THREE.OrthographicCamera(-0.5, 0.5, 0.5, -0.5, 0.1, 10);
+camera.position.z = 1;
+
+// A single, small plane geometry will be used for all cells
+const geometry = new THREE.PlaneGeometry(1 / gridWidth, 1 / gridHeight);
+
+// Use an instanced mesh to draw all 4,096 cells in one efficient command
+const mesh = new THREE.InstancedMesh(geometry, undefined, totalCells);
+scene.add(mesh);</code></pre>
+          <div class="concept-item">
+            <h3>Core Concept: Instanced Rendering</h3>
+            <p>Instanced rendering is a GPU technique for drawing many copies of the same object at once. You provide one set of vertices (the <code>PlaneGeometry</code>) and then an array of per-instance data (like position and color). The GPU's parallel processors then render all the copies in a single "draw call," dramatically improving performance compared to telling the CPU to issue thousands of separate draw calls.</p>
+          </div>
+
+          <h4>Step 2: Positioning Each Cell with a TSL Vertex Shader</h4>
+          <p>Now that we have an <code>InstancedMesh</code>, we need to tell the GPU where to place each of the 4,096 plane instances. We do this with a TSL function assigned to the material's <code>positionNode</code>. This function is effectively a vertex shader that runs on the GPU. It uses the built-in <code>instanceIndex</code> to calculate a unique position for each instance, arranging them in a grid.</p>
+          <pre class="code-block"><code class="language-typescript">// A TSL-powered material
+const material = new THREE.MeshBasicNodeMaterial();
+mesh.material = material;
+
+// The positionNode is a TSL function that runs for every vertex of every instance.
+// It's a vertex shader written in TSL!
+material.positionNode = Fn(() => {
+  // Calculate 2D grid position (x, y) from the 1D instanceIndex
+  const x = instanceIndex.mod(gridWidth);
+  const y = instanceIndex.div(gridWidth).toInt();
+
+  // Normalize coordinates to the range [-0.5, 0.5] to fit our camera view
+  const uvX = x.toFloat().add(0.5).div(gridWidth).sub(0.5);
+  const uvY = y.toFloat().add(0.5).div(gridHeight).sub(0.5);
+
+  // Add this calculated per-instance offset to the geometry's local vertex position
+  const finalPosition = positionLocal.add(vec4(uvX, uvY, 0, 0));
+
+  return finalPosition;
+})();</code></pre>
+          <div class="concept-item">
+            <p><strong><code>positionNode</code></strong> is a property of TSL materials that lets you define the final position of each vertex using a TSL function. This function compiles into a vertex shader.</p>
+            <p><strong><code>positionLocal</code></strong> is a TSL variable representing the original position of a vertex from the geometry buffer (our small plane). We add our calculated offset to it to move the entire plane instance to its correct spot on the grid.</p>
+          </div>
+
+          <h4>Step 3: Coloring Each Cell with a Compute Shader</h4>
+          <p>This is the crucial step that connects our compute simulation to our visual rendering. We create a new compute shader whose sole job is to read the state of each cell from our <code>currentGeneration</code> buffer and write a corresponding color into a new <code>colorBuffer</code>. This <code>colorBuffer</code> is then fed directly into the material's <code>colorNode</code>, telling the rendering pipeline what color to make each instance.</p>
+          <pre class="code-block"><code class="language-typescript">// Step 3.1: Create a new buffer to hold per-instance color data
+const colorBuffer = instancedArray(totalCells, 'vec4');
+
+// Step 3.2: Create a compute shader to populate the color buffer
+const updateColors = Fn(() => {
+  const cellState = currentGeneration.element(instanceIndex);
+  const outputColor = colorBuffer.element(instanceIndex);
+
+  const aliveColor = vec4(0.0, 1.0, 0.0, 1.0); // Green
+  const deadColor = vec4(0.0, 0.0, 0.0, 1.0);  // Black
+
+  // If cell is alive (state == 1), output green. Otherwise, black.
+  outputColor.assign(deadColor);
+  If(cellState.equal(1), () => {
+    outputColor.assign(aliveColor);
+  });
+})();
+
+// Step 3.3: Pipe the color buffer directly into the material's color node
+material.colorNode = colorBuffer.toAttribute();</code></pre>
+           <div class="concept-item">
+            <h3>Core Concept: GPU Data Flow</h3>
+            <p>This demonstrates a powerful GPU-only data pipeline. The data flows from one GPU process to the next without any CPU intervention:
+            <br/>1. <strong>GOL State:</strong> The <code>currentGeneration</code> buffer is updated by the main simulation compute shader.
+            <br/>2. <strong>Coloring:</strong> The <code>updateColors</code> compute shader reads from <code>currentGeneration</code> and writes to <code>colorBuffer</code>.
+            <br/>3. <strong>Rendering:</strong> The material's <code>colorNode</code> reads from <code>colorBuffer</code> as a vertex attribute to color the final pixels.
+            <br/>This "zero-copy" approach is extremely efficient and is key to real-time graphics.</p>
+          </div>
+
+          <h4>Step 4: The Animation Loop: Tying It All Together</h4>
+          <p>The final piece is the animation loop, which orchestrates all our GPU tasks frame by frame. On each frame, we execute our compute shaders in sequence and then render the final scene. All of this happens on the GPU, coordinated by a few asynchronous commands from the CPU.</p>
+          <pre class="code-block"><code class="language-typescript">// The main animation loop, managed by the renderer
+renderer.setAnimationLoop(async () => {
+  // 1. Run one step of the Game of Life simulation
+  await runGameOfLifeStep(); // This runs updateGeneration and copyGeneration
+
+  // 2. Update the color buffer based on the new simulation state
+  await renderer.computeAsync(updateColors.compute(totalCells));
+
+  // 3. Render the scene. The GPU now has all the data it needs.
+  renderer.render(scene, camera);
+});</code></pre>
+          <div class="concept-item">
+            <h3>Core Concept: Defining vs. Dispatching a Shader</h3>
+            <p>You might be wondering about the syntax <code>updateColors.compute(totalCells)</code>. It's a key concept in TSL that separates the <em>definition</em> of a compute shader from its <em>execution</em>.</p>
+            <ul class="param-list">
+              <li><strong><code>updateColors</code></strong>: This variable holds the TSL function node we defined earlier using <code>Fn(() => { ... })</code>. It's the blueprint for our shader—it contains the logic, but it hasn't been run yet.</li>
+              <li><strong><code>.compute(totalCells)</code></strong>: This is a method on the TSL function node. It doesn't run the computation itself. Instead, it creates a "dispatch configuration" object. It packages our shader blueprint together with the number of times it should be executed (the workload size, in this case <code>totalCells</code>).</li>
+              <li><strong><code>renderer.computeAsync(...)</code></strong>: This function takes the dispatch configuration object created by <code>.compute()</code> and sends it to the GPU to be executed.</li>
+            </ul>
+            <p>Think of it like this: <code>updateColors</code> is the recipe for a cake. <code>.compute(4096)</code> is the instruction "prepare to bake 4,096 cakes." And <code>renderer.computeAsync()</code> is the final command to "start baking." This separation allows the same shader logic to be reused with different workload sizes if needed.</p>
+          </div>
+          <p>With this, we have a complete, high-performance, GPU-powered simulation and visualization of Conway's Game of Life. The interactive canvas you saw in the previous section is rendered using exactly these techniques.</p>
+        </section>
+
       </div>
     </main>
 
@@ -384,8 +490,6 @@ async function initGameOfLife() {
       </div>
     </footer>
 
-    <script type="module" src="/src/main.ts"></script>
-    <script type="module" src="/src/game-of-life.ts"></script>
     <script type="module" src="/src/website.ts"></script>
   </body>
 </html>
