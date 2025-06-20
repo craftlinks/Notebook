@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TSL Compute Shaders: Interactive Guide</title>
+    <link rel="stylesheet" href="/src/styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  </head>
+  <body>
+    <header class="header">
+      <div class="container">
+        <h1 class="header-title">TSL Compute Shaders: Introduction</h1>
+      </div>
+    </header>
+
+    <main class="main">
+      <div class="container">
+        
+        <!-- Basic Example Section -->
+        <section id="basic-example" class="section">
+          
+          <p class="section-intro">Let's start with a simple compute shader that multiplies an array of numbers by 2. This demonstrates the fundamental workflow of TSL compute shaders. We'll build it step-by-step.</p>
+          
+          <h4>Step 1: Setup Renderer and Buffers</h4>
+          <p>The first step in any GPU computation is to prepare the data. We need a WebGPU renderer to communicate with the GPU and buffers to hold our data.</p>
+          <pre class="code-block"><code class="language-typescript">// Initialize WebGPU renderer
+const renderer = new THREE.WebGPURenderer()
+await renderer.init()
+
+// Create buffers for 10 float values
+const count = 10
+const inputBuffer = instancedArray(count, 'float')
+const outputBuffer = instancedArray(count, 'float')</code></pre>
+
+          <div class="concept-item">
+            <p><code>instancedArray(count, type)</code> is a TSL helper that creates a GPU buffer. Think of it as a specialized array that lives in the GPU's high-speed memory, making it directly accessible to shader programs.</p>
+            <ul class="param-list">
+              <li><strong>count:</strong> The number of elements in the buffer.</li>
+              <li><strong>type:</strong> The data type for each element (e.g., 'float', 'int', 'vec2', 'vec3'). This maps directly to data types in the underlying shader language (WGSL/GLSL).</li>
+            </ul>
+            <p>This buffer is "instanced" because each of the thousands of GPU threads (or instances) that run in parallel can be assigned a unique element from this array to work on, which is the foundation of data parallelism on the GPU.</p>
+          </div>
+          <h4>Step 2: Define the Compute Logic</h4>
+          <p>With our buffers ready, we define the actual computation to be performed on the GPU. This is done by creating a TSL function.</p>
+          <pre class="code-block"><code class="language-typescript">// Main computation: multiply each value by 2
+const multiplyCompute = Fn(() => {
+  const input = inputBuffer.element(instanceIndex)
+  const output = outputBuffer.element(instanceIndex)
+  output.assign(input.mul(2))
+})()</code></pre>
+          
+          <div class="concept-item">
+            <p><strong><code>Fn(() => { ... })</code></strong> is the heart of TSL. The JavaScript code you write inside this function is not executed directly by the CPU. Instead, TSL parses this code and compiles it into a low-level shader program (like WGSL) that can run on the GPU. This allows you to write GPU logic using familiar JavaScript-like syntax.</p>
+            <p><strong><code>instanceIndex</code></strong> is a special variable provided by TSL within a compute shader. It represents the unique ID of the current thread, ranging from 0 to N-1 (where N is the total number of threads launched). Each thread gets a different <code>instanceIndex</code>, allowing it to work on a different piece of data. Here, we use it as an index to get the specific element this thread is responsible for from our <code>inputBuffer</code> and <code>outputBuffer</code>.</p>
+          </div>
+
+          <p>We also need a small function to initialize our input data with values from 1 to 10. This uses the same principles.</p>
+           <pre class="code-block"><code class="language-typescript">// Initialize input data: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+const initCompute = Fn(() => {
+  const input = inputBuffer.element(instanceIndex)
+  input.assign(instanceIndex.add(1).toFloat())
+})()</code></pre>
+
+          <h4>Step 3: Execute and Retrieve Data</h4>
+          <p>Now we tell the GPU to run our compiled functions and then we retrieve the results.</p>
+          <pre class="code-block"><code class="language-typescript">// Execute compute shaders
+await renderer.computeAsync(initCompute.compute(count))
+await renderer.computeAsync(multiplyCompute.compute(count))
+
+// Read results back to CPU
+const inputArray = await renderer.getArrayBufferAsync(inputBuffer.value)
+const outputArray = await renderer.getArrayBufferAsync(outputBuffer.value)</code></pre>
+          
+          <div class="concept-item">
+            <p><strong><code>renderer.computeAsync(shader.compute(count))</code></strong> is the command that dispatches the workload to the GPU. The <code>.compute(count)</code> part tells the GPU to launch 10 threads in parallel. The operation is asynchronous (hence `computeAsync` and `await`) because the CPU sends the command and moves on. The `await` ensures our JavaScript code pauses until the GPU signals that it has finished its work.</p>
+            <p><strong><code>renderer.getArrayBufferAsync(buffer)</code></strong> is how we get data back from the GPU. It copies the specified GPU buffer into a standard JavaScript <code>ArrayBuffer</code> on the CPU. This read-back operation can be a performance bottleneck as it requires synchronization between the CPU and GPU, so it should be used only when necessary.</p>
+          </div>
+
+          <p>Here is the live output from the running code. As you can see, each number in the input array has been successfully multiplied by 2.</p>
+          <div class="example-output">
+            <div id="basic-output" class="output-box">
+              <div class="loading">Running compute shader...</div>
+            </div>
+          </div>
+
+          <p>And here is the complete, self-contained function that accomplishes the task. The code below is what's actually running on this page.</p>
+          <pre class="code-block"><code class="language-typescript">import * as THREE from 'three/webgpu'
+import { Fn, instancedArray, instanceIndex } from 'three/tsl'
+
+async function initComputeShader() {
+  // Initialize WebGPU renderer
+  const renderer = new THREE.WebGPURenderer()
+  await renderer.init()
+  
+  // Create buffers for 10 float values
+  const count = 10
+  const inputBuffer = instancedArray(count, 'float')
+  const outputBuffer = instancedArray(count, 'float')
+  
+  // Initialize input data: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+  const initCompute = Fn(() => {
+    const input = inputBuffer.element(instanceIndex)
+    input.assign(instanceIndex.add(1).toFloat())
+  })()
+  
+  // Main computation: multiply each value by 2
+  const multiplyCompute = Fn(() => {
+    const input = inputBuffer.element(instanceIndex)
+    const output = outputBuffer.element(instanceIndex)
+    output.assign(input.mul(2))
+  })()
+  
+  // Execute compute shaders
+  await renderer.computeAsync(initCompute.compute(count))
+  await renderer.computeAsync(multiplyCompute.compute(count))
+  
+  // Read results back to CPU
+  const inputArray = await renderer.getArrayBufferAsync(inputBuffer.value)
+  const outputArray = await renderer.getArrayBufferAsync(outputBuffer.value)
+  
+  return {
+    input: Array.from(new Float32Array(inputArray)),
+    output: Array.from(new Float32Array(outputArray))
+  }
+}</code></pre>
+          
+        </section>
+
+        <!-- Game of Life Section -->
+        <section id="game-of-life" class="section">
+          <p class="section-intro">Now let's see something more complex: a complete implementation of Conway's Game of Life running entirely on the GPU. This showcases 2D array processing, neighbor counting, and conditional logic, all built step-by-step.</p>
+
+          <h4>Step 1: Setup Grid and Buffers</h4>
+          <p>We start by setting up our simulation environment. This includes defining the grid size and creating two GPU buffers with <code>instancedArray</code>: one to hold the current state of the cells (<code>currentGeneration</code>) and another for the next state (<code>nextGeneration</code>). We use two buffers to avoid race conditions, where a cell's new state might incorrectly influence its neighbors' calculations in the same step.</p>
+          <pre class="code-block"><code class="language-typescript">// Grid dimensions - 64x64 = 4,096 cells total
+const gridWidth = 64;
+const gridHeight = 64;
+const totalCells = gridWidth * gridHeight;
+
+// Create buffers for current and next generation (using integers: 0 for dead, 1 for alive)
+const currentGeneration = instancedArray(totalCells, 'int');
+const nextGeneration = instancedArray(totalCells, 'int');</code></pre>
+          <div class="concept-item">
+            <h3>Core Concept: Double Buffering</h3>
+            <p>Using two buffers is a common and essential technique in simulations. All reads for a given step come from a single source (<code>currentGeneration</code>), and all writes go to a separate destination (<code>nextGeneration</code>). After the step is complete, the buffers are "swapped" for the next iteration. This ensures that the calculation for each cell is based on a consistent snapshot of the grid from the beginning of the step.</p>
+          </div>
+
+          <h4>Step 2: 2D to 1D Mapping</h4>
+          <p>GPU buffers are linear, one-dimensional arrays. To simulate a 2D grid, we need helper functions to convert (x, y) coordinates into a 1D index. We also create a helper to get a cell's state with "toroidal" or "wrapping" boundaries, where the grid's edges connect to each other.</p>
+          <pre class="code-block"><code class="language-typescript">// Helper function to convert 2D coordinates to a 1D index
+const getIndex = Fn(([x, y]) => {
+  return y.mul(gridWidth).add(x);
+});
+
+// Helper function to get cell state with boundary wrapping
+const getCell = Fn(([buffer, x, y]) => {
+  // Wrap coordinates for toroidal topology (edges connect)
+  const wrappedX = x.add(gridWidth).mod(gridWidth);
+  const wrappedY = y.add(gridHeight).mod(gridHeight);
+  const index = getIndex(wrappedX, wrappedY);
+  return buffer.element(index);
+});</code></pre>
+          <div class="concept-item">
+            <h3>Core Concept: Working with Grids on the GPU</h3>
+            <p>Since GPU memory is a flat list, we use a standard formula to access 2D data: <code>index = y * width + x</code>. In TSL, this translates to <code>y.mul(gridWidth).add(x)</code>. The modulo operator (<code>.mod()</code>) is a powerful tool for creating seamless, wrapping boundaries, which is a common pattern in simulations like this.</p>
+          </div>
+
+          <h4>Step 3: Initializing the Grid</h4>
+          <p>To start the simulation, we need an initial pattern. We'll write a compute shader that gives each cell a 30% chance of being "alive." We use TSL's built-in <code>hash()</code> function to generate a pseudo-random value for each cell based on its <code>instanceIndex</code>.</p>
+          <pre class="code-block"><code class="language-typescript">// Initialize grid with a random pattern
+const initializeGrid = Fn(() => {
+  const currentCell = currentGeneration.element(instanceIndex);
+
+  // Use hash function for pseudo-random initialization
+  const randomValue = hash(instanceIndex.add(12345)); // Add a seed
+
+  // 30% chance for a cell to be alive initially
+  If(randomValue.lessThan(0.3), () => {
+    currentCell.assign(1); // Alive
+  }).Else(() => {
+    currentCell.assign(0); // Dead
+  });
+})();</code></pre>
+
+          <h4>Step 4: The Game of Life Update Logic</h4>
+          <p>This is the core of the simulation. For each cell, we count its eight living neighbors. Then, we apply the classic rules of Conway's Game of Life using TSL's <code>If().ElseIf().Else()</code> structure to determine if the cell should be alive or dead in the next generation.</p>
+          <pre class="code-block"><code class="language-typescript">const updateGeneration = Fn(() => {
+  // Convert 1D thread index to 2D grid coordinates
+  const x = instanceIndex.mod(gridWidth);
+  const y = instanceIndex.div(gridWidth).toInt();
+
+  // Count living neighbors
+  const neighbors = int(0).toVar();
+  neighbors.addAssign(getCell(currentGeneration, x.sub(1), y.sub(1)));
+  neighbors.addAssign(getCell(currentGeneration, x.sub(1), y));
+  neighbors.addAssign(getCell(currentGeneration, x.sub(1), y.add(1)));
+  neighbors.addAssign(getCell(currentGeneration, x, y.sub(1)));
+  neighbors.addAssign(getCell(currentGeneration, x, y.add(1)));
+  neighbors.addAssign(getCell(currentGeneration, x.add(1), y.sub(1)));
+  neighbors.addAssign(getCell(currentGeneration, x.add(1), y));
+  neighbors.addAssign(getCell(currentGeneration, x.add(1), y.add(1)));
+
+  const currentCell = currentGeneration.element(instanceIndex);
+  const nextCell = nextGeneration.element(instanceIndex);
+
+  // Apply Conway's Game of Life rules
+  If(currentCell.equal(1), () => { // Current cell is alive
+    If(neighbors.lessThan(2).or(neighbors.greaterThan(3)), () => {
+      nextCell.assign(0); // Dies from under/overpopulation
+    }).Else(() => {
+      nextCell.assign(1); // Survives
+    });
+  }).Else(() => { // Current cell is dead
+    If(neighbors.equal(3), () => {
+      nextCell.assign(1); // Birth
+    }).Else(() => {
+      nextCell.assign(0); // Stays dead
+    });
+  });
+})();</code></pre>
+          
+          <h4>Step 5: Running the Simulation</h4>
+          <p>Finally, we orchestrate the simulation. We first run the <code>initializeGrid</code> shader once to set up the initial state. Then, we provide a button to run the simulation step-by-step. Each click will execute the <code>updateGeneration</code> shader to calculate the new state, followed by a <code>copyGeneration</code> shader to copy the results from <code>nextGeneration</code> back to <code>currentGeneration</code>, preparing it for the next iteration.</p>
+          <pre class="code-block"><code class="language-typescript">// Copy next generation to current generation for the next iteration
+const copyGeneration = Fn(() => {
+  currentGeneration.element(instanceIndex).assign(nextGeneration.element(instanceIndex));
+})();
+
+// Initialize the grid with a random pattern
+await renderer.computeAsync(initializeGrid.compute(totalCells));
+
+// Run simulation for multiple generations
+for (let step = 0; step &lt; 10; step++) {
+  // Calculate next generation and write to the second buffer
+  await renderer.computeAsync(updateGeneration.compute(totalCells));
+  // Copy the new state back to the first buffer for the next read
+  await renderer.computeAsync(copyGeneration.compute(totalCells));
+}</code></pre>
+
+          <h4>Live Simulation</h4>
+          <p>Here is the live simulation. Press the button to advance the Game of Life by one generation and see the simulation evolve.</p>
+          <div class="example-output">
+            <div id="game-of-life-output" class="output-box">
+              <div class="loading">Initializing Game of Life...</div>
+            </div>
+          </div>
+          <h4>Complete Code</h4>
+          <p>And here is the complete, self-contained function. The code below is what's actually running on this page.</p>
+          <pre class="code-block"><code class="language-typescript">import * as THREE from 'three/webgpu'
+import { Fn, instancedArray, instanceIndex, int, hash, If } from 'three/tsl'
+
+async function initGameOfLife() {
+  // Initialize WebGPU renderer
+  const renderer = new THREE.WebGPURenderer()
+  await renderer.init()
+  
+  // Grid dimensions - 64x64 = 4,096 cells total
+  const gridWidth = 64
+  const gridHeight = 64
+  const totalCells = gridWidth * gridHeight
+  
+  // Create buffers for current and next generation
+  const currentGeneration = instancedArray(totalCells, 'int')
+  const nextGeneration = instancedArray(totalCells, 'int')
+  
+  // Helper function to convert 2D coordinates to 1D index
+  const getIndex = Fn(([x, y]: any) => {
+    return y.mul(gridWidth).add(x)
+  })
+  
+  // Helper function to get cell state with boundary wrapping
+  const getCell = Fn(([buffer, x, y]: any) => {
+    // Wrap coordinates for toroidal topology (edges connect)
+    const wrappedX = x.add(gridWidth).mod(gridWidth)
+    const wrappedY = y.add(gridHeight).mod(gridHeight)
+    const index = getIndex(wrappedX, wrappedY)
+    return buffer.element(index)
+  })
+  
+  // Initialize grid with random pattern
+  const initializeGrid = Fn(() => {
+    const currentCell = currentGeneration.element(instanceIndex)
+    
+    // Use hash function for pseudo-random initialization
+    const randomValue = hash(instanceIndex.add(12345))
+    
+    // 30% chance for a cell to be alive initially
+    If(randomValue.lessThan(0.3), () => {
+      currentCell.assign(1) // Alive
+    }).Else(() => {
+      currentCell.assign(0) // Dead
+    })
+  })()
+  
+  // Game of Life update logic - the heart of the simulation
+  const updateGeneration = Fn(() => {
+    // Convert 1D thread index to 2D grid coordinates
+    const x = instanceIndex.mod(gridWidth)
+    const y = instanceIndex.div(gridWidth).toInt()
+    
+    // Count living neighbors (all 8 surrounding cells)
+    const neighbors = int(0).toVar()
+    
+    // Check all 8 neighboring cells manually
+    // (TSL doesn't support dynamic loops over arrays)
+    neighbors.addAssign(getCell(currentGeneration, x.sub(1), y.sub(1)))
+    neighbors.addAssign(getCell(currentGeneration, x.sub(1), y))
+    neighbors.addAssign(getCell(currentGeneration, x.sub(1), y.add(1)))
+    neighbors.addAssign(getCell(currentGeneration, x, y.sub(1)))
+    neighbors.addAssign(getCell(currentGeneration, x, y.add(1)))
+    neighbors.addAssign(getCell(currentGeneration, x.add(1), y.sub(1)))
+    neighbors.addAssign(getCell(currentGeneration, x.add(1), y))
+    neighbors.addAssign(getCell(currentGeneration, x.add(1), y.add(1)))
+    
+    // Get current cell state and prepare next state
+    const currentCell = currentGeneration.element(instanceIndex)
+    const nextCell = nextGeneration.element(instanceIndex)
+    
+    // Apply Conway's Game of Life rules
+    If(currentCell.equal(1), () => {
+      // Current cell is alive
+      If(neighbors.lessThan(2), () => {
+        nextCell.assign(0) // Dies from underpopulation
+      }).ElseIf(neighbors.greaterThan(3), () => {
+        nextCell.assign(0) // Dies from overpopulation
+      }).Else(() => {
+        nextCell.assign(1) // Survives (2 or 3 neighbors)
+      })
+    }).Else(() => {
+      // Current cell is dead
+      If(neighbors.equal(3), () => {
+        nextCell.assign(1) // Birth (exactly 3 neighbors)
+      }).Else(() => {
+        nextCell.assign(0) // Stays dead
+      })
+    })
+  })()
+  
+  // Copy next generation to current generation for next iteration
+  const copyGeneration = Fn(() => {
+    const current = currentGeneration.element(instanceIndex)
+    const next = nextGeneration.element(instanceIndex)
+    current.assign(next)
+  })()
+  
+  // Initialize the grid with random pattern
+  await renderer.computeAsync(initializeGrid.compute(totalCells))
+  
+  // Run simulation for multiple generations
+  for (let step = 0; step &lt; 10; step++) {
+    // Calculate next generation
+    await renderer.computeAsync(updateGeneration.compute(totalCells))
+    // Copy next generation to current
+    await renderer.computeAsync(copyGeneration.compute(totalCells))
+  }
+  
+  return {
+    renderer,
+    currentGeneration,
+    nextGeneration,
+    gridWidth,
+    gridHeight,
+    updateGeneration,
+    copyGeneration
+  }
+}</code></pre>
+        </section>
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="container">
+        <p>&copy; 2025 TSL Compute Shaders Guide. Built with Three.js and TSL.</p>
+        <div class="footer-links">
+          <a href="https://github.com/mrdoob/three.js/wiki/Three.js-Shading-Language" target="_blank">TSL Documentation</a>
+          <a href="https://threejs.org/examples/" target="_blank">Three.js Examples</a>
+          <a href="https://www.w3.org/TR/webgpu/#compute-shaders" target="_blank">WebGPU Spec</a>
+        </div>
+      </div>
+    </footer>
+
+    <script type="module" src="/src/main.ts"></script>
+    <script type="module" src="/src/game-of-life.ts"></script>
+    <script type="module" src="/src/website.ts"></script>
+  </body>
+</html>
