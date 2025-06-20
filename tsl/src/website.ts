@@ -175,13 +175,44 @@ async function initGameOfLifeVisualization() {
       scene,
       camera,
       colorCompute,
-      isRunning: true
-    }
+      isRunning: false, // Start paused, will be updated by IntersectionObserver
+      isManuallyPaused: false,
+      isVisible: false,
+    };
+
+    const updateRunningState = () => {
+      const shouldBeRunning = golVisualizationState.isVisible && !golVisualizationState.isManuallyPaused;
+      golVisualizationState.isRunning = shouldBeRunning;
+
+      const statusElement = document.getElementById('gol-step-info');
+      if (statusElement) {
+        if (!golVisualizationState.isVisible) {
+          statusElement.textContent = 'Paused (out of view).';
+        } else if (golVisualizationState.isManuallyPaused) {
+          statusElement.textContent = 'Paused. Click to resume.';
+        } else {
+          statusElement.textContent = 'Running. Click to pause.';
+        }
+      }
+    };
 
     // Add click handler to toggle simulation
     canvas.addEventListener('click', () => {
-      golVisualizationState.isRunning = !golVisualizationState.isRunning
-    })
+      golVisualizationState.isManuallyPaused = !golVisualizationState.isManuallyPaused;
+      updateRunningState();
+    });
+
+    // Use IntersectionObserver to run simulation only when visible
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          golVisualizationState.isVisible = entry.isIntersecting;
+          updateRunningState();
+        });
+      },
+      { threshold: 0.1 } // Run when 10% of the canvas is visible
+    );
+    observer.observe(canvas);
 
     // Start continuous animation loop
     startGameOfLifeAnimation()
