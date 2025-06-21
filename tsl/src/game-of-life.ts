@@ -1,6 +1,6 @@
 import './styles.css'
 import * as THREE from 'three/webgpu'
-import { Fn, instancedArray, instanceIndex, int, hash, float, If } from 'three/tsl'
+import { Fn, instancedArray, instanceIndex, int, hash, If } from 'three/tsl'
 
 async function initGameOfLife({ canvas, renderer: existingRenderer }: { canvas?: HTMLCanvasElement; renderer?: THREE.WebGPURenderer } = {}) {
   // Initialize WebGPU renderer

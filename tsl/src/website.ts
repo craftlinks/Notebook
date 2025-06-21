@@ -20,9 +20,6 @@ let golVisualizationState: any = null
 let sharedRenderer: THREE.WebGPURenderer | null = null;
 
 // Boids simulation state
-let boidsSimulation: BoidsSimulation | null = null
-let boidsVisualization: BoidsVisualization | null = null
-let boidsVisualizationState: any = null
 
 // Update basic example output
 async function updateBasicExampleOutput() {

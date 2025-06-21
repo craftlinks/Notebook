@@ -55,7 +55,6 @@ export class BoidsSimulation {
   private uniforms!: BoidsUniforms;
   private storage!: BoidsStorage;
   private computeShaders!: BoidsCompute;
-  private last: number = performance.now();
 
   constructor(config: Partial<BoidsConfig> = {}) {
     this.config = {
@@ -334,8 +333,6 @@ export class BoidsSimulation {
     if (rayDirection) {
       (this.uniforms.rayDirection.value as THREE.Vector3).copy(rayDirection);
     }
-
-    this.last = now;
   }
 
   public compute(renderer: THREE.WebGPURenderer): void {

@@ -1,7 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { 
   Fn, 
-  attribute, 
   normalize, 
   length, 
   mix,
@@ -11,9 +10,7 @@ import {
   positionLocal,
   cameraProjectionMatrix,
   cameraViewMatrix,
-  modelWorldMatrix,
   mat3,
-  float,
   cross
 } from 'three/tsl';
 import { BoidsSimulation } from './boids';
