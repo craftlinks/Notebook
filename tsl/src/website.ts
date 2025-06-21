@@ -1,7 +1,7 @@
 // Website integration for TSL examples
 import { initGameOfLife } from './game-of-life'
-import { BoidsSimulation } from '../boids'
-import { BoidsVisualization } from '../boids-visualization'
+import { BoidsSimulation } from './boids'
+import { BoidsVisualization } from './boids-visualization'
 import hljs from 'highlight.js/lib/core';
 import typescript from 'highlight.js/lib/languages/typescript';
 import * as THREE from 'three/webgpu'
@@ -292,8 +292,8 @@ async function runBoidsSimulation() {
 
   await renderer.init();
 
-  // Boids Simulation - using default count (4096) for better mobile performance
-  const boidsSimulation = new BoidsSimulation();
+  // Boids Simulation - reduced count for better mobile performance
+  const boidsSimulation = new BoidsSimulation({ count: 4096 });
 
   // Boids Visualization
   const boidsVisualization = new BoidsVisualization(boidsSimulation, {
