@@ -292,10 +292,8 @@ async function runBoidsSimulation() {
 
   await renderer.init();
 
-  // Boids Simulation
-  const boidsSimulation = new BoidsSimulation({
-    count: 8192,
-  });
+  // Boids Simulation - using default count (4096) for better mobile performance
+  const boidsSimulation = new BoidsSimulation();
 
   // Boids Visualization
   const boidsVisualization = new BoidsVisualization(boidsSimulation, {
@@ -332,13 +330,50 @@ async function runBoidsSimulation() {
     }
   }
 
-  // Animation loop
+  // State management for visibility and pause control
+  let isVisible = false;
+  let isManuallyPaused = false;
+  let animationId: number | null = null;
+
+  const shouldRun = () => isVisible && !isManuallyPaused;
+
+  // Use IntersectionObserver to run simulation only when visible
+  const observer = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry) => {
+        isVisible = entry.isIntersecting;
+        if (shouldRun() && !animationId) {
+          startAnimation();
+        } else if (!shouldRun() && animationId) {
+          stopAnimation();
+        }
+      });
+    },
+    { threshold: 0.1 } // Run when 10% of the container is visible
+  );
+  observer.observe(container);
+
+  // Click to pause/resume functionality
+  renderer.domElement.addEventListener('click', () => {
+    isManuallyPaused = !isManuallyPaused;
+    if (shouldRun() && !animationId) {
+      startAnimation();
+    } else if (!shouldRun() && animationId) {
+      stopAnimation();
+    }
+  });
+
+  // Animation functions
   let lastTime = performance.now();
+  
   function animate() {
-    requestAnimationFrame(animate);
+    if (!shouldRun()) {
+      animationId = null;
+      return;
+    }
 
     const now = performance.now();
-    const deltaTime = (now - lastTime) / 1000;
+    const deltaTime = Math.min((now - lastTime) / 1000, 1/30); // Cap deltaTime for stability
     lastTime = now;
     
     // Update raycaster
@@ -350,9 +385,26 @@ async function runBoidsSimulation() {
     
     // Render scene
     boidsVisualization.render(renderer);
+
+    // Schedule next frame
+    animationId = requestAnimationFrame(animate);
   }
 
-  animate();
+  function startAnimation() {
+    if (!animationId && shouldRun()) {
+      lastTime = performance.now();
+      animationId = requestAnimationFrame(animate);
+    }
+  }
+
+  function stopAnimation() {
+    if (animationId) {
+      cancelAnimationFrame(animationId);
+      animationId = null;
+    }
+  }
+
+  console.log('Boids simulation initialized - will start when visible');
 }
 
 // Initialize website functionality

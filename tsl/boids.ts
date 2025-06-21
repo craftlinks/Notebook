@@ -58,7 +58,7 @@ export class BoidsSimulation {
 
   constructor(config: Partial<BoidsConfig> = {}) {
     this.config = {
-      count: 16384,
+      count: 4096, // Reduced from 16384 for better mobile performance
       speedLimit: 9.0,
       bounds: 800,
       separation: 15.0,
