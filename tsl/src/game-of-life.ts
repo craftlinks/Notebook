@@ -2,10 +2,12 @@ import './styles.css'
 import * as THREE from 'three/webgpu'
 import { Fn, instancedArray, instanceIndex, int, hash, float, If } from 'three/tsl'
 
-async function initGameOfLife({ canvas }: { canvas?: HTMLCanvasElement } = {}) {
+async function initGameOfLife({ canvas, renderer: existingRenderer }: { canvas?: HTMLCanvasElement; renderer?: THREE.WebGPURenderer } = {}) {
   // Initialize WebGPU renderer
-  const renderer = new THREE.WebGPURenderer({ canvas, antialias: true })
-  await renderer.init()
+  const renderer = existingRenderer || new THREE.WebGPURenderer({ canvas, antialias: true })
+  if (!existingRenderer) {
+    await renderer.init()
+  }
   
   if (canvas) {
     renderer.setSize(canvas.width, canvas.height)

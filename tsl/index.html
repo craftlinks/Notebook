@@ -22,7 +22,7 @@
         
         <!-- Basic Example Section -->
         <section id="basic-example" class="section">
-          
+          <h2>1. Basic Example: Your First Compute Shader</h2>
           <p class="section-intro">Let's start with a simple compute shader that multiplies an array of numbers by 2. This demonstrates the fundamental workflow of TSL compute shaders. We'll build it step-by-step.</p>
           
           <h4>Step 1: Setup Renderer and Buffers</h4>
@@ -79,7 +79,6 @@ const outputArray = await renderer.getArrayBufferAsync(outputBuffer.value)</code
             <p><strong><code>renderer.computeAsync(shader.compute(count))</code></strong> is the command that dispatches the workload to the GPU. The <code>.compute(count)</code> part tells the GPU to launch 10 threads in parallel. The operation is asynchronous (hence `computeAsync` and `await`) because the CPU sends the command and moves on. The `await` ensures our JavaScript code pauses until the GPU signals that it has finished its work.</p>
             <p><strong><code>renderer.getArrayBufferAsync(buffer)</code></strong> is how we get data back from the GPU. It copies the specified GPU buffer into a standard JavaScript <code>ArrayBuffer</code> on the CPU. This read-back operation can be a performance bottleneck as it requires synchronization between the CPU and GPU, so it should be used only when necessary.</p>
           </div>
-
           <p>Here is the live output from the running code. As you can see, each number in the input array has been successfully multiplied by 2.</p>
           <div class="example-output">
             <div id="basic-output" class="output-box">
@@ -132,6 +131,7 @@ async function initComputeShader() {
 
         <!-- Game of Life Section -->
         <section id="game-of-life" class="section">
+          <h2>2. Game of Life: 2D Grid Simulation</h2>
           <p class="section-intro">Now let's see something more complex: a complete implementation of Conway's Game of Life running entirely on the GPU. This showcases 2D array processing, neighbor counting, and conditional logic, all built step-by-step.</p>
 
           <h4>Step 1: Setup Grid and Buffers</h4>
@@ -474,6 +474,397 @@ renderer.setAnimationLoop(async () => {
             <p>Think of it like this: <code>updateColors</code> is the recipe for a cake. <code>.compute(4096)</code> is the instruction "prepare to bake 4,096 cakes." And <code>renderer.computeAsync()</code> is the final command to "start baking." This separation allows the same shader logic to be reused with different workload sizes if needed.</p>
           </div>
           <p>With this, we have a complete, high-performance, GPU-powered simulation and visualization of Conway's Game of Life. The interactive canvas you saw in the previous section is rendered using exactly these techniques.</p>
+        </section>
+
+        <!-- Boids Simulation Section -->
+        <section id="boids-simulation" class="section">
+          <h2>3. Boids: Agent-Based Simulation</h2>
+          <p class="section-intro">Next, we'll explore a more complex, dynamic simulation: Boids. Developed by Craig Reynolds, this is an artificial life program that simulates the flocking behavior of birds. Each "boid" follows a set of simple rules, and the combination of these rules leads to complex, emergent flocking behavior. It's a classic example of how simple local interactions can create complex global patterns, making it a perfect candidate for GPU acceleration.</p>
+
+          <h4>Step 1: Configuration and State Storage</h4>
+          <p>Like before, we start by defining the state of our simulation. For boids, each agent has a position and a velocity in 3D space. We also have several parameters that control their behavior.</p>
+          <pre class="code-block"><code class="language-typescript">// boids.ts
+// Configuration for the simulation
+export interface BoidsConfig {
+  count: number; // Number of boids
+  speedLimit: number;
+  bounds: number;
+  separation: number; // Radius for separation rule
+  alignment: number;  // Radius for alignment rule
+  cohesion: number;   // Radius for cohesion rule
+  freedom: number;
+}
+</code></pre>
+          <div class="concept-item">
+            <h3>Core Simulation Parameters</h3>
+            <p>These configuration values are the knobs and dials for tuning the flock's behavior. They are passed to the GPU as "uniforms"—global variables that are the same for all threads in a shader execution.</p>
+            <ul class="param-list">
+              <li><strong><code>count</code>:</strong> The total number of boids to simulate. More boids create a more impressive flock, but require more GPU power.</li>
+              <li><strong><code>speedLimit</code>:</strong> The maximum speed any boid can reach. This prevents the simulation from becoming unstable.</li>
+              <li><strong><code>bounds</code>:</strong> Defines the size of the cubic area the boids fly within. When a boid hits a boundary, it is gently steered back towards the center.</li>
+              <li><strong><code>separation</code>:</strong> The distance (or radius) for the separation rule. If a neighbor is within this radius, the boid will steer strongly away from it to avoid collision.</li>
+              <li><strong><code>alignment</code>:</strong> The radius for the alignment rule. The boid will try to match the average heading of all neighbors within this distance.</li>
+              <li><strong><code>cohesion</code>:</strong> The radius for the cohesion rule. The boid will steer towards the average position (center of mass) of all neighbors within this radius, keeping the flock together.</li>
+            </ul>
+          </div>
+          <div class="concept-item">
+            <h3>Other Key Uniforms</h3>
+            <p>Besides the main behavioral parameters, a few other uniforms are essential for making the simulation dynamic and interactive.</p>
+            <ul class="param-list">
+              <li><strong><code>deltaTime</code>:</strong> A crucial uniform in any animation or simulation. It holds the time elapsed since the previous frame. By multiplying all velocity and position changes by <code>deltaTime</code>, we ensure the simulation runs at the same speed regardless of the user's screen refresh rate (framerate-independent movement).</li>
+              <li><strong><code>rayOrigin</code> and <code>rayDirection</code>:</strong> These two <code>vec3</code> uniforms define a ray in 3D space. The shader code uses this ray to create a repulsive force, pushing boids away from it. This allows for user interaction, like using the mouse to "herd" the flock.</li>
+            </ul>
+          </div>
+          <p>With the parameters defined, we create buffers on the GPU to store the state for each boid:</p>
+          <pre class="code-block"><code class="language-typescript">// ... inside BoidsSimulation class ...
+
+// Buffers to store boid state on the GPU
+const positionArray = new Float32Array(count * 3);
+const velocityArray = new Float32Array(count * 3);
+const phaseArray = new Float32Array(count); // For animation
+
+// ... initialize arrays with random data ...
+
+// Create GPU buffers
+const positionStorage = attributeArray(positionArray, 'vec3');
+const velocityStorage = attributeArray(velocityArray, 'vec3');
+const phaseStorage = attributeArray(phaseArray, 'float');
+</code></pre>
+          <div class="concept-item">
+            <h3>Core Concept: Data Representation for Agents</h3>
+            <p>Unlike the Game of Life's grid, a boids simulation consists of many independent agents. Each agent has its own properties (position, velocity). We store these properties in parallel arrays. For example, <code>positionStorage</code> is a single large buffer, where the position for boid with <code>instanceIndex</code> is at index <code>instanceIndex</code>. Since we are in 3D, we use the <code>'vec3'</code> type, which holds three floats (x, y, z) for each element.</p>
+          </div>
+
+          <h4>Step 2: The Rules of Flocking in a Compute Shader</h4>
+          <p>The magic of boids comes from a set of simple steering behaviors that each boid follows based on its local neighborhood. We implement this entire logic in a single, large compute shader: <code>computeVelocity</code>. This shader calculates a new velocity for each boid based on several factors: the boid's desire to stay with the flock, avoid collisions, stay within the boundaries, and flee from predators. Let's break down how it works, part by part.</p>
+
+          <div class="concept-item">
+            <h3>Part 1: Interaction Zones and Thresholds</h3>
+            <p>Instead of making separate distance checks for the three main flocking rules, this implementation uses an efficient, unified approach. It defines a single, large <code>zoneRadius</code> which is the sum of the separation, alignment, and cohesion distances. The shader first checks if another boid is within this large zone. Only if it is does it proceed to figure out which specific behavior applies based on how close the other boid is. This avoids redundant distance calculations.</p>
+            <pre class="code-block"><code class="language-typescript">// Combine all rule distances into a single zone of influence
+const zoneRadius = separation.add(alignment).add(cohesion).toConst();
+// Calculate squared distance for cheaper comparisons
+const zoneRadiusSq = zoneRadius.mul(zoneRadius).toConst();
+
+// Pre-calculate normalized thresholds for switching between behaviors
+const separationThresh = separation.div(zoneRadius).toConst();
+const alignmentThresh = (separation.add(alignment)).div(zoneRadius).toConst();
+</code></pre>
+            <p>Here, <code>separationThresh</code> and <code>alignmentThresh</code> are values between 0 and 1 that mark the boundaries between the different behavior zones within the total <code>zoneRadius</code>.</p>
+          </div>
+
+          <div class="concept-item">
+            <h3>Part 2: External Forces - Boundaries and Predators</h3>
+            <p>Before checking interactions with other boids, two external forces are applied to each boid's velocity to keep the simulation contained and interactive.</p>
+            
+            <h5>Containment (Centering Force)</h5>
+            <p>A gentle force steers the boids back towards the center of the simulation space if they stray too far. This prevents the flock from flying away indefinitely. The force is weighted more heavily on the Y-axis to encourage a flatter, more horizontal flocking pattern.</p>
+            <pre class="code-block"><code class="language-typescript">// A vector pointing from the boid towards the world origin
+const dirToCenter = position.toVar();
+// Encourage horizontal flocking by weighting the y-axis
+dirToCenter.y.mulAssign(2.5); 
+// Apply a gentle force towards the center
+velocity.subAssign(normalize(dirToCenter).mul(deltaTime).mul(5.0));
+</code></pre>
+
+            <h5>Predator/Ray Avoidance</h5>
+            <p>To make the simulation interactive, we introduce a "predator" represented by a 3D ray (which can be controlled by the mouse). If a boid gets too close to this ray, a strong repulsive force is applied, causing it to flee. The closer the boid, the stronger the force. The boid's speed limit is also temporarily increased to help it escape faster.</p>
+            <pre class="code-block"><code class="language-typescript">// Calculate the boid's squared distance to the ray
+const directionToRay = rayOrigin.sub(position).toConst();
+const projectionLength = dot(directionToRay, rayDirection).toConst();
+const closestPoint = rayOrigin.sub(rayDirection.mul(projectionLength)).toConst();
+const directionToClosestPoint = closestPoint.sub(position).toConst();
+const distanceToClosestPoint = length(directionToClosestPoint).toConst();
+const distanceToClosestPointSq = distanceToClosestPoint.mul(distanceToClosestPoint).toConst();
+
+// If within the ray's radius, apply a repulsive force
+const rayRadiusSq = float(150.0).mul(150.0).toConst();
+If(distanceToClosestPointSq.lessThan(rayRadiusSq), () => {
+  const velocityAdjust = (distanceToClosestPointSq.div(rayRadiusSq).sub(1.0)).mul(deltaTime).mul(100.0);
+  velocity.addAssign(normalize(directionToClosestPoint).mul(velocityAdjust));
+  limit.addAssign(5.0); // Temporarily increase speed limit to escape
+});
+</code></pre>
+          </div>
+          
+          <div class="concept-item">
+            <h3>Part 3: The Core Flocking Logic Loop</h3>
+            <p>This is the heart of the boids algorithm. The shader enters a loop that iterates through every other boid in the simulation to calculate the three core flocking forces. After checking that a neighbor is within the overall <code>zoneRadius</code>, it calculates <code>percent</code>, which represents how deep the neighbor is within the zone (0.0 being at the exact same position, 1.0 being at the very edge).</p>
+            <pre class="code-block"><code class="language-typescript">// Loop through all other boids
+Loop({ start: uint(0), end: uint(count), type: 'uint', condition: '&lt;' }, ({ i }) => {
+  // ... (skip self, get neighbor data) ...
+  
+  const dirToBird = birdPosition.sub(position);
+  const distToBird = length(dirToBird);
+  // ... (skip if distance is zero) ...
+  const distToBirdSq = distToBird.mul(distToBird);
+
+  // Is the neighbor within our zone of influence?
+  If(distToBirdSq.greaterThan(zoneRadiusSq), () => {
+    Continue(); // Skip boid, it's too far away
+  });
+
+  // 'percent' determines which rule to apply
+  const percent = distToBirdSq.div(zoneRadiusSq);
+
+  // ... apply rules based on 'percent' ...
+});
+</code></pre>
+
+            <h5>Rule 1: Separation (Avoid Crowding)</h5>
+            <p>If <code>percent</code> is less than <code>separationThresh</code>, the neighbor is in the "personal space" zone. The boid steers strongly away from it to avoid a collision. The repulsive force, calculated as <code>(separationThresh.div(percent).sub(1.0))</code>, grows exponentially as the neighbor gets closer.</p>
+            <pre class="code-block"><code class="language-typescript">// RULE 1: SEPARATION
+If(percent.lessThan(separationThresh), () => {
+  const velocityAdjust = (separationThresh.div(percent).sub(1.0)).mul(deltaTime);
+  velocity.subAssign(normalize(dirToBird).mul(velocityAdjust));
+});
+</code></pre>
+
+            <h5>Rule 2: Alignment (Match Heading)</h5>
+            <p>If the neighbor is in the alignment zone, the boid tries to match its velocity. It steers towards the neighbor's direction of travel. The force is blended smoothly so that it is strongest in the middle of the alignment zone. Let's look at the full calculation.</p>
+            <pre class="code-block"><code class="language-typescript">// RULE 2: ALIGNMENT
+}).ElseIf(percent.lessThan(alignmentThresh), () => {
+  // 1. Find how far into the alignment zone the neighbor is (0.0 to 1.0)
+  const threshDelta = alignmentThresh.sub(separationThresh);
+  const adjustedPercent = (percent.sub(separationThresh)).div(threshDelta);
+
+  // 2. Get the neighbor's velocity
+  const birdVelocity = velocityStorage.element(i);
+
+  // 3. Calculate a smooth weight based on the position in the zone.
+  const cosRange = cos(adjustedPercent.mul(PI_2));
+  const cosRangeAdjust = float(1.0).sub(cosRange.mul(0.5)); // Full formula: 1.0 - cos(percent * 2PI) * 0.5
+  
+  // 4. Apply the alignment force, scaled by the weight
+  const velocityAdjust = cosRangeAdjust.mul(deltaTime);
+  velocity.addAssign(normalize(birdVelocity).mul(velocityAdjust));
+});
+</code></pre>
+            <div class="concept-item">
+              <h3>Dissecting the Alignment Weight</h3>
+              <p>The smooth blending is achieved with a clever use of the cosine function. Here's a breakdown of how the <code>cosRangeAdjust</code> weight is calculated:</p>
+              <ul class="param-list">
+                <li><strong><code>const adjustedPercent = ...</code></strong>: First, the boid's relative position within the alignment zone is calculated and normalized to a range of [0, 1]. A value of 0 means it's at the inner edge (bordering separation), and 1 means it's at the outer edge (bordering cohesion).</li>
+                <li><strong><code>const cosRange = cos(adjustedPercent.mul(PI_2))</code></strong>: This maps the [0, 1] position to a full cosine wave (from <code>cos(0)</code> to <code>cos(2&pi;)</code>). The result is a value that swings from 1 down to -1 and back to 1.</li>
+                <li><strong><code>const cosRangeAdjust = float(1.0).sub(cosRange.mul(0.5))</code></strong>: This is the key transformation. It takes the cosine wave (from -1 to 1) and maps it to a new range. Let's see how:
+                  <ul>
+                    <li>When <code>adjustedPercent</code> is 0 (at the inner edge), <code>cos</code> is 1. The formula becomes <code>1.0 - (1 * 0.5) = 0.5</code>.</li>
+                    <li>When <code>adjustedPercent</code> is 0.5 (in the middle), <code>cos</code> is -1. The formula becomes <code>1.0 - (-1 * 0.5) = 1.5</code>.</li>
+                    <li>When <code>adjustedPercent</code> is 1 (at the outer edge), <code>cos</code> is 1. The formula becomes <code>1.0 - (1 * 0.5) = 0.5</code>.</li>
+                  </ul>
+                  The result is a weighting factor that smoothly oscillates between 0.5 and 1.5. This means the alignment force is always active within its zone, but its strength is modulated to be 3x stronger in the middle of the zone than at the edges, leading to more organic flocking behavior.
+                </li>
+              </ul>
+            </div>
+
+            <h5>Rule 3: Cohesion (Move Toward Center)</h5>
+            <p>If the neighbor is in the outermost zone (the cohesion zone), the boid steers towards its position. This is the "glue" that holds the flock together, attracting boids towards the average position (or center of mass) of their local flockmates. The calculation is very similar to alignment, using the same weighting function to create a smooth, natural-looking force.</p>
+            <pre class="code-block"><code class="language-typescript">// RULE 3: COHESION
+}).Else(() => {
+  // 1. Find how far into the cohesion zone the neighbor is (0.0 to 1.0)
+  const threshDelta = alignmentThresh.oneMinus();
+  const adjustedPercent = threshDelta.equal(0.0).select(1.0, (percent.sub(alignmentThresh)).div(threshDelta));
+
+  // 2. Calculate the same smooth weight as used in alignment.
+  // This makes the cohesive force strongest in the middle of the zone.
+  const cosRange = cos(adjustedPercent.mul(PI_2));
+  const cosRangeAdjust = float(1.0).sub(cosRange.mul(0.5));
+  
+  // 3. Apply the cohesion force, steering towards the neighbor's position.
+  const velocityAdjust = cosRangeAdjust.mul(deltaTime);
+  velocity.addAssign(normalize(dirToBird).mul(velocityAdjust));
+});
+</code></pre>
+            <div class="concept-item">
+              <h3>The "Bump" for Cohesion</h3>
+              <p>Using the same <code>1.0 - cos(x) * 0.5</code> formula for cohesion creates a force that is weakest at the boundaries (0.5x strength) and strongest in the middle of the zone (1.5x strength). This behavior is desirable for cohesion because:</p>
+              <ul class="param-list">
+                <li>Boids just entering the cohesion zone (near the alignment boundary) are only gently pulled, preventing abrupt changes in direction.</li>
+                <li>Boids that are very far apart, near the edge of the total interaction radius, are also gently pulled, preventing them from "snapping" back into the flock too aggressively.</li>
+                <li>The strongest pull occurs when boids are comfortably in the middle of the cohesion zone, effectively maintaining the flock's overall structure.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="concept-item">
+            <h3>Part 4: Finalizing the Velocity</h3>
+            <p>After all forces have been accumulated, two final steps are performed.</p>
+
+            <h5>Velocity Limiting</h5>
+            <p>To prevent the simulation from becoming unstable, the boid's final calculated velocity is clamped to the <code>speedLimit</code>. This ensures no boid can accelerate to an infinitely high speed.</p>
+            <pre class="code-block"><code class="language-typescript">If(length(velocity).greaterThan(limit), () => {
+  velocity.assign(normalize(velocity).mul(limit));
+});
+</code></pre>
+            
+            <h5>Storing the Result</h5>
+            <p>Finally, the new, calculated velocity is written back into the <code>velocityStorage</code> buffer, ready to be used by the <code>computePosition</code> shader in the next stage of the pipeline.</p>
+            <pre class="code-block"><code class="language-typescript">velocityStorage.element(birdIndex).assign(velocity);
+</code></pre>
+          </div>
+
+          <h4>Step 3: Updating Position</h4>
+          <p>After all the velocity adjustments have been calculated, a second, much simpler compute shader called <code>computePosition</code> runs. It performs a basic physics update: the new position is the old position plus the new velocity, scaled by time.</p>
+          <pre class="code-block"><code class="language-typescript">// boids.ts -> computePosition
+const computePosition = Fn(() => {
+  // Standard physics update: position += velocity * deltaTime
+  positionStorage.element(instanceIndex).addAssign(
+    velocityStorage.element(instanceIndex).mul(deltaTime)
+  );
+
+  // ... (phase update logic for animation) ...
+})();
+</code></pre>
+
+          <h4>Step 4: Running the Simulation</h4>
+          <p>Finally, we orchestrate the simulation. In our main application loop, we call the two compute shaders in sequence. Although we don't have a visualization yet, we can run a test to verify the simulation is working. The test runs the simulation for a few frames and measures the average distance the boids have moved to confirm they are not static.</p>
+          <pre class="code-block"><code class="language-typescript">// In the main application loop...
+boids.update(deltaTime); // Update uniforms like time
+boids.compute(renderer); // This executes computeVelocity then computePosition
+</code></pre>
+
+          <h4>Complete Code</h4>
+          <p>And here is the complete code for the <code>BoidsSimulation</code> class. This contains all the setup, compute shader definitions, and update logic discussed above.</p>
+          <pre class="code-block"><code class="language-typescript">import * as THREE from 'three/webgpu';
+import { 
+  uniform, 
+  attributeArray, 
+  float, 
+  uint, 
+  Fn, 
+  If, 
+  Loop, 
+  Continue, 
+  normalize, 
+  instanceIndex, 
+  length, 
+  dot, 
+  cos, 
+  max, 
+  property,
+} from 'three/tsl';
+
+export interface BoidsConfig {
+  count: number;
+  speedLimit: number;
+  bounds: number;
+  separation: number;
+  alignment: number;
+  cohesion: number;
+  freedom: number;
+}
+
+export class BoidsSimulation {
+  // ... constructor and initialization ...
+  
+  private initializeCompute(): void {
+    const { count, speedLimit } = this.config;
+    const { positionStorage, velocityStorage, phaseStorage } = this.storage;
+
+    const computeVelocity = Fn(() => {
+      const PI = float(3.141592653589793);
+      const PI_2 = PI.mul(2.0);
+      const limit = property('float', 'limit').assign(speedLimit);
+
+      const { alignment, separation, cohesion, deltaTime, rayOrigin, rayDirection } = this.uniforms;
+
+      const zoneRadius = separation.add(alignment).add(cohesion).toConst();
+      const separationThresh = separation.div(zoneRadius).toConst();
+      const alignmentThresh = (separation.add(alignment)).div(zoneRadius).toConst();
+      const zoneRadiusSq = zoneRadius.mul(zoneRadius).toConst();
+
+      const birdIndex = instanceIndex.toConst('birdIndex');
+      const position = positionStorage.element(birdIndex).toVar();
+      const velocity = velocityStorage.element(birdIndex).toVar();
+
+      const directionToRay = rayOrigin.sub(position).toConst();
+      const projectionLength = dot(directionToRay, rayDirection).toConst();
+      const closestPoint = rayOrigin.sub(rayDirection.mul(projectionLength)).toConst();
+      const directionToClosestPoint = closestPoint.sub(position).toConst();
+      const distanceToClosestPoint = length(directionToClosestPoint).toConst();
+      const distanceToClosestPointSq = distanceToClosestPoint.mul(distanceToClosestPoint).toConst();
+
+      const rayRadiusSq = float(150.0).mul(150.0).toConst();
+      If(distanceToClosestPointSq.lessThan(rayRadiusSq), () => {
+        const velocityAdjust = (distanceToClosestPointSq.div(rayRadiusSq).sub(1.0)).mul(deltaTime).mul(100.0);
+        velocity.addAssign(normalize(directionToClosestPoint).mul(velocityAdjust));
+        limit.addAssign(5.0);
+      });
+
+      const dirToCenter = position.toVar();
+      dirToCenter.y.mulAssign(2.5);
+      velocity.subAssign(normalize(dirToCenter).mul(deltaTime).mul(5.0));
+
+      Loop({ start: uint(0), end: uint(count), type: 'uint', condition: '&lt;' }, ({ i }) => {
+        
+        If(i.equal(birdIndex), () => {
+          Continue();
+        });
+
+        const birdPosition = positionStorage.element(i);
+        const dirToBird = birdPosition.sub(position);
+        const distToBird = length(dirToBird);
+
+        If(distToBird.lessThan(0.0001), () => {
+          Continue();
+        });
+
+        const distToBirdSq = distToBird.mul(distToBird);
+
+        If(distToBirdSq.greaterThan(zoneRadiusSq), () => {
+          Continue();
+        });
+
+        const percent = distToBirdSq.div(zoneRadiusSq);
+
+        If(percent.lessThan(separationThresh), () => {
+          const velocityAdjust = (separationThresh.div(percent).sub(1.0)).mul(deltaTime);
+          velocity.subAssign(normalize(dirToBird).mul(velocityAdjust));
+        }).ElseIf(percent.lessThan(alignmentThresh), () => {
+          const threshDelta = alignmentThresh.sub(separationThresh);
+          const adjustedPercent = (percent.sub(separationThresh)).div(threshDelta);
+          const birdVelocity = velocityStorage.element(i);
+
+          const cosRange = cos(adjustedPercent.mul(PI_2));
+          const cosRangeAdjust = float(1.0).sub(cosRange.mul(0.5));
+          const velocityAdjust = cosRangeAdjust.mul(deltaTime);
+          velocity.addAssign(normalize(birdVelocity).mul(velocityAdjust));
+        }).Else(() => {
+          const threshDelta = alignmentThresh.oneMinus();
+          const adjustedPercent = threshDelta.equal(0.0).select(1.0, (percent.sub(alignmentThresh)).div(threshDelta));
+
+          const cosRange = cos(adjustedPercent.mul(PI_2));
+          const adj1 = cosRange.mul(-0.5);
+          const adj2 = adj1.add(0.5);
+          const adj3 = float(0.5).sub(adj2);
+
+          const velocityAdjust = adj3.mul(deltaTime);
+          velocity.addAssign(normalize(dirToBird).mul(velocityAdjust));
+        });
+      });
+
+      If(length(velocity).greaterThan(limit), () => {
+        velocity.assign(normalize(velocity).mul(limit));
+      });
+
+      velocityStorage.element(birdIndex).assign(velocity);
+    })().compute(count);
+
+    const computePosition = Fn(() => {
+      const { deltaTime } = this.uniforms;
+      positionStorage.element(instanceIndex).addAssign(velocityStorage.element(instanceIndex).mul(deltaTime).mul(15.0));
+
+      const velocity = velocityStorage.element(instanceIndex);
+      const phase = phaseStorage.element(instanceIndex);
+
+      const modValue = phase.add(deltaTime).add(length(velocity.xz).mul(deltaTime).mul(3.0)).add(max(velocity.y, 0.0).mul(deltaTime).mul(6.0));
+      phaseStorage.element(instanceIndex).assign(modValue.mod(62.83));
+    })().compute(count);
+    
+    // ...
+  }
+}
+</code></pre>
         </section>
 
       </div>

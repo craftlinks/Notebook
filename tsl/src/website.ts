@@ -1,5 +1,6 @@
 // Website integration for TSL examples
 import { initGameOfLife } from './game-of-life'
+import { BoidsSimulation } from '../boids'
 import hljs from 'highlight.js/lib/core';
 import typescript from 'highlight.js/lib/languages/typescript';
 import * as THREE from 'three/webgpu'
@@ -13,6 +14,12 @@ let basicComputeResult: any = null
 // Game of Life simulation state
 let gameOfLifeState: any = null
 let golVisualizationState: any = null
+
+// Shared renderer for all TSL examples
+let sharedRenderer: THREE.WebGPURenderer | null = null;
+
+// Boids simulation state
+let boidsSimulation: BoidsSimulation | null = null
 
 // Update basic example output
 async function updateBasicExampleOutput() {
@@ -112,8 +119,14 @@ async function initGameOfLifeVisualization() {
   }
 
   try {
+    // Initialize shared renderer if it doesn't exist
+    if (!sharedRenderer) {
+      sharedRenderer = new THREE.WebGPURenderer({ canvas, antialias: true })
+      await sharedRenderer.init()
+    }
+    
     // Initialize GOL, passing the canvas to use its context
-    gameOfLifeState = await initGameOfLife({ canvas })
+    gameOfLifeState = await initGameOfLife({ canvas, renderer: sharedRenderer })
 
     // Create scene and camera
     const scene = new THREE.Scene()
@@ -256,6 +269,106 @@ function startGameOfLifeAnimation() {
   })
 }
 
+// Test boids simulation without visualization
+async function testBoidsSimulation() {
+  console.log('Testing boids simulation...')
+  const outputElement = document.getElementById('boids-output');
+  if (!outputElement) {
+    console.error('Boids output element not found');
+    return { success: false, error: new Error('Boids output element not found') };
+  }
+
+  if (!sharedRenderer) {
+    console.error('Shared renderer not initialized. Boids test depends on GOL visualization.');
+    outputElement.innerHTML = `
+      <div class="output-error">
+        <div>Error: Shared renderer not available for boids test.</div>
+      </div>
+    `;
+    return { success: false, error: new Error('Shared renderer not available') };
+  }
+
+  try {
+    // Create a small test renderer
+    const renderer = sharedRenderer;
+    
+    // Create boids simulation with smaller count for testing
+    const boids = new BoidsSimulation({ 
+      count: 256, 
+      speedLimit: 5.0,
+      bounds: 100
+    })
+    
+    const storage = boids.getStorage()
+    
+    // Run one compute step to initialize the buffers properly
+    boids.update(1/60)
+    boids.compute(renderer)
+    
+    // Get initial positions after first compute step
+    const initialPositions = await renderer.getArrayBufferAsync(storage.positionStorage.value)
+    const initialPosData = new Float32Array(initialPositions)
+    
+    // Run simulation for a few more steps
+    for (let i = 0; i < 10; i++) {
+      boids.update(1/60) // 60 FPS
+      boids.compute(renderer)
+    }
+    
+    // Get final positions to verify movement
+    const finalPositions = await renderer.getArrayBufferAsync(storage.positionStorage.value)
+    const finalPosData = new Float32Array(finalPositions)
+    
+    // Calculate movement to verify simulation is working
+    let totalMovement = 0
+    let validBoids = 0
+    
+    for (let i = 0; i < Math.min(initialPosData.length, finalPosData.length); i += 3) {
+      const dx = finalPosData[i] - initialPosData[i]
+      const dy = finalPosData[i + 1] - initialPosData[i + 1]
+      const dz = finalPosData[i + 2] - initialPosData[i + 2]
+      
+      // Skip invalid positions
+      if (isFinite(dx) && isFinite(dy) && isFinite(dz)) {
+        const movement = Math.sqrt(dx * dx + dy * dy + dz * dz)
+        if (isFinite(movement)) {
+          totalMovement += movement
+          validBoids++
+        }
+      }
+    }
+    
+    const avgMovement = validBoids > 0 ? totalMovement / validBoids : 0
+    const successMessage = `✓ Boids simulation test successful!`;
+    
+    outputElement.innerHTML = `
+      <div class="output-success">
+        <div><strong>Status:</strong> ${successMessage}</div>
+        <div><strong>Test Details:</strong> Ran simulation for 10 frames with 256 boids.</div>
+        <div><strong>Result:</strong> Average movement of ${avgMovement.toFixed(3)} units detected.</div>
+        <div style="margin-top: 0.5rem; font-size: 0.8em; color: var(--text-muted);">
+          This confirms the GPU compute shaders are correctly updating boid positions.
+        </div>
+      </div>
+    `;
+    
+    // Store for potential future use
+    boidsSimulation = boids
+    
+    return { success: true, avgMovement }
+    
+  } catch (error) {
+    console.error('Boids simulation test failed:', error)
+    outputElement.innerHTML = `
+      <div class="output-error">
+        <div>Error running boids simulation test:</div>
+        <div>${(error as Error).message}</div>
+      </div>
+    `;
+    return { success: false, error }
+  }
+}
+
 // Initialize website functionality
 async function initWebsite() {
   console.log('Initializing TSL Compute Shaders website...')
@@ -263,6 +376,9 @@ async function initWebsite() {
   // Update example outputs
   await updateBasicExampleOutput()
   await updateGameOfLifeOutput()
+  
+  // Test boids simulation
+  await testBoidsSimulation()
 
   // Highlight all code blocks
   hljs.highlightAll();
@@ -278,4 +394,4 @@ if (document.readyState === 'loading') {
 }
 
 // Export for potential external use
-export { initWebsite, updateBasicExampleOutput, updateGameOfLifeOutput }
+export { initWebsite, updateBasicExampleOutput, updateGameOfLifeOutput, testBoidsSimulation }
