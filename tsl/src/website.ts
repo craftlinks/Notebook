@@ -313,6 +313,18 @@ async function runBoidsSimulation() {
   camera.updateProjectionMatrix();
   camera.position.z = 700;
 
+  // Mouse interaction
+  const raycaster = new THREE.Raycaster();
+  const mouse = new THREE.Vector2(1, 1);
+
+  function onMouseMove(event: MouseEvent) {
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+  }
+  container.addEventListener('mousemove', onMouseMove, false);
+
   // Handle window resizing
   window.addEventListener('resize', onWindowResize);
 
@@ -332,8 +344,11 @@ async function runBoidsSimulation() {
     const deltaTime = (now - lastTime) / 1000;
     lastTime = now;
     
+    // Update raycaster
+    raycaster.setFromCamera(mouse, camera);
+
     // Update simulation
-    boidsSimulation.update(deltaTime);
+    boidsSimulation.update(deltaTime, raycaster.ray.origin, raycaster.ray.direction);
     boidsSimulation.compute(renderer);
     
     // Render scene
