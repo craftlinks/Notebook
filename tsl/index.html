@@ -738,22 +738,8 @@ boids.compute(renderer); // This executes computeVelocity then computePosition
 
         </section>
 
-        <!-- Boids Test Section -->
-        <section id="boids-test" class="section">
-          <h2>Boids Test: Compute Simulation Verification</h2>
-          <p class="section-intro">Before diving into the full boids implementation, let's verify our compute simulation is working correctly. This test runs a simplified boids simulation and measures the movement to confirm the GPU shaders are functioning.</p>
-          
-          <div class="example-output">
-            <div id="boids-output" class="output-box">
-              <div class="loading">Testing boids simulation...</div>
-            </div>
-          </div>
-        </section>
-
         <!-- Boids Simulation Section -->
         <section id="boids-simulation-visual" class="section section-full-width">
-          <h2>Boids: Flocking Simulation</h2>
-          <p class="section-intro container">Finally, let's explore a more advanced, visually engaging example: a 3D flocking simulation of boids. This demonstrates how compute shaders can manage thousands of independent agents, each following a set of simple rules to create complex, emergent behavior. The rendering is also handled with a custom TSL vertex shader for maximum performance.</p>
           <div id="boids-container" class="boids-canvas-container">
             <!-- The boids canvas will be injected here -->
           </div>
