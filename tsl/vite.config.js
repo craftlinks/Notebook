@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite'
 
 export default defineConfig({
-  base: '/tsl/',
+  base: '/Notebook/tsl/',
   build: {
     outDir: 'dist',
     assetsDir: 'assets'
