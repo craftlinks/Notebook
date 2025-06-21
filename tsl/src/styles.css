@@ -148,3 +148,39 @@ button {
   cursor: pointer;
   font-family: inherit;
 }
+
+/* New styles for full-width boids canvas */
+.section-full-width {
+  max-width: none; /* Override the default container width */
+}
+
+.boids-canvas-container {
+  width: 100%;
+  padding-top: 56.25%; /* 16:9 Aspect Ratio */
+  position: relative;
+  background-color: #000;
+  margin-bottom: 2rem;
+}
+
+.boids-canvas-container canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.centered-image {
+  text-align: center;
+  margin: 2rem 0;
+}
+
+.boids-rules {
+  list-style-position: inside;
+  padding-left: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.boids-rules li {
+  margin-bottom: 0.75rem;
+}

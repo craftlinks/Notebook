@@ -481,6 +481,20 @@ renderer.setAnimationLoop(async () => {
           <h2>3. Boids: Agent-Based Simulation</h2>
           <p class="section-intro">Next, we'll explore a more complex, dynamic simulation: Boids. Developed by Craig Reynolds, this is an artificial life program that simulates the flocking behavior of birds. Each "boid" follows a set of simple rules, and the combination of these rules leads to complex, emergent flocking behavior. It's a classic example of how simple local interactions can create complex global patterns, making it a perfect candidate for GPU acceleration.</p>
 
+          <p>The emergent flocking behavior is governed by three simple rules that each boid follows based on its perception of its local neighbors. These rules, illustrated below, are applied concurrently to every boid in the simulation.</p>
+
+          <div class="centered-image">
+            <img src="assets/boids.svg" alt="Diagram illustrating the three boids rules: separation, alignment, and cohesion" style="max-width: 500px; height: auto;">
+          </div>
+
+          <ul class="boids-rules">
+            <li><strong>Separation:</strong> Steer to avoid crowding local flockmates. This prevents boids from clumping together and colliding.</li>
+            <li><strong>Alignment:</strong> Steer towards the average heading (direction of travel) of local flockmates. This helps the flock move as a cohesive group.</li>
+            <li><strong>Cohesion:</strong> Steer to move toward the average position (center of mass) of local flockmates. This keeps the flock together.</li>
+          </ul>
+
+          <p>The fascinating aspect of Boids is that these simple, local rules, when applied to hundreds or thousands of agents, produce complex and life-like global flocking behavior. None of the boids have a concept of the entire flock, only their immediate surroundings. This makes the algorithm highly parallelizable and a perfect fit for a GPU compute shader, where we can calculate the behavior for every boid simultaneously.</p>
+          
           <h4>Step 1: Configuration and State Storage</h4>
           <p>Like before, we start by defining the state of our simulation. For boids, each agent has a position and a velocity in 3D space. We also have several parameters that control their behavior.</p>
           <pre class="code-block"><code class="language-typescript">// boids.ts
@@ -586,7 +600,7 @@ If(distanceToClosestPointSq.lessThan(rayRadiusSq), () => {
 });
 </code></pre>
           </div>
-          
+
           <div class="concept-item">
             <h3>Part 3: The Core Flocking Logic Loop</h3>
             <p>This is the heart of the boids algorithm. The shader enters a loop that iterates through every other boid in the simulation to calculate the three core flocking forces. After checking that a neighbor is within the overall <code>zoneRadius</code>, it calculates <code>percent</code>, which represents how deep the neighbor is within the zone (0.0 being at the exact same position, 1.0 being at the very edge).</p>
@@ -685,7 +699,6 @@ If(percent.lessThan(separationThresh), () => {
               </ul>
             </div>
           </div>
-
           <div class="concept-item">
             <h3>Part 4: Finalizing the Velocity</h3>
             <p>After all forces have been accumulated, two final steps are performed.</p>
@@ -723,6 +736,27 @@ boids.update(deltaTime); // Update uniforms like time
 boids.compute(renderer); // This executes computeVelocity then computePosition
 </code></pre>
 
+        </section>
+
+        <!-- Boids Test Section -->
+        <section id="boids-test" class="section">
+          <h2>Boids Test: Compute Simulation Verification</h2>
+          <p class="section-intro">Before diving into the full boids implementation, let's verify our compute simulation is working correctly. This test runs a simplified boids simulation and measures the movement to confirm the GPU shaders are functioning.</p>
+          
+          <div class="example-output">
+            <div id="boids-output" class="output-box">
+              <div class="loading">Testing boids simulation...</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Boids Simulation Section -->
+        <section id="boids-simulation-visual" class="section section-full-width">
+          <h2>Boids: Flocking Simulation</h2>
+          <p class="section-intro container">Finally, let's explore a more advanced, visually engaging example: a 3D flocking simulation of boids. This demonstrates how compute shaders can manage thousands of independent agents, each following a set of simple rules to create complex, emergent behavior. The rendering is also handled with a custom TSL vertex shader for maximum performance.</p>
+          <div id="boids-container" class="boids-canvas-container">
+            <!-- The boids canvas will be injected here -->
+          </div>
           <h4>Complete Code</h4>
           <p>And here is the complete code for the <code>BoidsSimulation</code> class. This contains all the setup, compute shader definitions, and update logic discussed above.</p>
           <pre class="code-block"><code class="language-typescript">import * as THREE from 'three/webgpu';

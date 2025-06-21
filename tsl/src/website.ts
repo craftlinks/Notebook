@@ -1,6 +1,7 @@
 // Website integration for TSL examples
 import { initGameOfLife } from './game-of-life'
 import { BoidsSimulation } from '../boids'
+import { BoidsVisualization } from '../boids-visualization'
 import hljs from 'highlight.js/lib/core';
 import typescript from 'highlight.js/lib/languages/typescript';
 import * as THREE from 'three/webgpu'
@@ -20,6 +21,8 @@ let sharedRenderer: THREE.WebGPURenderer | null = null;
 
 // Boids simulation state
 let boidsSimulation: BoidsSimulation | null = null
+let boidsVisualization: BoidsVisualization | null = null
+let boidsVisualizationState: any = null
 
 // Update basic example output
 async function updateBasicExampleOutput() {
@@ -269,119 +272,88 @@ function startGameOfLifeAnimation() {
   })
 }
 
-// Test boids simulation without visualization
-async function testBoidsSimulation() {
-  console.log('Testing boids simulation...')
-  const outputElement = document.getElementById('boids-output');
-  if (!outputElement) {
-    console.error('Boids output element not found');
-    return { success: false, error: new Error('Boids output element not found') };
+async function runBasicExample() {
+  await updateBasicExampleOutput();
+}
+
+async function runGameOfLife() {
+  await updateGameOfLifeOutput();
+}
+
+async function runBoidsSimulation() {
+  const container = document.getElementById('boids-container');
+  if (!container) {
+    console.error('Boids container not found');
+    return;
   }
 
-  if (!sharedRenderer) {
-    console.error('Shared renderer not initialized. Boids test depends on GOL visualization.');
-    outputElement.innerHTML = `
-      <div class="output-error">
-        <div>Error: Shared renderer not available for boids test.</div>
-      </div>
-    `;
-    return { success: false, error: new Error('Shared renderer not available') };
+  // Basic setup
+  const renderer = new THREE.WebGPURenderer({ antialias: true });
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setSize(container.clientWidth, container.clientHeight);
+  container.appendChild(renderer.domElement);
+
+  await renderer.init();
+
+  // Boids Simulation
+  const boidsSimulation = new BoidsSimulation({
+    count: 8192,
+  });
+
+  // Boids Visualization
+  const boidsVisualization = new BoidsVisualization(boidsSimulation, {
+    particleSize: 6.0,
+    useTriangles: true,
+    colorA: new THREE.Color(0x00ff00), // green
+    colorB: new THREE.Color(0xff0000)  // red
+  });
+  
+  const camera = boidsVisualization.getCamera();
+  camera.aspect = container.clientWidth / container.clientHeight;
+  camera.updateProjectionMatrix();
+  camera.position.z = 700;
+
+  // Handle window resizing
+  window.addEventListener('resize', onWindowResize);
+
+  function onWindowResize() {
+    if (container) {
+      boidsVisualization.onWindowResize(container.clientWidth, container.clientHeight);
+      renderer.setSize(container.clientWidth, container.clientHeight);
+    }
   }
 
-  try {
-    // Create a small test renderer
-    const renderer = sharedRenderer;
+  // Animation loop
+  let lastTime = performance.now();
+  function animate() {
+    requestAnimationFrame(animate);
+
+    const now = performance.now();
+    const deltaTime = (now - lastTime) / 1000;
+    lastTime = now;
     
-    // Create boids simulation with smaller count for testing
-    const boids = new BoidsSimulation({ 
-      count: 256, 
-      speedLimit: 5.0,
-      bounds: 100
-    })
+    // Update simulation
+    boidsSimulation.update(deltaTime);
+    boidsSimulation.compute(renderer);
     
-    const storage = boids.getStorage()
-    
-    // Run one compute step to initialize the buffers properly
-    boids.update(1/60)
-    boids.compute(renderer)
-    
-    // Get initial positions after first compute step
-    const initialPositions = await renderer.getArrayBufferAsync(storage.positionStorage.value)
-    const initialPosData = new Float32Array(initialPositions)
-    
-    // Run simulation for a few more steps
-    for (let i = 0; i < 10; i++) {
-      boids.update(1/60) // 60 FPS
-      boids.compute(renderer)
-    }
-    
-    // Get final positions to verify movement
-    const finalPositions = await renderer.getArrayBufferAsync(storage.positionStorage.value)
-    const finalPosData = new Float32Array(finalPositions)
-    
-    // Calculate movement to verify simulation is working
-    let totalMovement = 0
-    let validBoids = 0
-    
-    for (let i = 0; i < Math.min(initialPosData.length, finalPosData.length); i += 3) {
-      const dx = finalPosData[i] - initialPosData[i]
-      const dy = finalPosData[i + 1] - initialPosData[i + 1]
-      const dz = finalPosData[i + 2] - initialPosData[i + 2]
-      
-      // Skip invalid positions
-      if (isFinite(dx) && isFinite(dy) && isFinite(dz)) {
-        const movement = Math.sqrt(dx * dx + dy * dy + dz * dz)
-        if (isFinite(movement)) {
-          totalMovement += movement
-          validBoids++
-        }
-      }
-    }
-    
-    const avgMovement = validBoids > 0 ? totalMovement / validBoids : 0
-    const successMessage = `✓ Boids simulation test successful!`;
-    
-    outputElement.innerHTML = `
-      <div class="output-success">
-        <div><strong>Status:</strong> ${successMessage}</div>
-        <div><strong>Test Details:</strong> Ran simulation for 10 frames with 256 boids.</div>
-        <div><strong>Result:</strong> Average movement of ${avgMovement.toFixed(3)} units detected.</div>
-        <div style="margin-top: 0.5rem; font-size: 0.8em; color: var(--text-muted);">
-          This confirms the GPU compute shaders are correctly updating boid positions.
-        </div>
-      </div>
-    `;
-    
-    // Store for potential future use
-    boidsSimulation = boids
-    
-    return { success: true, avgMovement }
-    
-  } catch (error) {
-    console.error('Boids simulation test failed:', error)
-    outputElement.innerHTML = `
-      <div class="output-error">
-        <div>Error running boids simulation test:</div>
-        <div>${(error as Error).message}</div>
-      </div>
-    `;
-    return { success: false, error }
+    // Render scene
+    boidsVisualization.render(renderer);
   }
+
+  animate();
 }
 
 // Initialize website functionality
 async function initWebsite() {
   console.log('Initializing TSL Compute Shaders website...')
   
-  // Update example outputs
-  await updateBasicExampleOutput()
-  await updateGameOfLifeOutput()
-  
-  // Test boids simulation
-  await testBoidsSimulation()
-
   // Highlight all code blocks
   hljs.highlightAll();
+
+  // Update example outputs
+  await runBasicExample()
+  await runGameOfLife()
+  await runBoidsSimulation()
   
   console.log('Website initialization complete!')
 }
@@ -394,4 +366,4 @@ if (document.readyState === 'loading') {
 }
 
 // Export for potential external use
-export { initWebsite, updateBasicExampleOutput, updateGameOfLifeOutput, testBoidsSimulation }
+export { initWebsite, updateBasicExampleOutput, updateGameOfLifeOutput }

@@ -15,6 +15,7 @@ import {
   cos, 
   max, 
   property,
+  negate,
 } from 'three/tsl';
 
 export interface BoidsConfig {
@@ -277,7 +278,33 @@ export class BoidsSimulation {
 
     const computePosition = Fn(() => {
       const { deltaTime } = this.uniforms;
-      positionStorage.element(instanceIndex).addAssign(velocityStorage.element(instanceIndex).mul(deltaTime).mul(15.0));
+      const position = positionStorage.element(instanceIndex).toVar();
+      
+      position.addAssign(velocityStorage.element(instanceIndex).mul(deltaTime).mul(15.0));
+
+      // Add boundary checks to wrap boids around the simulation area
+      const halfBounds = float(this.config.bounds / 2.0);
+
+      If(position.x.greaterThan(halfBounds), () => {
+        position.x.assign(negate(halfBounds));
+      });
+      If(position.x.lessThan(negate(halfBounds)), () => {
+        position.x.assign(halfBounds);
+      });
+      If(position.y.greaterThan(halfBounds), () => {
+        position.y.assign(negate(halfBounds));
+      });
+      If(position.y.lessThan(negate(halfBounds)), () => {
+        position.y.assign(halfBounds);
+      });
+      If(position.z.greaterThan(halfBounds), () => {
+        position.z.assign(negate(halfBounds));
+      });
+      If(position.z.lessThan(negate(halfBounds)), () => {
+        position.z.assign(halfBounds);
+      });
+
+      positionStorage.element(instanceIndex).assign(position);
 
       const velocity = velocityStorage.element(instanceIndex);
       const phase = phaseStorage.element(instanceIndex);
