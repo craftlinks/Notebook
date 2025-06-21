@@ -336,7 +336,7 @@ async function initGameOfLife() {
       If(neighbors.equal(3), () => {
         nextCell.assign(1) // Birth (exactly 3 neighbors)
       }).Else(() => {
-        nextCell.assign(0) // Stays dead
+        nextCell.assign(0); // Stays dead
       })
     })
   })()
@@ -740,116 +740,7 @@ boids.compute(renderer); // This executes computeVelocity then computePosition
           <div id="boids-container" class="boids-canvas-container">
             <!-- The boids canvas will be injected here -->
           </div>
-          
-          <h4>Step 5: Visualizing the Flock</h4>
-          <p>The simulation logic is complete, but how do we see the result? Visualizing thousands of dynamic agents efficiently is a challenge perfectly suited for the GPU. This section breaks down how the boids are rendered using a seamless, high-performance pipeline that connects the compute simulation directly to the graphics display without ever needing to bring data back to the CPU.</p>
-
-          <div class="concept-item">
-            <h3>Core Principle: Instanced Rendering with <code>InstancedMesh</code></h3>
-            <p>Instead of creating thousands of individual <code>THREE.Mesh</code> objects for each boid (which would be extremely slow for the CPU to manage), the visualization uses a single <code>THREE.InstancedMesh</code>.</p>
-            <ul class="param-list">
-              <li><strong>What it is:</strong> An <code>InstancedMesh</code> allows you to render a huge number of copies (instances) of a single base geometry in one command to the GPU (a "draw call").</li>
-              <li><strong>How it works:</strong> You provide one base geometry (in this case, a simple triangle) and tell the <code>InstancedMesh</code> how many copies to draw. The work of placing, rotating, and coloring each individual instance is then offloaded entirely to custom vertex and fragment shaders running on the GPU.</li>
-            </ul>
-          </div>
-
-          <div class="concept-item">
-            <h3>The TSL Shaders: <code>vertexNode</code> and <code>colorNode</code></h3>
-            <p>The core of the visualization is a custom <code>THREE.NodeMaterial</code> whose behavior is defined using two TSL functions. These functions compile into shader programs that run on the GPU.</p>
-            <ol>
-              <li><strong><code>vertexNode</code> (The Vertex Shader):</strong> Its job is to calculate the final 2D screen position of each vertex for every single boid instance.</li>
-              <li><strong><code>colorNode</code> (The Fragment Shader):</strong> Its job is to calculate the final color of each pixel for every boid instance.</li>
-            </ol>
-            <p>A crucial point is that these shaders read directly from the same GPU storage buffers (<code>positionStorage</code> and <code>velocityStorage</code>) that the boids compute shader writes to. This creates a "zero-copy" data flow entirely on the GPU, which is key to its performance.</p>
-          </div>
-
-          <h4>In-Depth: The Vertex Shader (<code>boidVertexShader</code>)</h4>
-          <p>This is where most of the magic happens. The vertex shader runs for every vertex of the base triangle, for every boid instance. Its goal is to apply the correct position and orientation to each boid. Let's break down its execution step-by-step for a single vertex of a single boid:</p>
-          <pre class="code-block"><code class="language-typescript">// boids-visualization.ts
-const boidVertexShader = Fn(() => {
-  // Get the current instance index (which boid we're rendering)
-  const boidIndex = instanceIndex;
-  
-  // Get position and velocity from compute storage
-  const boidPosition = this.storage.positionStorage.element(boidIndex);
-  const boidVelocity = this.storage.velocityStorage.element(boidIndex);
-  
-  // Scale the local vertex position
-  const localPos = positionLocal.mul(this.config.particleSize);
-  
-  // Create a rotation matrix to align the boid with its velocity
-  const velocity = normalize(boidVelocity.add(vec3(0.001))); // Epsilon for stability
-
-  const forward = velocity.toVar('forward');
-  const up = vec3(0.0, 1.0, 0.0);
-  const right = normalize(cross(up, forward)).toVar('right');
-  const newUp = normalize(cross(forward, right));
-  
-  const rotationMatrix = mat3(right, newUp, forward);
-  
-  const rotatedPos = rotationMatrix.mul(localPos);
-  
-  // Translate to boid's world position
-  const worldPos = rotatedPos.add(boidPosition);
-  
-  // Transform to clip space for rendering
-  return cameraProjectionMatrix.mul(cameraViewMatrix).mul(vec4(worldPos, 1.0));
-});</code></pre>
-          <ol class="detailed-steps" style="list-style-type: decimal; padding-left: 20px; margin-top: 1em;">
-              <li><strong>Identify the Boid:</strong> The shader gets the special <code>instanceIndex</code> variable, a unique ID from 0 to <code>count-1</code> that tells it which boid instance it's currently processing.</li>
-              <li><strong>Fetch State from GPU Storage:</strong> It uses the <code>boidIndex</code> to read that specific boid's position and velocity directly from the <code>positionStorage</code> and <code>velocityStorage</code> buffers. For example, <code>this.storage.positionStorage.element(boidIndex)</code> is the TSL code that translates to a GPU memory read at the correct offset in the buffer.</li>
-              <li><strong>Orient the Boid (Vector Math):</strong> To make the boid triangle "point" in the direction it's flying, the shader constructs a 3D rotation matrix on-the-fly.
-                <ul style="list-style-type: disc; padding-left: 20px; margin-top: 0.5em;">
-                  <li>The boid's normalized <code>velocity</code> vector serves as the "forward" direction.</li>
-                  <li>It calculates the "right" direction by taking the cross product of a world "up" vector `(0,1,0)` and the `forward` vector. The cross product of two vectors yields a third vector that is perpendicular to both.</li>
-                  <li>To ensure the basis is perfectly orthogonal, it recalculates a `newUp` vector by taking the cross product of the `forward` and `right` vectors.</li>
-                  <li>These three vectors (`right`, `newUp`, and `forward`) form the columns of a `mat3` rotation matrix.</li>
-                </ul>
-              </li>
-              <li><strong>Apply Rotation and Position:</strong> The original vertex position of the base triangle (<code>positionLocal</code>) is first scaled, then multiplied by the <code>rotationMatrix</code>. This orients the triangle in 3D space. The result is then added to the boid's unique world position fetched from the storage buffer.</li>
-              <li><strong>Project to Screen:</strong> The final <code>worldPos</code> is multiplied by the camera's view and projection matrices. This is the standard 3D graphics transformation that converts the 3D world coordinate into the 2D coordinate that will be displayed on the screen.</li>
-          </ol>
-
-          <h4>In-Depth: The Fragment Shader (<code>boidFragmentShader</code>)</h4>
-          <p>After the vertex shader has positioned the triangle on the screen, the fragment (or pixel) shader runs for every pixel inside that triangle. Its job is to determine the pixel's color.</p>
-          <pre class="code-block"><code class="language-typescript">// boids-visualization.ts
-const boidFragmentShader = Fn(() => {
-  const boidIndex = instanceIndex;
-  const velocity = this.storage.velocityStorage.element(boidIndex);
-  const speed = length(velocity);
-  
-  // Normalize speed for color mixing (assuming max speed around 10)
-  const normalizedSpeed = speed.div(10.0).saturate();
-  
-  // Mix between two colors based on speed
-  const color = mix(
-    vec3(this.config.colorA.r, this.config.colorA.g, this.config.colorA.b),
-    vec3(this.config.colorB.r, this.config.colorB.g, this.config.colorB.b),
-    normalizedSpeed
-  );
-  
-  return vec4(color, 1.0);
-});</code></pre>
-          <ol class="detailed-steps" style="list-style-type: decimal; padding-left: 20px; margin-top: 1em;">
-            <li><strong>Identify the Boid:</strong> Just like the vertex shader, it uses <code>instanceIndex</code> to know which boid it's coloring.</li>
-            <li><strong>Fetch Velocity:</strong> It reads the <code>velocity</code> for that specific boid from the <code>velocityStorage</code> buffer.</li>
-            <li><strong>Calculate Speed:</strong> It calculates the magnitude (or <code>length</code>) of the <code>velocity</code> vector to get the boid's scalar speed.</li>
-            <li><strong>Normalize and Interpolate:</strong> The <code>speed</code> is normalized to a range of 0.0 to 1.0 (the <code>.saturate()</code> call clamps the value). This <code>normalizedSpeed</code> is then used as the mixing factor in TSL's <code>mix()</code> function. This function performs a linear interpolation between two colors. A boid with a speed of 0 will be one color, a boid at maximum speed will be the other, and boids in between will be a blended color.</li>
-            <li><strong>Output Color:</strong> The final calculated color is returned as a <code>vec4</code> (with an alpha value of 1.0 for full opacity).</li>
-          </ol>
-
-          <h4>Summary of the Data Flow per Frame</h4>
-          <p>The entire process is a highly optimized loop that happens on every frame:</p>
-          <ol class="detailed-steps" style="list-style-type: decimal; padding-left: 20px; margin-top: 1em;">
-            <li>The CPU tells the GPU to run the boids simulation compute shaders.</li>
-            <li>The compute shaders run, updating the positions and velocities within the GPU's storage buffers.</li>
-            <li>The CPU tells the GPU to render the <code>InstancedMesh</code>.</li>
-            <li>The GPU executes the <strong>vertex shader</strong> for each boid, reading the *newly updated* positions and velocities to calculate where each boid should be drawn and how it should be oriented.</li>
-            <li>The GPU then executes the <strong>fragment shader</strong> for each pixel of each boid, reading the velocities to determine the correct color.</li>
-          </ol>
-          <p>This entire process minimizes CPU involvement and avoids costly data transfers between the CPU and GPU, enabling a smooth, real-time visualization of thousands of agents.</p>
-
-           <h4>Complete Code</h4>
+          <h4>Complete Code</h4>
           <p>And here is the complete code for the <code>BoidsSimulation</code> class. This contains all the setup, compute shader definitions, and update logic discussed above.</p>
           <pre class="code-block"><code class="language-typescript">import * as THREE from 'three/webgpu';
 import { 
@@ -991,9 +882,320 @@ export class BoidsSimulation {
   }
 }
 </code></pre>
+
+          
+          <h4>Step 5: Visualizing the Flock</h4>
+          <p>The simulation logic is complete, but how do we see the result? Visualizing thousands of dynamic agents efficiently is a challenge perfectly suited for the GPU. This section breaks down how the boids are rendered using a seamless, high-performance pipeline that connects the compute simulation directly to the graphics display without ever needing to bring data back to the CPU.</p>
+
+          <div class="concept-item">
+            <h3>Core Principle: Instanced Rendering with <code>InstancedMesh</code></h3>
+            <p>Instead of creating thousands of individual <code>THREE.Mesh</code> objects for each boid (which would be extremely slow for the CPU to manage), the visualization uses a single <code>THREE.InstancedMesh</code>.</p>
+            <ul class="param-list">
+              <li><strong>What it is:</strong> An <code>InstancedMesh</code> allows you to render a huge number of copies (instances) of a single base geometry in one command to the GPU (a "draw call").</li>
+              <li><strong>How it works:</strong> You provide one base geometry (in this case, a simple triangle) and tell the <code>InstancedMesh</code> how many copies to draw. The work of placing, rotating, and coloring each individual instance is then offloaded entirely to custom vertex and fragment shaders running on the GPU.</li>
+            </ul>
+          </div>
+
+          <div class="concept-item">
+            <h3>The TSL Shaders: <code>vertexNode</code> and <code>colorNode</code></h3>
+            <p>The core of the visualization is a custom <code>THREE.NodeMaterial</code> whose behavior is defined using two TSL functions. These functions compile into shader programs that run on the GPU.</p>
+            <ol>
+              <li><strong><code>vertexNode</code> (The Vertex Shader):</strong> Its job is to calculate the final 2D screen position of each vertex for every single boid instance.</li>
+              <li><strong><code>colorNode</code> (The Fragment Shader):</strong> Its job is to calculate the final color of each pixel for every boid instance.</li>
+            </ol>
+            <p>A crucial point is that these shaders read directly from the same GPU storage buffers (<code>positionStorage</code> and <code>velocityStorage</code>) that the boids compute shader writes to. This creates a "zero-copy" data flow entirely on the GPU, which is key to its performance.</p>
+          </div>
+
+          <h4>In-Depth: The Vertex Shader (<code>boidVertexShader</code>)</h4>
+          <p>This is where most of the magic happens. The vertex shader runs for every vertex of the base triangle, for every boid instance. Its goal is to apply the correct position and orientation to each boid. Let's break down its execution step-by-step for a single vertex of a single boid:</p>
+          <pre class="code-block"><code class="language-typescript">// boids-visualization.ts
+const boidVertexShader = Fn(() => {
+  // Get the current instance index (which boid we're rendering)
+  const boidIndex = instanceIndex;
+  
+  // Get position and velocity from compute storage
+  const boidPosition = this.storage.positionStorage.element(boidIndex);
+  const boidVelocity = this.storage.velocityStorage.element(boidIndex);
+  
+  // Transform local vertex position
+  const localPos = positionLocal.toVar();
+  localPos.mulAssign(this.config.particleSize);
+  
+  // Create a rotation matrix to align the boid with its velocity
+  const velocity = normalize(boidVelocity.add(vec3(0.001, 0.001, 0.001))); // Add epsilon to avoid zero velocity
+
+  const forward = velocity.toVar('forward');
+  const up = vec3(0.0, 1.0, 0.0).toVar('up');
+  const right = normalize(cross(up, forward)).toVar('right');
+  const newUp = normalize(cross(forward, right)).toVar('newUp');
+  
+  const rotationMatrix = mat3(
+    right.x, forward.x, newUp.x,
+    right.y, forward.y, newUp.y,
+    right.z, forward.z, newUp.z
+  ).toVar();
+  
+  const rotatedPos = rotationMatrix.mul(localPos);
+  
+  // Translate to boid position
+  const worldPos = rotatedPos.add(boidPosition);
+  
+  // Transform to clip space
+  return cameraProjectionMatrix.mul(cameraViewMatrix).mul(vec4(worldPos, 1.0));
+});</code></pre>
+          <ol class="detailed-steps" style="list-style-type: decimal; padding-left: 20px; margin-top: 1em;">
+              <li><strong>Identify the Boid:</strong> The shader gets the special <code>instanceIndex</code> variable, a unique ID from 0 to <code>count-1</code> that tells it which boid instance it's currently processing.</li>
+              <li><strong>Fetch State from GPU Storage:</strong> It uses the <code>boidIndex</code> to read that specific boid's position and velocity directly from the <code>positionStorage</code> and <code>velocityStorage</code> buffers. For example, <code>this.storage.positionStorage.element(boidIndex)</code> is the TSL code that translates to a GPU memory read at the correct offset in the buffer.</li>
+              <li><strong>Orient the Boid (Vector Math):</strong> To make the boid triangle "point" in the direction it's flying, the shader constructs a 3D rotation matrix on-the-fly.
+                <ul style="list-style-type: disc; padding-left: 20px; margin-top: 0.5em;">
+                  <li>The boid's normalized <code>velocity</code> vector serves as the "forward" direction.</li>
+                  <li>It calculates the "right" direction by taking the cross product of a world "up" vector `(0,1,0)` and the `forward` vector. The cross product of two vectors yields a third vector that is perpendicular to both.</li>
+                  <li>To ensure the basis is perfectly orthogonal, it recalculates a `newUp` vector by taking the cross product of the `forward` and `right` vectors.</li>
+                  <li>These three vectors (`right`, `newUp`, and `forward`) form the columns of a `mat3` rotation matrix.</li>
+                </ul>
+              </li>
+              <li><strong>Apply Rotation and Position:</strong> The original vertex position of the base triangle (<code>positionLocal</code>) is first scaled, then multiplied by the <code>rotationMatrix</code>. This orients the triangle in 3D space. The result is then added to the boid's unique world position fetched from the storage buffer.</li>
+              <li><strong>Project to Screen:</strong> The final <code>worldPos</code> is multiplied by the camera's view and projection matrices. This is the standard 3D graphics transformation that converts the 3D world coordinate into the 2D coordinate that will be displayed on the screen.</li>
+          </ol>
+
+          <h4>In-Depth: The Fragment Shader (<code>boidFragmentShader</code>)</h4>
+          <p>After the vertex shader has positioned the triangle on the screen, the fragment (or pixel) shader runs for every pixel inside that triangle. Its job is to determine the pixel's color.</p>
+          <pre class="code-block"><code class="language-typescript">// boids-visualization.ts
+const boidFragmentShader = Fn(() => {
+  const boidIndex = instanceIndex;
+  const velocity = this.storage.velocityStorage.element(boidIndex);
+  const speed = length(velocity);
+  
+  // Normalize speed for color mixing (assuming max speed around 10)
+  const normalizedSpeed = speed.div(10.0).saturate();
+  
+  // Mix between two colors based on speed
+  const color = mix(
+    vec3(this.config.colorA.r, this.config.colorA.g, this.config.colorA.b),
+    vec3(this.config.colorB.r, this.config.colorB.g, this.config.colorB.b),
+    normalizedSpeed
+  );
+  
+  return vec4(color, 1.0);
+});</code></pre>
+          <ol class="detailed-steps" style="list-style-type: decimal; padding-left: 20px; margin-top: 1em;">
+            <li><strong>Identify the Boid:</strong> Just like the vertex shader, it uses <code>instanceIndex</code> to know which boid it's coloring.</li>
+            <li><strong>Fetch Velocity:</strong> It reads the <code>velocity</code> for that specific boid from the <code>velocityStorage</code> buffer.</li>
+            <li><strong>Calculate Speed:</strong> It calculates the magnitude (or <code>length</code>) of the <code>velocity</code> vector to get the boid's scalar speed.</li>
+            <li><strong>Normalize and Interpolate:</strong> The <code>speed</code> is normalized to a range of 0.0 to 1.0 (the <code>.saturate()</code> call clamps the value). This <code>normalizedSpeed</code> is then used as the mixing factor in TSL's <code>mix()</code> function. This function performs a linear interpolation between two colors. A boid with a speed of 0 will be one color, a boid at maximum speed will be the other, and boids in between will be a blended color.</li>
+            <li><strong>Output Color:</strong> The final calculated color is returned as a <code>vec4</code> (with an alpha value of 1.0 for full opacity).</li>
+          </ol>
+
+          <h4>Summary of the Data Flow per Frame</h4>
+          <p>The entire process is a highly optimized loop that happens on every frame:</p>
+          <ol class="detailed-steps" style="list-style-type: decimal; padding-left: 20px; margin-top: 1em;">
+            <li>The CPU tells the GPU to run the boids simulation compute shaders.</li>
+            <li>The compute shaders run, updating the positions and velocities within the GPU's storage buffers.</li>
+            <li>The CPU tells the GPU to render the <code>InstancedMesh</code>.</li>
+            <li>The GPU executes the <strong>vertex shader</strong> for each boid, reading the *newly updated* positions and velocities to calculate where each boid should be drawn and how it should be oriented.</li>
+            <li>The GPU then executes the <strong>fragment shader</strong> for each pixel of each boid, reading the velocities to determine the correct color.</li>
+          </ol>
+          <p>This entire process minimizes CPU involvement and avoids costly data transfers between the CPU and GPU, enabling a smooth, real-time visualization of thousands of agents.</p>
+
+          <h4>Complete Boids Visualization Code</h4>
+          <p>Here is the complete code for the <code>BoidsVisualization</code> class, which handles all aspects of rendering the boids flock using Three.js and TSL shaders.</p>
+          <pre class="code-block"><code class="language-typescript">import * as THREE from 'three/webgpu';
+import { 
+  Fn, 
+  normalize, 
+  length, 
+  mix,
+  vec3,
+  vec4,
+  instanceIndex,
+  positionLocal,
+  cameraProjectionMatrix,
+  cameraViewMatrix,
+  mat3,
+  cross
+} from 'three/tsl';
+import { BoidsSimulation } from './boids';
+
+export interface BoidsVisualizationConfig {
+  particleSize: number;
+  colorA: THREE.Color;
+  colorB: THREE.Color;
+  useTriangles: boolean; // true for triangles, false for quads
+}
+
+export class BoidsVisualization {
+  private scene: THREE.Scene;
+  private camera!: THREE.PerspectiveCamera;
+  private mesh!: THREE.InstancedMesh;
+  private material!: THREE.NodeMaterial;
+  private config: BoidsVisualizationConfig;
+  private storage: any; // Use any type to avoid import issues
+  private count: number;
+
+  constructor(
+    simulation: BoidsSimulation,
+    config: Partial&lt;BoidsVisualizationConfig&gt; = {}
+  ) {
+    this.config = {
+      particleSize: 1.0,
+      colorA: new THREE.Color(0x00ff00),
+      colorB: new THREE.Color(0xff0000),
+      useTriangles: true,
+      ...config
+    };
+
+    this.storage = simulation.getStorage();
+    this.count = simulation.getConfig().count;
+
+    this.scene = new THREE.Scene();
+    this.setupCamera();
+    this.setupGeometry();
+    this.setupMaterial();
+    this.setupMesh();
+  }
+
+  private setupCamera(): void {
+    this.camera = new THREE.PerspectiveCamera(
+      50, 
+      window.innerWidth / window.innerHeight, 
+      1, 
+      10000
+    );
+    this.camera.position.set(0, 0, 1600);
+  }
+
+  private setupGeometry(): THREE.BufferGeometry {
+    if (this.config.useTriangles) {
+      // Simple triangle pointing upward (in local space)
+      const geometry = new THREE.BufferGeometry();
+      const vertices = new Float32Array([
+        0.0,  0.5, 0.0,  // top vertex
+       -0.1, -0.5, 0.0,  // bottom left
+        0.1, -0.5, 0.0   // bottom right
+      ]);
+      geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+      return geometry;
+    } else {
+      // Simple quad as fallback
+      return new THREE.PlaneGeometry(0.6, 0.6);
+    }
+  }
+
+  private setupMaterial(): void {
+    this.material = new THREE.NodeMaterial();
+    
+    // Create vertex shader that positions and orients each boid
+    const boidVertexShader = Fn(() => {
+      // Get the current instance index (which boid we're rendering)
+      const boidIndex = instanceIndex;
+      
+      // Get position and velocity from compute storage
+      const boidPosition = this.storage.positionStorage.element(boidIndex);
+      const boidVelocity = this.storage.velocityStorage.element(boidIndex);
+      
+      // Transform local vertex position
+      const localPos = positionLocal.toVar();
+      localPos.mulAssign(this.config.particleSize);
+      
+      // Create a rotation matrix to align the boid with its velocity
+      const velocity = normalize(boidVelocity.add(vec3(0.001, 0.001, 0.001))); // Add epsilon to avoid zero velocity
+
+      const forward = velocity.toVar('forward');
+      const up = vec3(0.0, 1.0, 0.0).toVar('up');
+      const right = normalize(cross(up, forward)).toVar('right');
+      const newUp = normalize(cross(forward, right)).toVar('newUp');
+      
+      const rotationMatrix = mat3(
+        right.x, forward.x, newUp.x,
+        right.y, forward.y, newUp.y,
+        right.z, forward.z, newUp.z
+      ).toVar();
+      
+      const rotatedPos = rotationMatrix.mul(localPos);
+      
+      // Translate to boid position
+      const worldPos = rotatedPos.add(boidPosition);
+      
+      // Transform to clip space
+      return cameraProjectionMatrix.mul(cameraViewMatrix).mul(vec4(worldPos, 1.0));
+    });
+
+    // Create fragment shader for coloring based on speed
+    const boidFragmentShader = Fn(() => {
+      const boidIndex = instanceIndex;
+      const velocity = this.storage.velocityStorage.element(boidIndex);
+      const speed = length(velocity);
+      
+      // Normalize speed for color mixing (assuming max speed around 10)
+      const normalizedSpeed = speed.div(10.0).saturate();
+      
+      // Mix between two colors based on speed
+      const color = mix(
+        vec3(this.config.colorA.r, this.config.colorA.g, this.config.colorA.b),
+        vec3(this.config.colorB.r, this.config.colorB.g, this.config.colorB.b),
+        normalizedSpeed
+      );
+      
+      return vec4(color, 1.0);
+    });
+
+    // Assign shaders to material
+    this.material.vertexNode = boidVertexShader();
+    this.material.colorNode = boidFragmentShader();
+    this.material.side = THREE.DoubleSide;
+    this.material.transparent = true;
+  }
+
+  private setupMesh(): void {
+    const geometry = this.setupGeometry();
+    this.mesh = new THREE.InstancedMesh(geometry, this.material, this.count);
+    this.mesh.frustumCulled = false; // Disable frustum culling for performance
+    this.scene.add(this.mesh);
+  }
+
+  public render(renderer: THREE.WebGPURenderer): void {
+    renderer.render(this.scene, this.camera);
+  }
+
+  public getScene(): THREE.Scene {
+    return this.scene;
+  }
+
+  public getCamera(): THREE.PerspectiveCamera {
+    return this.camera;
+  }
+
+  public updateConfig(config: Partial&lt;BoidsVisualizationConfig&gt;): void {
+    Object.assign(this.config, config);
+    
+    // Recreate material if colors changed
+    if (config.colorA || config.colorB) {
+      this.setupMaterial();
+      this.mesh.material = this.material;
+    }
+    
+    // Recreate geometry if triangle/quad setting changed
+    if (config.useTriangles !== undefined) {
+      const newGeometry = this.setupGeometry();
+      this.mesh.geometry.dispose();
+      this.mesh.geometry = newGeometry;
+    }
+  }
+
+  public onWindowResize(width: number, height: number): void {
+    this.camera.aspect = width / height;
+    this.camera.updateProjectionMatrix();
+  }
+
+  public dispose(): void {
+    this.mesh.geometry.dispose();
+    this.material.dispose();
+    this.scene.clear();
+  }
+}
         </section>
 
-      </div>
+
     </main>
 
     <footer class="footer">
