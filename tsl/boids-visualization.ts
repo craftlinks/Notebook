@@ -39,7 +39,7 @@ export class BoidsVisualization {
     config: Partial<BoidsVisualizationConfig> = {}
   ) {
     this.config = {
-      particleSize: 0.5,
+      particleSize: 1.0,
       colorA: new THREE.Color(0x00ff00),
       colorB: new THREE.Color(0xff0000),
       useTriangles: true,
@@ -54,7 +54,6 @@ export class BoidsVisualization {
     this.setupGeometry();
     this.setupMaterial();
     this.setupMesh();
-    this.setupLighting();
   }
 
   private setupCamera(): void {
@@ -73,8 +72,8 @@ export class BoidsVisualization {
       const geometry = new THREE.BufferGeometry();
       const vertices = new Float32Array([
         0.0,  0.5, 0.0,  // top vertex
-       -0.3, -0.5, 0.0,  // bottom left
-        0.3, -0.5, 0.0   // bottom right
+       -0.1, -0.5, 0.0,  // bottom left
+        0.1, -0.5, 0.0   // bottom right
       ]);
       geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
       return geometry;
@@ -146,7 +145,7 @@ export class BoidsVisualization {
     this.material.vertexNode = boidVertexShader();
     this.material.colorNode = boidFragmentShader();
     this.material.side = THREE.DoubleSide;
-    this.material.transparent = false;
+    this.material.transparent = true;
   }
 
   private setupMesh(): void {
@@ -154,17 +153,6 @@ export class BoidsVisualization {
     this.mesh = new THREE.InstancedMesh(geometry, this.material, this.count);
     this.mesh.frustumCulled = false; // Disable frustum culling for performance
     this.scene.add(this.mesh);
-  }
-
-  private setupLighting(): void {
-    // Add ambient light
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-    this.scene.add(ambientLight);
-
-    // Add directional light
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    directionalLight.position.set(1, 1, 1);
-    this.scene.add(directionalLight);
   }
 
   public render(renderer: THREE.WebGPURenderer): void {
