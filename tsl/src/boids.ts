@@ -420,6 +420,7 @@ export class BoidsSimulation {
       const densityRadiusSq = densityRadius.mul(densityRadius);
 
       Loop({ start: uint(0), end: uint(count), type: 'uint', condition: '<' }, ({ i }) => {
+        // @ts-ignore - TSL expects a TSL node, but TS thinks 'i' is a number
         If(i.equal(birdIndex), () => {
           Continue();
         });
