@@ -284,9 +284,10 @@ async function runBoidsSimulation() {
     return;
   }
 
+  let currentBoidCount = 4096;
   let cleanup = () => {};
 
-  const startNewSimulation = async (numSpecies: number) => {
+  const startNewSimulation = async (numSpecies: number, count: number) => {
     // Clean up previous simulation instance
     cleanup();
     container.innerHTML = '';
@@ -320,7 +321,13 @@ async function runBoidsSimulation() {
     }
 
     // Boids Simulation
-    const boidsSimulation = new BoidsSimulation({ count: 4096, numSpecies, species: speciesConfigs });
+    const boidsSimulation = new BoidsSimulation({ count, numSpecies, species: speciesConfigs });
+
+    // Update boid count display
+    const boidCountDisplay = document.getElementById('boid-count-display');
+    if (boidCountDisplay) {
+      boidCountDisplay.textContent = `(${boidsSimulation.getConfig().count} Boids)`;
+    }
 
     // Boids Visualization
     const boidsVisualization = new BoidsVisualization(boidsSimulation, {
@@ -441,14 +448,26 @@ async function runBoidsSimulation() {
 
   // Initial simulation start
   const speciesCountInput = document.getElementById('species-count-input') as HTMLInputElement;
-  startNewSimulation(parseInt(speciesCountInput.value, 10));
+  startNewSimulation(parseInt(speciesCountInput.value, 10), currentBoidCount);
 
   // Listener for species count changes
   speciesCountInput.addEventListener('change', () => {
     const numSpecies = parseInt(speciesCountInput.value, 10);
     if (!isNaN(numSpecies) && numSpecies > 0 && numSpecies <= 10) {
-      startNewSimulation(numSpecies);
+      startNewSimulation(numSpecies, currentBoidCount);
     }
+  });
+
+  const increaseBoidsBtn = document.getElementById('increase-boids-btn');
+  increaseBoidsBtn?.addEventListener('click', () => {
+    currentBoidCount = Math.min(currentBoidCount * 2, 16384);
+    startNewSimulation(parseInt(speciesCountInput.value, 10), currentBoidCount);
+  });
+
+  const decreaseBoidsBtn = document.getElementById('decrease-boids-btn');
+  decreaseBoidsBtn?.addEventListener('click', () => {
+    currentBoidCount = Math.max(currentBoidCount / 2, 256);
+    startNewSimulation(parseInt(speciesCountInput.value, 10), currentBoidCount);
   });
 
   console.log('Boids simulation initialized - will start when visible');
