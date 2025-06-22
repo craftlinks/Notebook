@@ -46,42 +46,45 @@ async function initLangtonAnt({ canvas, renderer: existingRenderer }: { canvas?:
     antDir.assign(int(0))
   })()
   
-  // Langton's Ant step function
+  // Langton's Ant step function - optimized to only run on first thread
   const stepAnt = Fn(() => {
-    const antX = antState.element(0)
-    const antY = antState.element(1)
-    const antDir = antState.element(2)
-    
-    // Get current cell index and value
-    const currentIndex = getIndex(antX, antY)
-    const currentCell = grid.element(currentIndex)
-    
-    // Langton's Ant rules:
-    // If on white (0): turn right, flip to black (1)  
-    // If on black (1): turn left, flip to white (0)
-    If(currentCell.equal(0), () => {
-      antDir.assign(antDir.add(1).mod(4))
-      currentCell.assign(1)
-    }).Else(() => {
-      antDir.assign(antDir.add(3).mod(4))
-      currentCell.assign(0)
+    // Only run on the first GPU thread to avoid redundant work
+    If(instanceIndex.equal(0), () => {
+      const antX = antState.element(0)
+      const antY = antState.element(1)
+      const antDir = antState.element(2)
+      
+      // Get current cell index and value (inline for performance)
+      const currentIndex = antY.mul(gridWidth).add(antX)
+      const currentCell = grid.element(currentIndex)
+      
+      // Langton's Ant rules:
+      // If on white (0): turn right, flip to black (1)  
+      // If on black (1): turn left, flip to white (0)
+      If(currentCell.equal(0), () => {
+        antDir.assign(antDir.add(1).mod(4))
+        currentCell.assign(1)
+      }).Else(() => {
+        antDir.assign(antDir.add(3).mod(4))
+        currentCell.assign(0)
+      })
+      
+      // Move ant forward based on direction
+      // 0=North(y-1), 1=East(x+1), 2=South(y+1), 3=West(x-1)
+      If(antDir.equal(0), () => {
+        antY.assign(antY.sub(1))
+      }).ElseIf(antDir.equal(1), () => {
+        antX.assign(antX.add(1))
+      }).ElseIf(antDir.equal(2), () => {
+        antY.assign(antY.add(1))
+      }).Else(() => {
+        antX.assign(antX.sub(1))
+      })
+      
+      // Wrap around boundaries
+      antX.assign(antX.add(gridWidth).mod(gridWidth))
+      antY.assign(antY.add(gridHeight).mod(gridHeight))
     })
-    
-    // Move ant forward based on direction
-    // 0=North(y-1), 1=East(x+1), 2=South(y+1), 3=West(x-1)
-    If(antDir.equal(0), () => {
-      antY.assign(antY.sub(1))
-    }).ElseIf(antDir.equal(1), () => {
-      antX.assign(antX.add(1))
-    }).ElseIf(antDir.equal(2), () => {
-      antY.assign(antY.add(1))
-    }).Else(() => {
-      antX.assign(antX.sub(1))
-    })
-    
-    // Wrap around boundaries
-    antX.assign(antX.add(gridWidth).mod(gridWidth))
-    antY.assign(antY.add(gridHeight).mod(gridHeight))
   })()
   
   
