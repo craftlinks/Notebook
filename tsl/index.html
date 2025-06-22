@@ -484,9 +484,11 @@ renderer.setAnimationLoop(async () => {
 
           <p>The emergent flocking behavior is governed by three simple rules that each boid follows based on its perception of its local neighbors. These rules, illustrated below, are applied concurrently to every boid in the simulation.</p>
 
-          <div class="centered-image">
-            <img src="./assets/boids-Blzlusq--Blzlusq--Blzlusq-.svg" alt="Diagram illustrating the three boids rules: separation, alignment, and cohesion" style="max-width: 500px; height: auto;">
+          <div style="text-align: center; margin: 2rem 0;">
+            <img src="./assets/boids.svg" alt="Diagram illustrating the three boids rules: separation, alignment, and cohesion" style="max-width: 500px; height: auto;">
           </div>
+          
+          <p>The simulation uses three simple rules to generate complex flocking behavior:</p>
 
           <ul class="boids-rules">
             <li><strong>Separation:</strong> Steer to avoid crowding local flockmates. This prevents boids from clumping together and colliding.</li>
