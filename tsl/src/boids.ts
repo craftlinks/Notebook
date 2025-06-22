@@ -338,28 +338,23 @@ export class BoidsSimulation {
             velocity.addAssign(normalize(dirToBird).mul(velocityAdjust));
           });
         }).Else(() => { // Different species interaction
-          // Rock-Paper-Scissors: 0 hunts 1, 1 hunts 2, 2 hunts 0
-          const preySpecies = species.add(uint(1)).mod(uint(3));
-          const predatorSpecies = species.add(uint(2)).mod(uint(3));
+          // Simplified density-based interaction.
+          // If another species' boid is close, we are in their dense area, so flee.
+          // If they are further away, we are sparse relative to them, so hunt.
+          const fleeRadius = float(100.0);
+          const fleeRadiusSq = fleeRadius.mul(fleeRadius);
 
-          If(otherSpecies.equal(preySpecies), () => { // This boid is the hunter
+          If(distToBirdSq.lessThan(fleeRadiusSq), () => {
+            // Flee
+            const velocityAdjust = (fleeRadiusSq.div(distToBirdSq).sub(1.0)).mul(deltaTime).mul(2.5);
+            velocity.subAssign(normalize(dirToBird).mul(velocityAdjust));
+          }).Else(() => {
+            // Hunt
             const huntingRadius = float(300.0);
             const huntingRadiusSq = huntingRadius.mul(huntingRadius);
-            
             If(distToBirdSq.lessThan(huntingRadiusSq), () => {
-              // Cohesion force towards prey
               const velocityAdjust = deltaTime.mul(0.8);
               velocity.addAssign(normalize(dirToBird).mul(velocityAdjust));
-            });
-
-          }).ElseIf(otherSpecies.equal(predatorSpecies), () => { // This boid is the prey
-            const fleeRadius = float(200.0);
-            const fleeRadiusSq = fleeRadius.mul(fleeRadius);
-
-            If(distToBirdSq.lessThan(fleeRadiusSq), () => {
-              // Strong repulsion force to flee from hunter
-              const velocityAdjust = (fleeRadiusSq.div(distToBirdSq).sub(1.0)).mul(deltaTime).mul(2.5);
-              velocity.subAssign(normalize(dirToBird).mul(velocityAdjust));
             });
           });
         });
