@@ -350,9 +350,11 @@ async function initLangtonAntVisualization() {
     // Buffer to hold the color of each cell
     const colorBuffer = instancedArray(langtonAntState.gridWidth * langtonAntState.gridHeight, 'vec4')
     
-    // Dynamic color computation that handles both single and multi-ant modes
+    // Dynamic color computation that handles RGB channels and both ant modes
     const updateColors = Fn(() => {
-      const cellState = langtonAntState.grid.element(instanceIndex)
+      const cellR = langtonAntState.gridR.element(instanceIndex)
+      const cellG = langtonAntState.gridG.element(instanceIndex)
+      const cellB = langtonAntState.gridB.element(instanceIndex)
       const outputColor = colorBuffer.element(instanceIndex)
       
       // Convert 1D index to 2D coordinates
@@ -360,26 +362,40 @@ async function initLangtonAntVisualization() {
       const y = instanceIndex.div(langtonAntState.gridWidth).toInt()
       
       // Multi-ant data
-      const hasAntIndex = instanceIndex.mul(2)
+      const hasAntIndex = instanceIndex.mul(3)
+      const antColorIndex = instanceIndex.mul(3).add(2)
       const hasAnt = langtonAntState.multiAntGrid.element(hasAntIndex)
+      const antColorChannel = langtonAntState.multiAntGrid.element(antColorIndex)
       
       // Single ant position
       const antX = langtonAntState.antState.element(0)
       const antY = langtonAntState.antState.element(1)
-
-      const whiteColor = vec4(1.0, 1.0, 1.0, 1.0)
-      const blackColor = vec4(0.0, 0.0, 0.0, 1.0)
-      const antColor = vec4(1.0, 0.0, 0.0, 1.0) // Red for ants
       
-      // Check for ants (both single and multi modes will be rendered)
+      // Check for ants first (both single and multi modes will be rendered)
       If(hasAnt.equal(1), () => {
-        outputColor.assign(antColor) // Multi-ant mode
+        // Multi-ant mode - show ant with bright color based on its channel
+        If(antColorChannel.equal(0), () => {
+          outputColor.assign(vec4(1.0, 0.5, 0.5, 1.0)) // Bright red ant
+        }).ElseIf(antColorChannel.equal(1), () => {
+          outputColor.assign(vec4(0.5, 1.0, 0.5, 1.0)) // Bright green ant
+        }).Else(() => {
+          outputColor.assign(vec4(0.5, 0.5, 1.0, 1.0)) // Bright blue ant
+        })
       }).ElseIf(x.equal(antX).and(y.equal(antY)), () => {
-        outputColor.assign(antColor) // Single ant mode
-      }).ElseIf(cellState.equal(1), () => {
-        outputColor.assign(blackColor) // Black cells
+        outputColor.assign(vec4(1.0, 0.5, 0.5, 1.0)) // Single ant (red)
       }).Else(() => {
-        outputColor.assign(whiteColor) // White cells
+        // Calculate RGB color based on channel densities (0-100 maps to 0.0-1.0)
+        const red = cellR.toFloat().div(100.0)
+        const green = cellG.toFloat().div(100.0)
+        const blue = cellB.toFloat().div(100.0)
+        
+        // Ensure we have some background when all channels are 0 (white background)
+        const totalColor = red.add(green).add(blue)
+        If(totalColor.lessThan(0.01), () => {
+          outputColor.assign(vec4(1.0, 1.0, 1.0, 1.0)) // White background
+        }).Else(() => {
+          outputColor.assign(vec4(red, green, blue, 1.0))
+        })
       })
     })()
 
@@ -425,6 +441,10 @@ async function initLangtonAntVisualization() {
     // Run Langton's Ant step
     const runLangtonAntStep = async () => {
       if (!langtonAntState) return
+      
+      // First, fade the grid
+      await langtonRenderer.computeAsync(langtonAntState.fadeGrid.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
+      
       if (isMultiAntMode) {
         // Two-phase approach to avoid race conditions
         await langtonRenderer.computeAsync(langtonAntState.stepMultiAntsPhase1.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
@@ -475,6 +495,12 @@ async function initLangtonAntVisualization() {
       // Clear multi-ant grid first
       await langtonRenderer.computeAsync(langtonAntState.clearMultiAnts.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
       
+      // Reset step counter for fading
+      const resetCounter = Fn(() => {
+        langtonAntState.stepCounter.element(0).assign(0)
+      })()
+      await langtonRenderer.computeAsync(resetCounter.compute(1))
+      
       // Initialize based on mode
       if (isMultiAntMode) {
         await langtonRenderer.computeAsync(langtonAntState.initializeMultiAnts.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
@@ -501,6 +527,9 @@ async function initLangtonAntVisualization() {
       langtonRenderer.setAnimationLoop(async () => {
         if (!isRunning) return
         
+        // First, fade the grid
+        langtonRenderer.compute(langtonAntState.fadeGrid.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
+        
         if (isMultiAntMode) {
           // Run two-phase multi-ant step
           langtonRenderer.compute(langtonAntState.stepMultiAntsPhase1.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
@@ -525,6 +554,7 @@ async function initLangtonAntVisualization() {
 
     // Initial render
     console.log('Rendering initial frame...')
+    console.log('RGB grids available:', !!langtonAntState.gridR, !!langtonAntState.gridG, !!langtonAntState.gridB)
     
     await langtonRenderer.computeAsync(colorCompute)
     langtonRenderer.render(scene, camera)
