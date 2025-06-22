@@ -176,43 +176,77 @@ async function initLangtonAnt({ canvas, renderer: existingRenderer }: { canvas?:
       const currentB = gridB.element(cellIndex)
       const totalIntensity = currentR.add(currentG).add(currentB)
       
-      // Apply conservative Langton's Ant rules based on total intensity
+      // Apply Chromatic Ecosystem Rules - complex color interactions
       If(totalIntensity.lessThan(50), () => {
-        // On light: turn right, add color to ant's own channel
+        // On light cells: turn right, but behavior depends on color dominance
         direction.assign(direction.add(1).mod(4))
+        
+        // Find dominant color channel
+        const isRedDominant = currentR.greaterThanEqual(currentG).and(currentR.greaterThanEqual(currentB))
+        const isGreenDominant = currentG.greaterThan(currentR).and(currentG.greaterThanEqual(currentB))
+        
+        // Chromatic interaction rules
         If(antColor.equal(0), () => {
-          currentR.assign(100) // Red ant adds to red
+          // Red ant behavior
+          If(isRedDominant, () => {
+            currentR.assign(currentR.add(50).min(100)) // Strengthen red dominance
+          }).ElseIf(isGreenDominant, () => {
+            currentG.assign(currentG.sub(30).max(0)) // Compete with green
+            currentR.assign(100) // Assert red presence
+          }).Else(() => {
+            // Blue dominant or mixed
+            currentB.assign(currentB.sub(20).max(0)) // Weaken blue
+            currentR.assign(80) // Moderate red addition
+          })
         }).ElseIf(antColor.equal(1), () => {
-          currentG.assign(100) // Green ant adds to green
+          // Green ant behavior (symbiotic with red, competitive with blue)
+          If(isRedDominant, () => {
+            currentG.assign(60) // Moderate green in red areas
+            currentR.assign(currentR.add(20).min(100)) // Boost red slightly
+          }).ElseIf(isGreenDominant, () => {
+            currentG.assign(100) // Maintain green dominance
+          }).Else(() => {
+            // Blue dominant or mixed
+            currentB.assign(currentB.sub(40).max(0)) // Strongly compete with blue
+            currentG.assign(100) // Assert green presence
+          })
         }).Else(() => {
-          currentB.assign(100) // Blue ant adds to blue
+          // Blue ant behavior (creates cool zones, competitive with warm colors)
+          If(isRedDominant.or(isGreenDominant), () => {
+            // In warm areas, create cooling effect
+            currentR.assign(currentR.sub(25).max(0))
+            currentG.assign(currentG.sub(25).max(0))
+            currentB.assign(currentB.add(60).min(100))
+          }).Else(() => {
+            // In blue or mixed areas, strengthen blue
+            currentB.assign(100)
+          })
         })
       }).Else(() => {
-        // On dark: turn left, subtract from ant's own channel only
+        // On dark cells: turn left, color decay with cross-channel effects
         direction.assign(direction.add(3).mod(4))
+        
+        // Calculate color influence for fading
+        const colorIntensity = currentR.add(currentG).add(currentB)
+        const fadeAmount = colorIntensity.div(6).max(10).min(50) // Adaptive fade
+        
         If(antColor.equal(0), () => {
-          // Red ant subtracts from red only
-          const newR = currentR.sub(100)
-          If(newR.lessThan(0), () => {
-            currentR.assign(0)
-          }).Else(() => {
-            currentR.assign(newR)
+          // Red ant causes purple shift when fading
+          currentR.assign(currentR.sub(fadeAmount).max(0))
+          If(currentB.greaterThan(20), () => {
+            currentB.assign(currentB.sub(fadeAmount.div(2)).max(0)) // Slower blue fade
           })
         }).ElseIf(antColor.equal(1), () => {
-          // Green ant subtracts from green only
-          const newG = currentG.sub(100)
-          If(newG.lessThan(0), () => {
-            currentG.assign(0)
-          }).Else(() => {
-            currentG.assign(newG)
+          // Green ant causes yellow-to-red shift when fading
+          currentG.assign(currentG.sub(fadeAmount).max(0))
+          If(currentR.greaterThan(currentG), () => {
+            currentR.assign(currentR.sub(fadeAmount.div(3)).max(0)) // Preserve some red
           })
         }).Else(() => {
-          // Blue ant subtracts from blue only
-          const newB = currentB.sub(100)
-          If(newB.lessThan(0), () => {
-            currentB.assign(0)
-          }).Else(() => {
-            currentB.assign(newB)
+          // Blue ant causes cyan shift when fading
+          currentB.assign(currentB.sub(fadeAmount).max(0))
+          If(currentG.greaterThan(10), () => {
+            currentG.assign(currentG.sub(fadeAmount.div(2)).max(0)) // Slower green fade
           })
         })
       })
