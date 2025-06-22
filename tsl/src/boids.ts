@@ -18,21 +18,28 @@ import {
   negate,
 } from 'three/tsl';
 
-export interface BoidsConfig {
-  count: number;
-  speedLimit: number;
-  bounds: number;
+export interface SpeciesConfig {
   separation: number;
   alignment: number;
   cohesion: number;
   freedom: number;
+  speedLimit: number;
+}
+
+export interface BoidsConfig {
+  count: number;
+  bounds: number;
+  species1: SpeciesConfig;
+  species2: SpeciesConfig;
 }
 
 export interface BoidsUniforms {
-  separation: ReturnType<typeof uniform>;
-  alignment: ReturnType<typeof uniform>;
-  cohesion: ReturnType<typeof uniform>;
-  freedom: ReturnType<typeof uniform>;
+  separation1: ReturnType<typeof uniform>;
+  alignment1: ReturnType<typeof uniform>;
+  cohesion1: ReturnType<typeof uniform>;
+  separation2: ReturnType<typeof uniform>;
+  alignment2: ReturnType<typeof uniform>;
+  cohesion2: ReturnType<typeof uniform>;
   now: ReturnType<typeof uniform>;
   deltaTime: ReturnType<typeof uniform>;
   rayOrigin: ReturnType<typeof uniform>;
@@ -43,6 +50,7 @@ export interface BoidsStorage {
   positionStorage: ReturnType<typeof attributeArray>;
   velocityStorage: ReturnType<typeof attributeArray>;
   phaseStorage: ReturnType<typeof attributeArray>;
+  speciesStorage: ReturnType<typeof attributeArray>;
 }
 
 export interface BoidsCompute {
@@ -57,15 +65,30 @@ export class BoidsSimulation {
   private computeShaders!: BoidsCompute;
 
   constructor(config: Partial<BoidsConfig> = {}) {
-    this.config = {
-      count: 4096, // Reduced from 16384 for better mobile performance
-      speedLimit: 9.0,
+    const defaultConfig: BoidsConfig = {
+      count: 4096,
       bounds: 800,
-      separation: 15.0,
-      alignment: 20.0,
-      cohesion: 20.0,
-      freedom: 0.75,
-      ...config
+      species1: {
+        separation: 15.0,
+        alignment: 20.0,
+        cohesion: 20.0,
+        freedom: 0.75,
+        speedLimit: 9.0,
+      },
+      species2: {
+        separation: 25.0,
+        alignment: 15.0,
+        cohesion: 15.0,
+        freedom: 0.8,
+        speedLimit: 7.0,
+      },
+    };
+
+    this.config = {
+      ...defaultConfig,
+      ...config,
+      species1: { ...defaultConfig.species1, ...(config.species1 || {}) },
+      species2: { ...defaultConfig.species2, ...(config.species2 || {}) },
     };
 
     this.initializeStorage();
@@ -80,6 +103,7 @@ export class BoidsSimulation {
     const positionArray = new Float32Array(count * 3);
     const velocityArray = new Float32Array(count * 3);
     const phaseArray = new Float32Array(count);
+    const speciesArray = new Uint32Array(count);
 
     for (let i = 0; i < count; i++) {
       const posX = Math.random() * bounds - boundsHalf;
@@ -99,11 +123,13 @@ export class BoidsSimulation {
       velocityArray[i * 3 + 2] = velZ * 10;
 
       phaseArray[i] = 1;
+      speciesArray[i] = i < count / 2 ? 0 : 1;
     }
 
     const positionStorage = attributeArray(positionArray, 'vec3').label('positionStorage');
     const velocityStorage = attributeArray(velocityArray, 'vec3').label('velocityStorage');
     const phaseStorage = attributeArray(phaseArray, 'float').label('phaseStorage');
+    const speciesStorage = attributeArray(speciesArray, 'uint').label('speciesStorage');
 
     // Enable Pixel Buffer Objects (PBO) for efficient GPU-CPU data transfer
     // PBOs allow asynchronous transfers between GPU and CPU memory
@@ -111,20 +137,24 @@ export class BoidsSimulation {
     positionStorage.setPBO(true);
     velocityStorage.setPBO(true); 
     phaseStorage.setPBO(true);
+    speciesStorage.setPBO(true);
 
     this.storage = {
       positionStorage,
       velocityStorage,
-      phaseStorage
+      phaseStorage,
+      speciesStorage
     };
   }
 
   private initializeUniforms(): void {
     this.uniforms = {
-      separation: uniform(this.config.separation).label('separation'),
-      alignment: uniform(this.config.alignment).label('alignment'),
-      cohesion: uniform(this.config.cohesion).label('cohesion'),
-      freedom: uniform(this.config.freedom).label('freedom'),
+      separation1: uniform(this.config.species1.separation).label('separation1'),
+      alignment1: uniform(this.config.species1.alignment).label('alignment1'),
+      cohesion1: uniform(this.config.species1.cohesion).label('cohesion1'),
+      separation2: uniform(this.config.species2.separation).label('separation2'),
+      alignment2: uniform(this.config.species2.alignment).label('alignment2'),
+      cohesion2: uniform(this.config.species2.cohesion).label('cohesion2'),
       now: uniform(0.0),
       deltaTime: uniform(0.0).label('deltaTime'),
       rayOrigin: uniform(new THREE.Vector3()).label('rayOrigin'),
@@ -133,19 +163,31 @@ export class BoidsSimulation {
   }
 
   private initializeCompute(): void {
-    const { count, speedLimit } = this.config;
-    const { positionStorage, velocityStorage, phaseStorage } = this.storage;
+    const { count } = this.config;
+    const { positionStorage, velocityStorage, phaseStorage, speciesStorage } = this.storage;
 
     const computeVelocity = Fn(() => {
       // Define mathematical constants for the simulation.
       const PI = float(3.141592653589793);
       const PI_2 = PI.mul(2.0);
+
+      const birdIndex = instanceIndex.toConst('birdIndex');
+      const species = speciesStorage.element(birdIndex).toConst('species');
       
+      const speedLimit = species.equal(uint(0)).select(this.config.species1.speedLimit, this.config.species2.speedLimit);
       // A per-boid variable for the speed limit. This can be modified, for instance, when a boid is near a ray.
       const limit = property('float', 'limit').assign(speedLimit);
 
       // Import uniforms that provide external parameters to the compute shader.
-      const { alignment, separation, cohesion, deltaTime, rayOrigin, rayDirection } = this.uniforms;
+      const { 
+        deltaTime, rayOrigin, rayDirection,
+        separation1, alignment1, cohesion1,
+        separation2, alignment2, cohesion2
+      } = this.uniforms;
+
+      const separation = species.equal(uint(0)).select(separation1, separation2);
+      const alignment = species.equal(uint(0)).select(alignment1, alignment2);
+      const cohesion = species.equal(uint(0)).select(cohesion1, cohesion2);
 
       // Define the different zones of interaction for a boid.
       // zoneRadius is the total radius of influence for a boid.
@@ -157,8 +199,6 @@ export class BoidsSimulation {
       // The squared zone radius, for efficient distance checking.
       const zoneRadiusSq = zoneRadius.mul(zoneRadius).toConst();
 
-      // Get the unique index of the current boid being processed.
-      const birdIndex = instanceIndex.toConst('birdIndex');
       // Retrieve and store the current boid's position and velocity from storage buffers.
       const position = positionStorage.element(birdIndex).toVar();
       const velocity = velocityStorage.element(birdIndex).toVar();
@@ -217,51 +257,77 @@ export class BoidsSimulation {
 
         const distToBirdSq = distToBird.mul(distToBird);
 
-        // If the other boid is outside the zone of influence, skip it.
-        If(distToBirdSq.greaterThan(zoneRadiusSq), () => {
-          Continue();
-        });
-
-        // 'percent' represents how deep the other boid is within the current boid's zone of influence.
-        const percent = distToBirdSq.div(zoneRadiusSq);
-
-        // --- Separation, Alignment, and Cohesion Rules ---
-        // These rules are applied based on the other boid's proximity.
-        // The influence of each rule is smoothly blended using cosine-based weights for more natural flocking behavior.
-
-        // 1. Separation: Steer to avoid crowding local flockmates.
-        If(percent.lessThan(separationThresh), () => {
-          // The repulsive force is stronger for closer boids.
-          const velocityAdjust = (separationThresh.div(percent).sub(1.0)).mul(deltaTime);
-          velocity.subAssign(normalize(dirToBird).mul(velocityAdjust));
+        const otherSpecies = speciesStorage.element(i);
         
-        // 2. Alignment: Steer towards the average heading of local flockmates.
-        }).ElseIf(percent.lessThan(alignmentThresh), () => {
-          // Calculate a smooth weight for the alignment force using a cosine function.
-          const threshDelta = alignmentThresh.sub(separationThresh);
-          const adjustedPercent = (percent.sub(separationThresh)).div(threshDelta);
-          const birdVelocity = velocityStorage.element(i);
+        If(species.equal(otherSpecies), () => {
+          // If the other boid is outside the zone of influence, skip it.
+          If(distToBirdSq.greaterThan(zoneRadiusSq), () => {
+            Continue();
+          });
 
-          const cosRange = cos(adjustedPercent.mul(PI_2));
-          const cosRangeAdjust = float(1.0).sub(cosRange.mul(0.5));
-          const velocityAdjust = cosRangeAdjust.mul(deltaTime);
-          // Apply the alignment force, steering towards the other boid's velocity.
-          velocity.addAssign(normalize(birdVelocity).mul(velocityAdjust));
-        
-        // 3. Cohesion: Steer to move toward the average position of local flockmates.
-        }).Else(() => {
-          // Calculate a smooth weight for the cohesion force.
-          const threshDelta = alignmentThresh.oneMinus();
-          const adjustedPercent = threshDelta.equal(0.0).select(1.0, (percent.sub(alignmentThresh)).div(threshDelta));
+          // 'percent' represents how deep the other boid is within the current boid's zone of influence.
+          const percent = distToBirdSq.div(zoneRadiusSq);
 
-          // The weighting function for cohesion is the same as for alignment.
-          // It creates a force that is strongest in the middle of the zone.
-          const cosRange = cos(adjustedPercent.mul(PI_2));
-          const cosRangeAdjust = float(1.0).sub(cosRange.mul(0.5));
+          // --- Separation, Alignment, and Cohesion Rules ---
+          // These rules are applied based on the other boid's proximity.
+          // The influence of each rule is smoothly blended using cosine-based weights for more natural flocking behavior.
 
-          const velocityAdjust = cosRangeAdjust.mul(deltaTime);
-          // Apply the cohesion force, steering towards the other boid's position.
-          velocity.addAssign(normalize(dirToBird).mul(velocityAdjust));
+          // 1. Separation: Steer to avoid crowding local flockmates.
+          If(percent.lessThan(separationThresh), () => {
+            // The repulsive force is stronger for closer boids.
+            const velocityAdjust = (separationThresh.div(percent).sub(1.0)).mul(deltaTime);
+            velocity.subAssign(normalize(dirToBird).mul(velocityAdjust));
+          
+          // 2. Alignment: Steer towards the average heading of local flockmates.
+          }).ElseIf(percent.lessThan(alignmentThresh), () => {
+            // Calculate a smooth weight for the alignment force using a cosine function.
+            const threshDelta = alignmentThresh.sub(separationThresh);
+            const adjustedPercent = (percent.sub(separationThresh)).div(threshDelta);
+            const birdVelocity = velocityStorage.element(i);
+
+            const cosRange = cos(adjustedPercent.mul(PI_2));
+            const cosRangeAdjust = float(1.0).sub(cosRange.mul(0.5));
+            const velocityAdjust = cosRangeAdjust.mul(deltaTime);
+            // Apply the alignment force, steering towards the other boid's velocity.
+            velocity.addAssign(normalize(birdVelocity).mul(velocityAdjust));
+          
+          // 3. Cohesion: Steer to move toward the average position of local flockmates.
+          }).Else(() => {
+            // Calculate a smooth weight for the cohesion force.
+            const threshDelta = alignmentThresh.oneMinus();
+            const adjustedPercent = threshDelta.equal(0.0).select(1.0, (percent.sub(alignmentThresh)).div(threshDelta));
+
+            // The weighting function for cohesion is the same as for alignment.
+            // It creates a force that is strongest in the middle of the zone.
+            const cosRange = cos(adjustedPercent.mul(PI_2));
+            const cosRangeAdjust = float(1.0).sub(cosRange.mul(0.5));
+
+            const velocityAdjust = cosRangeAdjust.mul(deltaTime);
+            // Apply the cohesion force, steering towards the other boid's position.
+            velocity.addAssign(normalize(dirToBird).mul(velocityAdjust));
+          });
+        }).Else(() => { // Different species interaction
+          // Species 1 (index 0) hunts Species 2 (index 1)
+          If(species.equal(uint(0)), () => { // Hunter logic
+            const huntingRadius = float(300.0);
+            const huntingRadiusSq = huntingRadius.mul(huntingRadius);
+            
+            If(distToBirdSq.lessThan(huntingRadiusSq), () => {
+              // Cohesion force towards prey
+              const velocityAdjust = deltaTime.mul(0.8);
+              velocity.addAssign(normalize(dirToBird).mul(velocityAdjust));
+            });
+
+          }).Else(() => { // Prey logic, species.equal(uint(1))
+            const fleeRadius = float(200.0);
+            const fleeRadiusSq = fleeRadius.mul(fleeRadius);
+
+            If(distToBirdSq.lessThan(fleeRadiusSq), () => {
+              // Strong repulsion force to flee from hunter
+              const velocityAdjust = (fleeRadiusSq.div(distToBirdSq).sub(1.0)).mul(deltaTime).mul(2.5);
+              velocity.subAssign(normalize(dirToBird).mul(velocityAdjust));
+            });
+          });
         });
       });
 
@@ -357,11 +423,16 @@ export class BoidsSimulation {
   }
 
   public updateConfig(config: Partial<BoidsConfig>): void {
-    Object.assign(this.config, config);
+    if (config.count) this.config.count = config.count;
+    if (config.bounds) this.config.bounds = config.bounds;
+    if (config.species1) this.config.species1 = { ...this.config.species1, ...config.species1 };
+    if (config.species2) this.config.species2 = { ...this.config.species2, ...config.species2 };
     
-    this.uniforms.separation.value = this.config.separation;
-    this.uniforms.alignment.value = this.config.alignment;
-    this.uniforms.cohesion.value = this.config.cohesion;
-    this.uniforms.freedom.value = this.config.freedom;
+    this.uniforms.separation1.value = this.config.species1.separation;
+    this.uniforms.alignment1.value = this.config.species1.alignment;
+    this.uniforms.cohesion1.value = this.config.species1.cohesion;
+    this.uniforms.separation2.value = this.config.species2.separation;
+    this.uniforms.alignment2.value = this.config.species2.alignment;
+    this.uniforms.cohesion2.value = this.config.species2.cohesion;
   }
 }

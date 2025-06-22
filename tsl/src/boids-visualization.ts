@@ -17,8 +17,8 @@ import { BoidsSimulation } from './boids';
 
 export interface BoidsVisualizationConfig {
   particleSize: number;
-  colorA: THREE.Color;
-  colorB: THREE.Color;
+  color1: THREE.Color;
+  color2: THREE.Color;
   useTriangles: boolean; // true for triangles, false for quads
 }
 
@@ -37,8 +37,8 @@ export class BoidsVisualization {
   ) {
     this.config = {
       particleSize: 1.0,
-      colorA: new THREE.Color(0x00ff00),
-      colorB: new THREE.Color(0xff0000),
+      color1: new THREE.Color(0x00ff00), // Green for species 1
+      color2: new THREE.Color(0xffa500), // Orange for species 2
       useTriangles: true,
       ...config
     };
@@ -122,20 +122,14 @@ export class BoidsVisualization {
     // Create fragment shader for coloring based on speed
     const boidFragmentShader = Fn(() => {
       const boidIndex = instanceIndex;
-      const velocity = this.storage.velocityStorage.element(boidIndex);
-      const speed = length(velocity);
+      const species = this.storage.speciesStorage.element(boidIndex);
       
-      // Normalize speed for color mixing (assuming max speed around 10)
-      const normalizedSpeed = speed.div(10.0).saturate();
+      const color1 = vec3(this.config.color1.r, this.config.color1.g, this.config.color1.b);
+      const color2 = vec3(this.config.color2.r, this.config.color2.g, this.config.color2.b);
       
-      // Mix between two colors based on speed
-      const color = mix(
-        vec3(this.config.colorA.r, this.config.colorA.g, this.config.colorA.b),
-        vec3(this.config.colorB.r, this.config.colorB.g, this.config.colorB.b),
-        normalizedSpeed
-      );
+      const finalColor = species.equal(0).select(color1, color2);
       
-      return vec4(color, 1.0);
+      return vec4(finalColor, 1.0);
     });
 
     // Assign shaders to material
@@ -168,7 +162,7 @@ export class BoidsVisualization {
     Object.assign(this.config, config);
     
     // Recreate material if colors changed
-    if (config.colorA || config.colorB) {
+    if (config.color1 || config.color2) {
       this.setupMaterial();
       this.mesh.material = this.material;
     }
