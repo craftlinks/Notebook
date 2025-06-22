@@ -132,8 +132,10 @@ export class BoidsSimulation {
   private computeShaders!: BoidsCompute;
 
   constructor(config: Partial<BoidsConfig> = {}) {
+    const isMobile = /Mobi/i.test(navigator.userAgent);
+
     const defaultConfig: BoidsConfig = {
-      count: 4096,
+      count: isMobile ? 1024 : 4096,
       bounds: 800,
       species1: {
         separation: 15.0,
