@@ -210,7 +210,7 @@ export class BoidsSimulation {
           speedLimit: 7.5,
         },
       ],
-      interSpeciesRule: 'density-preference',
+      interSpeciesRule: 'density-based',
       preferenceMatrix: generatePreferenceMatrix(4),
     };
 
