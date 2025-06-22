@@ -350,7 +350,7 @@ async function initLangtonAntVisualization() {
     // Buffer to hold the color of each cell
     const colorBuffer = instancedArray(langtonAntState.gridWidth * langtonAntState.gridHeight, 'vec4')
     
-    // Proper Langton's Ant color computation
+    // Dynamic color computation that handles both single and multi-ant modes
     const updateColors = Fn(() => {
       const cellState = langtonAntState.grid.element(instanceIndex)
       const outputColor = colorBuffer.element(instanceIndex)
@@ -359,17 +359,23 @@ async function initLangtonAntVisualization() {
       const x = instanceIndex.mod(langtonAntState.gridWidth)
       const y = instanceIndex.div(langtonAntState.gridWidth).toInt()
       
-      // Get ant position
+      // Multi-ant data
+      const hasAntIndex = instanceIndex.mul(2)
+      const hasAnt = langtonAntState.multiAntGrid.element(hasAntIndex)
+      
+      // Single ant position
       const antX = langtonAntState.antState.element(0)
       const antY = langtonAntState.antState.element(1)
 
       const whiteColor = vec4(1.0, 1.0, 1.0, 1.0)
       const blackColor = vec4(0.0, 0.0, 0.0, 1.0)
-      const antColor = vec4(1.0, 0.0, 0.0, 1.0) // Red for the ant
+      const antColor = vec4(1.0, 0.0, 0.0, 1.0) // Red for ants
       
-      // Check if this cell is the ant's current position
-      If(x.equal(antX).and(y.equal(antY)), () => {
-        outputColor.assign(antColor)
+      // Check for ants (both single and multi modes will be rendered)
+      If(hasAnt.equal(1), () => {
+        outputColor.assign(antColor) // Multi-ant mode
+      }).ElseIf(x.equal(antX).and(y.equal(antY)), () => {
+        outputColor.assign(antColor) // Single ant mode
       }).ElseIf(cellState.equal(1), () => {
         outputColor.assign(blackColor) // Black cells
       }).Else(() => {
@@ -414,11 +420,18 @@ async function initLangtonAntVisualization() {
     // Animation state
     let isRunning = false
     let stepCount = 0
+    let isMultiAntMode = false
     
     // Run Langton's Ant step
     const runLangtonAntStep = async () => {
       if (!langtonAntState) return
-      await langtonRenderer.computeAsync(langtonAntState.stepAnt.compute(1))
+      if (isMultiAntMode) {
+        // Two-phase approach to avoid race conditions
+        await langtonRenderer.computeAsync(langtonAntState.stepMultiAntsPhase1.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
+        await langtonRenderer.computeAsync(langtonAntState.stepMultiAntsPhase2.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
+      } else {
+        await langtonRenderer.computeAsync(langtonAntState.stepAnt.compute(1))
+      }
       stepCount++
     }
 
@@ -427,13 +440,21 @@ async function initLangtonAntVisualization() {
     const stopBtn = document.getElementById('langton-stop-btn')
     const resetBtn = document.getElementById('langton-reset-btn')
     const fastBtn = document.getElementById('langton-fast-btn')
+    const densityToggle = document.getElementById('langton-density-toggle') as HTMLInputElement
     const stepInfo = document.getElementById('langton-step-info')
 
     const updateStepDisplay = () => {
       if (stepInfo) {
-        stepInfo.textContent = `Steps: ${stepCount}`
+        const mode = isMultiAntMode ? ' (Multi-Ant)' : ' (Single)'
+        stepInfo.textContent = `Steps: ${stepCount}${mode}`
       }
     }
+
+    // Toggle handler
+    densityToggle?.addEventListener('change', () => {
+      isMultiAntMode = densityToggle.checked
+      updateStepDisplay()
+    })
 
     startBtn?.addEventListener('click', () => {
       if (!isRunning) {
@@ -448,9 +469,19 @@ async function initLangtonAntVisualization() {
 
     resetBtn?.addEventListener('click', async () => {
       stepCount = 0
-      // Properly reset the grid and ant to initial state
+      // Reset grid
       await langtonRenderer.computeAsync(langtonAntState.initializeGrid.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
-      await langtonRenderer.computeAsync(langtonAntState.initializeAnt.compute(1))
+      
+      // Clear multi-ant grid first
+      await langtonRenderer.computeAsync(langtonAntState.clearMultiAnts.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
+      
+      // Initialize based on mode
+      if (isMultiAntMode) {
+        await langtonRenderer.computeAsync(langtonAntState.initializeMultiAnts.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
+      } else {
+        await langtonRenderer.computeAsync(langtonAntState.initializeAnt.compute(1))
+      }
+      
       await langtonRenderer.computeAsync(colorCompute)
       langtonRenderer.render(scene, camera)
       updateStepDisplay()
@@ -470,9 +501,16 @@ async function initLangtonAntVisualization() {
       langtonRenderer.setAnimationLoop(async () => {
         if (!isRunning) return
         
-        // Run batched steps (10 steps done inside the shader)
-        langtonRenderer.compute(langtonAntState.stepAnt.compute(1))
-        stepCount += 10
+        if (isMultiAntMode) {
+          // Run two-phase multi-ant step
+          langtonRenderer.compute(langtonAntState.stepMultiAntsPhase1.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
+          langtonRenderer.compute(langtonAntState.stepMultiAntsPhase2.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
+          stepCount += 1
+        } else {
+          // Run batched steps (10 steps done inside the shader)
+          langtonRenderer.compute(langtonAntState.stepAnt.compute(1))
+          stepCount += 10
+        }
         
         // Only await the final color update and render
         await langtonRenderer.computeAsync(colorCompute)
