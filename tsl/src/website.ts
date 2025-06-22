@@ -453,8 +453,9 @@ async function initLangtonAntVisualization() {
 
     resetBtn?.addEventListener('click', async () => {
       stepCount = 0
-      // Re-initialize the grid and ant
-      await langtonRenderer.computeAsync(langtonAntState.stepAnt.compute(1)) // dummy call to reset
+      // Properly reset the grid and ant to initial state
+      await langtonRenderer.computeAsync(langtonAntState.initializeGrid.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
+      await langtonRenderer.computeAsync(langtonAntState.initializeAnt.compute(1))
       await langtonRenderer.computeAsync(colorCompute)
       langtonRenderer.render(scene, camera)
       updateStepDisplay()

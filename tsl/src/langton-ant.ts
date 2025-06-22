@@ -113,7 +113,9 @@ async function initLangtonAnt({ canvas, renderer: existingRenderer }: { canvas?:
     antState,
     gridWidth,
     gridHeight,
-    stepAnt
+    stepAnt,
+    initializeGrid,
+    initializeAnt
   }
 }
 
