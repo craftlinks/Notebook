@@ -757,16 +757,23 @@ boids.update(deltaTime); // Update uniforms like time
 boids.compute(renderer); // This executes computeVelocity then computePosition
 </code></pre>
 
-          <div id="boids-container" class="boids-canvas-container">
-            <!-- The boids canvas will be injected here -->
+          <div id="boids-container" style="width: 100%; height: 600px; position: relative; background: #111; border-radius: 8px; overflow: hidden; cursor: crosshair;">
+            <!-- Renderer canvas will be appended here -->
           </div>
+
           <div class="simulation-controls">
-            <label for="boid-behavior-select">Inter-Species Rule:</label>
+            <label for="species-count-input">Number of Species:</label>
+            <input type="number" id="species-count-input" class="control-select" value="4" min="1" max="10" style="width: 70px;"/>
+            <label for="boid-behavior-select" style="margin-left: 1rem;">Interspecies Behavior:</label>
             <select id="boid-behavior-select" class="control-select">
-              <option value="density-based" selected>Density-Based</option>
+              <option value="density-based" selected>Repulsion (Density-Based)</option>
               <option value="rock-paper-scissors">Rock-Paper-Scissors</option>
             </select>
           </div>
+          
+          <h4>Step 1: Core Configuration and Initialization</h4>
+          <p>We start by defining the configuration for our simulation. This includes the number of boids, the simulation boundaries, and the behavioral parameters for each species, such as separation, alignment, and cohesion. In TSL, these parameters are passed to the compute shader as `uniforms`.</p>
+
           <h4>Interspecies Dynamics: A Game of Rock-Paper-Scissors</h4>
           <p>To make the simulation more visually interesting, this version of Boids introduces three distinct species of boids, each with slightly different flocking parameters. More importantly, they interact with each other in a "Rock-Paper-Scissors" dynamic:</p>
           <ul class="boids-rules">

@@ -284,133 +284,172 @@ async function runBoidsSimulation() {
     return;
   }
 
-  // Basic setup
-  const renderer = new THREE.WebGPURenderer({ antialias: true });
-  renderer.setPixelRatio(window.devicePixelRatio);
-  renderer.setSize(container.clientWidth, container.clientHeight);
-  container.appendChild(renderer.domElement);
+  let cleanup = () => {};
 
-  await renderer.init();
+  const startNewSimulation = async (numSpecies: number) => {
+    // Clean up previous simulation instance
+    cleanup();
+    container.innerHTML = '';
 
-  // Boids Simulation - reduced count for better mobile performance
-  const boidsSimulation = new BoidsSimulation({ count: 4096 });
+    // Basic setup
+    const renderer = new THREE.WebGPURenderer({ antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(container.clientWidth, container.clientHeight);
+    container.appendChild(renderer.domElement);
 
-  // Boids Visualization
-  const boidsVisualization = new BoidsVisualization(boidsSimulation, {
-    particleSize: 6.0,
-    useTriangles: true,
-    color1: new THREE.Color(0x00ff00), // green
-    color2: new THREE.Color(0xff0000),  // red
-    color3: new THREE.Color(0x0000ff) // blue
-  });
-  
-  const behaviorSelect = document.getElementById('boid-behavior-select') as HTMLSelectElement;
-  behaviorSelect.addEventListener('change', () => {
-    boidsSimulation.updateConfig({
-      interSpeciesRule: behaviorSelect.value as 'rock-paper-scissors' | 'density-based'
-    });
-  });
+    await renderer.init();
 
-  const camera = boidsVisualization.getCamera();
-  camera.aspect = container.clientWidth / container.clientHeight;
-  camera.updateProjectionMatrix();
-  camera.position.z = 700;
-
-  // Mouse interaction
-  const raycaster = new THREE.Raycaster();
-  const mouse = new THREE.Vector2(1, 1);
-
-  function onMouseMove(event: MouseEvent) {
-    if (!container) return;
-    const rect = container.getBoundingClientRect();
-    mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-    mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-  }
-  container.addEventListener('mousemove', onMouseMove, false);
-
-  // Handle window resizing
-  window.addEventListener('resize', onWindowResize);
-
-  function onWindowResize() {
-    if (container) {
-      boidsVisualization.onWindowResize(container.clientWidth, container.clientHeight);
-      renderer.setSize(container.clientWidth, container.clientHeight);
-    }
-  }
-
-  // State management for visibility and pause control
-  let isVisible = false;
-  let isManuallyPaused = false;
-  let animationId: number | null = null;
-
-  const shouldRun = () => isVisible && !isManuallyPaused;
-
-  // Use IntersectionObserver to run simulation only when visible
-  const observer = new IntersectionObserver(
-    (entries) => {
-      entries.forEach((entry) => {
-        isVisible = entry.isIntersecting;
-        if (shouldRun() && !animationId) {
-          startAnimation();
-        } else if (!shouldRun() && animationId) {
-          stopAnimation();
-        }
+    // --- Generate dynamic configs for species ---
+    const speciesConfigs: any[] = [];
+    const baseColors: THREE.Color[] = [
+      new THREE.Color(0x00ff00), new THREE.Color(0xff0000), new THREE.Color(0x0000ff),
+      new THREE.Color(0xffff00), new THREE.Color(0x00ffff), new THREE.Color(0xff00ff),
+      new THREE.Color(0xffa500), new THREE.Color(0x800080), new THREE.Color(0x008000),
+      new THREE.Color(0x800000), // Max 10 for performance
+    ];
+    const colors: THREE.Color[] = [];
+    for (let i = 0; i < numSpecies; i++) {
+      speciesConfigs.push({
+        separation: 15.0 + Math.random() * 10,
+        alignment: 15.0 + Math.random() * 10,
+        cohesion: 10.0 + Math.random() * 10,
+        freedom: 0.75 + Math.random() * 0.1,
+        speedLimit: 7.0 + Math.random() * 2,
       });
-    },
-    { threshold: 0.1 } // Run when 10% of the container is visible
-  );
-  observer.observe(container);
-
-  // Click to pause/resume functionality
-  renderer.domElement.addEventListener('click', () => {
-    isManuallyPaused = !isManuallyPaused;
-    if (shouldRun() && !animationId) {
-      startAnimation();
-    } else if (!shouldRun() && animationId) {
-      stopAnimation();
-    }
-  });
-
-  // Animation functions
-  let lastTime = performance.now();
-  
-  function animate() {
-    if (!shouldRun()) {
-      animationId = null;
-      return;
+      colors.push(baseColors[i % baseColors.length]);
     }
 
-    const now = performance.now();
-    const deltaTime = Math.min((now - lastTime) / 1000, 1/30); // Cap deltaTime for stability
-    lastTime = now;
-    
-    // Update raycaster
-    raycaster.setFromCamera(mouse, camera);
+    // Boids Simulation
+    const boidsSimulation = new BoidsSimulation({ count: 4096, numSpecies, species: speciesConfigs });
 
-    // Update simulation
-    boidsSimulation.update(deltaTime, raycaster.ray.origin, raycaster.ray.direction);
-    boidsSimulation.compute(renderer);
-    
-    // Render scene
-    boidsVisualization.render(renderer);
+    // Boids Visualization
+    const boidsVisualization = new BoidsVisualization(boidsSimulation, {
+      particleSize: 6.0,
+      useTriangles: true,
+      colors: colors,
+    });
 
-    // Schedule next frame
-    animationId = requestAnimationFrame(animate);
-  }
+    // Update behavior based on dropdown
+    const behaviorSelect = document.getElementById('boid-behavior-select') as HTMLSelectElement;
+    const updateBehavior = () => {
+      boidsSimulation.updateConfig({
+        interSpeciesRule: behaviorSelect.value as 'rock-paper-scissors' | 'density-based'
+      });
+    };
+    behaviorSelect.addEventListener('change', updateBehavior);
+    updateBehavior();
 
-  function startAnimation() {
-    if (!animationId && shouldRun()) {
-      lastTime = performance.now();
+    const camera = boidsVisualization.getCamera();
+    camera.aspect = container.clientWidth / container.clientHeight;
+    camera.updateProjectionMatrix();
+    camera.position.z = 700;
+
+    // Mouse interaction
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2(1, 1);
+
+    function onMouseMove(event: MouseEvent) {
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    }
+    container.addEventListener('mousemove', onMouseMove, false);
+
+    // Handle window resizing
+    function onWindowResize() {
+      if (container) {
+        boidsVisualization.onWindowResize(container.clientWidth, container.clientHeight);
+        renderer.setSize(container.clientWidth, container.clientHeight);
+      }
+    }
+    window.addEventListener('resize', onWindowResize);
+
+    // State management
+    let isVisible = false;
+    let isManuallyPaused = false;
+    let animationId: number | null = null;
+    const shouldRun = () => isVisible && !isManuallyPaused;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          isVisible = entry.isIntersecting;
+          if (shouldRun() && !animationId) startAnimation();
+          else if (!shouldRun() && animationId) stopAnimation();
+        });
+      },
+      { threshold: 0.1 }
+    );
+    observer.observe(container);
+
+    renderer.domElement.addEventListener('click', () => {
+      isManuallyPaused = !isManuallyPaused;
+      if (shouldRun() && !animationId) startAnimation();
+      else if (!shouldRun() && animationId) stopAnimation();
+    });
+
+    // Animation loop
+    let lastTime = performance.now();
+    function animate() {
+      if (!shouldRun()) {
+        animationId = null;
+        return;
+      }
+      const now = performance.now();
+      const deltaTime = Math.min((now - lastTime) / 1000, 1/30);
+      lastTime = now;
+      raycaster.setFromCamera(mouse, camera);
+      boidsSimulation.update(deltaTime, raycaster.ray.origin, raycaster.ray.direction);
+      boidsSimulation.compute(renderer);
+      boidsVisualization.render(renderer);
       animationId = requestAnimationFrame(animate);
     }
-  }
 
-  function stopAnimation() {
-    if (animationId) {
-      cancelAnimationFrame(animationId);
-      animationId = null;
+    function startAnimation() {
+      if (!animationId && shouldRun()) {
+        lastTime = performance.now();
+        animationId = requestAnimationFrame(animate);
+      }
     }
-  }
+
+    function stopAnimation() {
+      if (animationId) {
+        cancelAnimationFrame(animationId);
+        animationId = null;
+      }
+    }
+    
+    // Set up cleanup function for this instance
+    cleanup = () => {
+      stopAnimation();
+      observer.disconnect();
+      container.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('resize', onWindowResize);
+      behaviorSelect.removeEventListener('change', updateBehavior);
+      
+      // Dispose visualization resources first, then the renderer
+      boidsVisualization.dispose();
+      renderer.dispose();
+
+      // Finally, clean up the DOM element
+      if (renderer.domElement.parentElement) {
+        renderer.domElement.parentElement.removeChild(renderer.domElement);
+      }
+    };
+  };
+
+  // Initial simulation start
+  const speciesCountInput = document.getElementById('species-count-input') as HTMLInputElement;
+  startNewSimulation(parseInt(speciesCountInput.value, 10));
+
+  // Listener for species count changes
+  speciesCountInput.addEventListener('change', () => {
+    const numSpecies = parseInt(speciesCountInput.value, 10);
+    if (!isNaN(numSpecies) && numSpecies > 0 && numSpecies <= 10) {
+      startNewSimulation(numSpecies);
+    }
+  });
 
   console.log('Boids simulation initialized - will start when visible');
 }

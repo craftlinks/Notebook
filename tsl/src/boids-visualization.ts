@@ -10,15 +10,15 @@ import {
   cameraViewMatrix,
   mat3,
   cross,
-  uint
+  uint,
+  Switch,
+  property
 } from 'three/tsl';
 import { BoidsSimulation } from './boids';
 
 export interface BoidsVisualizationConfig {
   particleSize: number;
-  color1: THREE.Color;
-  color2: THREE.Color;
-  color3: THREE.Color;
+  colors: THREE.Color[];
   useTriangles: boolean; // true for triangles, false for quads
 }
 
@@ -37,9 +37,11 @@ export class BoidsVisualization {
   ) {
     this.config = {
       particleSize: 1.0,
-      color1: new THREE.Color(0xff0000), // Red for species 1
-      color2: new THREE.Color(0x00ff00), // Green for species 2
-      color3: new THREE.Color(0x0000ff), // Blue for species 3
+      colors: [
+        new THREE.Color(0xff0000), // Red
+        new THREE.Color(0x00ff00), // Green
+        new THREE.Color(0x0000ff)  // Blue
+      ],
       useTriangles: true,
       ...config
     };
@@ -125,14 +127,19 @@ export class BoidsVisualization {
       const boidIndex = instanceIndex;
       const species = this.storage.speciesStorage.element(boidIndex);
       
-      const color1 = vec3(this.config.color1.r, this.config.color1.g, this.config.color1.b);
-      const color2 = vec3(this.config.color2.r, this.config.color2.g, this.config.color2.b);
-      const color3 = vec3(this.config.color3.r, this.config.color3.g, this.config.color3.b);
+      const finalColor = property('vec3', 'finalColor').toVar();
       
-      const finalColor = species.equal(uint(0)).select(
-        color1,
-        species.equal(uint(1)).select(color2, color3)
-      );
+      const switchCase = Switch(species);
+      for (let i = 0; i < this.config.colors.length; i++) {
+        const color = this.config.colors[i];
+        switchCase.Case(uint(i), () => {
+          finalColor.assign(vec3(color.r, color.g, color.b));
+        });
+      }
+      switchCase.Default(() => {
+        // Default color if species index is out of bounds
+        finalColor.assign(vec3(1.0, 1.0, 1.0));
+      });
       
       return vec4(finalColor, 1.0);
     });
@@ -167,7 +174,7 @@ export class BoidsVisualization {
     Object.assign(this.config, config);
     
     // Recreate material if colors changed
-    if (config.color1 || config.color2 || config.color3) {
+    if (config.colors) {
       this.setupMaterial();
       this.mesh.material = this.material;
     }
