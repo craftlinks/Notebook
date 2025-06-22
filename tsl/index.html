@@ -10,6 +10,24 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <script type="module" crossorigin src="./src/website.ts"></script>
     <link rel="stylesheet" crossorigin href="./src/styles.css">
+    <style>
+      .simulation-controls {
+        margin-top: 1rem;
+        text-align: center;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 0.5rem;
+      }
+      .control-select {
+        padding: 0.5rem;
+        border-radius: 4px;
+        border: 1px solid var(--border-color);
+        background-color: var(--bg-secondary);
+        color: var(--text-color);
+        font-family: 'Inter', sans-serif;
+      }
+    </style>
   </head>
   <body>
     <header class="header">
@@ -741,6 +759,13 @@ boids.compute(renderer); // This executes computeVelocity then computePosition
 
           <div id="boids-container" class="boids-canvas-container">
             <!-- The boids canvas will be injected here -->
+          </div>
+          <div class="simulation-controls">
+            <label for="boid-behavior-select">Inter-Species Rule:</label>
+            <select id="boid-behavior-select" class="control-select">
+              <option value="density-based" selected>Density-Based</option>
+              <option value="rock-paper-scissors">Rock-Paper-Scissors</option>
+            </select>
           </div>
           <h4>Interspecies Dynamics: A Game of Rock-Paper-Scissors</h4>
           <p>To make the simulation more visually interesting, this version of Boids introduces three distinct species of boids, each with slightly different flocking parameters. More importantly, they interact with each other in a "Rock-Paper-Scissors" dynamic:</p>

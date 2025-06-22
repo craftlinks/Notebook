@@ -18,6 +18,8 @@ import {
   negate,
 } from 'three/tsl';
 
+export type InterSpeciesRule = 'rock-paper-scissors' | 'density-based';
+
 export interface SpeciesConfig {
   separation: number;
   alignment: number;
@@ -32,6 +34,7 @@ export interface BoidsConfig {
   species1: SpeciesConfig;
   species2: SpeciesConfig;
   species3: SpeciesConfig;
+  interSpeciesRule: InterSpeciesRule;
 }
 
 export interface BoidsUniforms {
@@ -48,6 +51,7 @@ export interface BoidsUniforms {
   deltaTime: ReturnType<typeof uniform>;
   rayOrigin: ReturnType<typeof uniform>;
   rayDirection: ReturnType<typeof uniform>;
+  interSpeciesRule: ReturnType<typeof uniform>;
 }
 
 export interface BoidsStorage {
@@ -60,6 +64,65 @@ export interface BoidsStorage {
 export interface BoidsCompute {
   computeVelocity: any;
   computePosition: any;
+}
+
+const rockPaperScissorsRule = (params: {
+  species: any,
+  otherSpecies: any,
+  distToBirdSq: any,
+  dirToBird: any,
+  velocity: any,
+  deltaTime: any
+}) => {
+  const { species, otherSpecies, distToBirdSq, dirToBird, velocity, deltaTime } = params;
+
+  const preySpecies = species.add(uint(1)).mod(uint(3));
+  const predatorSpecies = species.add(uint(2)).mod(uint(3));
+
+  If(otherSpecies.equal(preySpecies), () => { // This boid is the hunter
+    const huntingRadius = float(300.0);
+    const huntingRadiusSq = huntingRadius.mul(huntingRadius);
+    
+    If(distToBirdSq.lessThan(huntingRadiusSq), () => {
+      const velocityAdjust = deltaTime.mul(0.8);
+      velocity.addAssign(normalize(dirToBird).mul(velocityAdjust));
+    });
+
+  }).ElseIf(otherSpecies.equal(predatorSpecies), () => { // This boid is the prey
+    const fleeRadius = float(200.0);
+    const fleeRadiusSq = fleeRadius.mul(fleeRadius);
+
+    If(distToBirdSq.lessThan(fleeRadiusSq), () => {
+      const velocityAdjust = (fleeRadiusSq.div(distToBirdSq).sub(1.0)).mul(deltaTime).mul(2.5);
+      velocity.subAssign(normalize(dirToBird).mul(velocityAdjust));
+    });
+  });
+}
+
+const densityBasedRule = (params: {
+  distToBirdSq: any,
+  dirToBird: any,
+  velocity: any,
+  deltaTime: any
+}) => {
+  const { distToBirdSq, dirToBird, velocity, deltaTime } = params;
+
+  const fleeRadius = float(100.0);
+  const fleeRadiusSq = fleeRadius.mul(fleeRadius);
+
+  If(distToBirdSq.lessThan(fleeRadiusSq), () => {
+    // Flee
+    const velocityAdjust = (fleeRadiusSq.div(distToBirdSq).sub(1.0)).mul(deltaTime).mul(2.5);
+    velocity.subAssign(normalize(dirToBird).mul(velocityAdjust));
+  }).Else(() => {
+    // Hunt
+    const huntingRadius = float(300.0);
+    const huntingRadiusSq = huntingRadius.mul(huntingRadius);
+    If(distToBirdSq.lessThan(huntingRadiusSq), () => {
+      const velocityAdjust = deltaTime.mul(0.8);
+      velocity.addAssign(normalize(dirToBird).mul(velocityAdjust));
+    });
+  });
 }
 
 export class BoidsSimulation {
@@ -93,6 +156,7 @@ export class BoidsSimulation {
         freedom: 0.85,
         speedLimit: 8.0,
       },
+      interSpeciesRule: 'density-based',
     };
 
     this.config = {
@@ -173,7 +237,8 @@ export class BoidsSimulation {
       now: uniform(0.0),
       deltaTime: uniform(0.0).label('deltaTime'),
       rayOrigin: uniform(new THREE.Vector3()).label('rayOrigin'),
-      rayDirection: uniform(new THREE.Vector3()).label('rayDirection')
+      rayDirection: uniform(new THREE.Vector3()).label('rayDirection'),
+      interSpeciesRule: uniform(this.config.interSpeciesRule === 'rock-paper-scissors' ? 0 : 1),
     };
   }
 
@@ -204,7 +269,8 @@ export class BoidsSimulation {
         deltaTime, rayOrigin, rayDirection,
         separation1, alignment1, cohesion1,
         separation2, alignment2, cohesion2,
-        separation3, alignment3, cohesion3
+        separation3, alignment3, cohesion3,
+        interSpeciesRule
       } = this.uniforms;
 
       const separation = species.equal(uint(0)).select(
@@ -338,23 +404,21 @@ export class BoidsSimulation {
             velocity.addAssign(normalize(dirToBird).mul(velocityAdjust));
           });
         }).Else(() => { // Different species interaction
-          // Simplified density-based interaction.
-          // If another species' boid is close, we are in their dense area, so flee.
-          // If they are further away, we are sparse relative to them, so hunt.
-          const fleeRadius = float(100.0);
-          const fleeRadiusSq = fleeRadius.mul(fleeRadius);
-
-          If(distToBirdSq.lessThan(fleeRadiusSq), () => {
-            // Flee
-            const velocityAdjust = (fleeRadiusSq.div(distToBirdSq).sub(1.0)).mul(deltaTime).mul(2.5);
-            velocity.subAssign(normalize(dirToBird).mul(velocityAdjust));
+          If(interSpeciesRule.equal(uint(0)), () => {
+            rockPaperScissorsRule({
+              species,
+              otherSpecies,
+              distToBirdSq,
+              dirToBird,
+              velocity,
+              deltaTime
+            });
           }).Else(() => {
-            // Hunt
-            const huntingRadius = float(300.0);
-            const huntingRadiusSq = huntingRadius.mul(huntingRadius);
-            If(distToBirdSq.lessThan(huntingRadiusSq), () => {
-              const velocityAdjust = deltaTime.mul(0.8);
-              velocity.addAssign(normalize(dirToBird).mul(velocityAdjust));
+            densityBasedRule({
+              distToBirdSq,
+              dirToBird,
+              velocity,
+              deltaTime
             });
           });
         });
@@ -457,6 +521,10 @@ export class BoidsSimulation {
     if (config.species1) this.config.species1 = { ...this.config.species1, ...config.species1 };
     if (config.species2) this.config.species2 = { ...this.config.species2, ...config.species2 };
     if (config.species3) this.config.species3 = { ...this.config.species3, ...config.species3 };
+    if (config.interSpeciesRule) {
+      this.config.interSpeciesRule = config.interSpeciesRule;
+      this.uniforms.interSpeciesRule.value = this.config.interSpeciesRule === 'rock-paper-scissors' ? 0 : 1;
+    }
     
     this.uniforms.separation1.value = this.config.species1.separation;
     this.uniforms.alignment1.value = this.config.species1.alignment;

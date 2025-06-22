@@ -304,6 +304,13 @@ async function runBoidsSimulation() {
     color3: new THREE.Color(0x0000ff) // blue
   });
   
+  const behaviorSelect = document.getElementById('boid-behavior-select') as HTMLSelectElement;
+  behaviorSelect.addEventListener('change', () => {
+    boidsSimulation.updateConfig({
+      interSpeciesRule: behaviorSelect.value as 'rock-paper-scissors' | 'density-based'
+    });
+  });
+
   const camera = boidsVisualization.getCamera();
   camera.aspect = container.clientWidth / container.clientHeight;
   camera.updateProjectionMatrix();
