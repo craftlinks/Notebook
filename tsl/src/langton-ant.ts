@@ -254,19 +254,28 @@ async function initLangtonAnt({ canvas, renderer: existingRenderer }: { canvas?:
       // Wrap boundaries
       newX.assign(newX.add(gridWidth).mod(gridWidth))
       newY.assign(newY.add(gridHeight).mod(gridHeight))
-      
-      // Clear current position
-      hasAnt.assign(0)
-      
-      // Set new position (still potential for conflicts, but reduced)
+
+      // Set new position, preventing collisions
       const newCellIndex = newY.mul(gridWidth).add(newX)
       const newHasAntIndex = newCellIndex.mul(3)
       const newDirectionIndex = newCellIndex.mul(3).add(1)
       const newColorIndex = newCellIndex.mul(3).add(2)
       
-      multiAntGrid.element(newHasAntIndex).assign(1)
-      multiAntGrid.element(newDirectionIndex).assign(direction)
-      multiAntGrid.element(newColorIndex).assign(antColor)
+      const targetHasAnt = multiAntGrid.element(newHasAntIndex)
+      
+      // Only move if the target cell is not occupied by another moving ant
+      If(targetHasAnt.lessThan(2), () => {
+        // Clear current position
+        hasAnt.assign(0)
+
+        // Set new position
+        multiAntGrid.element(newHasAntIndex).assign(1)
+        multiAntGrid.element(newDirectionIndex).assign(direction)
+        multiAntGrid.element(newColorIndex).assign(antColor)
+      }).Else(() => {
+        // Collision detected, ant stays in place but is no longer marked for movement
+        hasAnt.assign(1)
+      })
     })
   })()
   
