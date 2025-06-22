@@ -1,6 +1,6 @@
 // Website integration for TSL examples
 import { initGameOfLife } from './game-of-life'
-import { BoidsSimulation } from './boids'
+import { BoidsSimulation, type InterSpeciesRule } from './boids'
 import { BoidsVisualization } from './boids-visualization'
 import hljs from 'highlight.js/lib/core';
 import typescript from 'highlight.js/lib/languages/typescript';
@@ -340,7 +340,7 @@ async function runBoidsSimulation() {
     const behaviorSelect = document.getElementById('boid-behavior-select') as HTMLSelectElement;
     const updateBehavior = () => {
       boidsSimulation.updateConfig({
-        interSpeciesRule: behaviorSelect.value as 'rock-paper-scissors' | 'density-based'
+        interSpeciesRule: behaviorSelect.value as InterSpeciesRule
       });
     };
     behaviorSelect.addEventListener('change', updateBehavior);

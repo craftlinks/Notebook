@@ -17,9 +17,11 @@ import {
   property,
   negate,
   Switch,
+  mat4,
+  vec3,
 } from 'three/tsl';
 
-export type InterSpeciesRule = 'rock-paper-scissors' | 'density-based';
+export type InterSpeciesRule = 'rock-paper-scissors' | 'density-based' | 'density-preference';
 
 export interface SpeciesConfig {
   separation: number;
@@ -35,6 +37,7 @@ export interface BoidsConfig {
   numSpecies: number;
   species: SpeciesConfig[];
   interSpeciesRule: InterSpeciesRule;
+  preferenceMatrix?: number[][];
 }
 
 export interface BoidsUniforms {
@@ -46,6 +49,7 @@ export interface BoidsUniforms {
   rayOrigin: ReturnType<typeof uniform>;
   rayDirection: ReturnType<typeof uniform>;
   interSpeciesRule: ReturnType<typeof uniform>;
+  preferenceMatrix: ReturnType<typeof uniform>;
 }
 
 export interface BoidsStorage {
@@ -119,6 +123,34 @@ const densityBasedRule = (params: {
   });
 }
 
+const densityPreferenceRule = (params: {
+  density: any,
+  densityThreshold: any,
+  species: any,
+  otherSpecies: any,
+  preferenceMatrix: any,
+  dirToBird: any,
+  velocity: any,
+  deltaTime: any
+}) => {
+  const { density, densityThreshold, species, otherSpecies, preferenceMatrix, dirToBird, velocity, deltaTime } = params;
+
+  // preference is from -1 to 1. Remap to [0, 1] to use as a strength multiplier.
+  const normalizedPreference = preferenceMatrix.element(species).element(otherSpecies).add(1.0).mul(0.5);
+
+  If(density.lessThan(densityThreshold), () => {
+    // Low density: attract. All species attract each other, modulated by preference.
+    const attractionStrength = normalizedPreference.mul(0.5); // Strength is [0, 0.5]
+    const velocityAdjust = attractionStrength.mul(deltaTime);
+    velocity.addAssign(normalize(dirToBird).mul(velocityAdjust));
+  }).Else(() => {
+    // High density: repel. All species repel each other, modulated by preference.
+    const repulsionStrength = normalizedPreference.mul(0.5); // Strength is [0, 0.5]
+    const velocityAdjust = repulsionStrength.mul(deltaTime);
+    velocity.subAssign(normalize(dirToBird).mul(velocityAdjust));
+  });
+};
+
 export class BoidsSimulation {
   private config: BoidsConfig;
   private uniforms!: BoidsUniforms;
@@ -127,6 +159,22 @@ export class BoidsSimulation {
 
   constructor(config: Partial<BoidsConfig> = {}) {
     const isMobile = /Mobi/i.test(navigator.userAgent);
+
+    const generatePreferenceMatrix = (numSpecies: number): number[][] => {
+      const matrix: number[][] = Array(numSpecies).fill(0).map(() => Array(numSpecies).fill(0));
+      for (let i = 0; i < numSpecies; i++) {
+        for (let j = i; j < numSpecies; j++) {
+          if (i === j) {
+            matrix[i][j] = 1.0;
+          } else {
+            const value = Math.random() * 2 - 1;
+            matrix[i][j] = value;
+            matrix[j][i] = value;
+          }
+        }
+      }
+      return matrix;
+    };
 
     const defaultConfig: BoidsConfig = {
       count: isMobile ? 1024 : 4096,
@@ -162,7 +210,8 @@ export class BoidsSimulation {
           speedLimit: 7.5,
         },
       ],
-      interSpeciesRule: 'density-based',
+      interSpeciesRule: 'density-preference',
+      preferenceMatrix: generatePreferenceMatrix(4),
     };
 
     const finalConfig = { ...defaultConfig, ...config };
@@ -172,6 +221,10 @@ export class BoidsSimulation {
       for (let i = 0; i < config.numSpecies; i++) {
         finalConfig.species.push(defaultConfig.species[i % defaultConfig.species.length]);
       }
+    }
+    
+    if (config.numSpecies && !config.preferenceMatrix) {
+      finalConfig.preferenceMatrix = generatePreferenceMatrix(config.numSpecies);
     }
     
     this.config = finalConfig;
@@ -235,14 +288,34 @@ export class BoidsSimulation {
   private initializeUniforms(): void {
     const { numSpecies, species, interSpeciesRule } = this.config;
 
-    const speciesSeparation = [];
-    const speciesAlignment = [];
-    const speciesCohesion = [];
+    const speciesSeparation: ReturnType<typeof uniform>[] = [];
+    const speciesAlignment: ReturnType<typeof uniform>[] = [];
+    const speciesCohesion: ReturnType<typeof uniform>[] = [];
 
     for (let i = 0; i < numSpecies; i++) {
       speciesSeparation.push(uniform(species[i].separation).label(`separation${i}`));
       speciesAlignment.push(uniform(species[i].alignment).label(`alignment${i}`));
       speciesCohesion.push(uniform(species[i].cohesion).label(`cohesion${i}`));
+    }
+
+    let ruleIndex;
+    switch (interSpeciesRule) {
+      case 'rock-paper-scissors':
+        ruleIndex = 0;
+        break;
+      case 'density-based':
+        ruleIndex = 1;
+        break;
+      case 'density-preference':
+        ruleIndex = 2;
+        break;
+      default:
+        ruleIndex = 1;
+    }
+
+    const preferenceMatrix = new THREE.Matrix4();
+    if (this.config.preferenceMatrix) {
+      preferenceMatrix.fromArray(this.config.preferenceMatrix.flat());
     }
 
     this.uniforms = {
@@ -253,7 +326,8 @@ export class BoidsSimulation {
       deltaTime: uniform(0.0).label('deltaTime'),
       rayOrigin: uniform(new THREE.Vector3()).label('rayOrigin'),
       rayDirection: uniform(new THREE.Vector3()).label('rayDirection'),
-      interSpeciesRule: uniform(interSpeciesRule === 'rock-paper-scissors' ? 0 : 1),
+      interSpeciesRule: uniform(ruleIndex),
+      preferenceMatrix: uniform(preferenceMatrix).label('preferenceMatrix'),
     };
   }
 
@@ -290,7 +364,8 @@ export class BoidsSimulation {
       // Import uniforms that provide external parameters to the compute shader.
       const { 
         deltaTime, rayOrigin, rayDirection,
-        interSpeciesRule
+        interSpeciesRule,
+        preferenceMatrix,
       } = this.uniforms;
 
       // Define the different zones of interaction for a boid.
@@ -303,7 +378,7 @@ export class BoidsSimulation {
       // The squared zone radius, for efficient distance checking.
       const zoneRadiusSq = zoneRadius.mul(zoneRadius).toConst();
 
-      // Retrieve and store the current boid's position and velocity from storage buffers.
+      // Retrieve the current boid's position and velocity from storage buffers.
       const position = positionStorage.element(birdIndex).toVar();
       const velocity = velocityStorage.element(birdIndex).toVar();
 
@@ -333,13 +408,34 @@ export class BoidsSimulation {
 
       // --- Centering Force ---
       // This force gently steers the boids towards the center of the simulation space to prevent them from flying away indefinitely.
+      /*
       const dirToCenter = position.toVar();
       // The y-component is weighted more heavily to encourage boids to stay within a flatter vertical space.
       dirToCenter.y.mulAssign(2.5);
-      velocity.subAssign(normalize(dirToCenter).mul(deltaTime).mul(5.0));
+      velocity.subAssign(normalize(dirToCenter).mul(deltaTime).mul(8.0));
+      */
 
       // --- Boid Interaction Loop ---
       // This is the core of the boids simulation. Each boid iterates through all other boids to calculate separation, alignment, and cohesion forces.
+
+      const density = property('float', 'density').assign(0.0);
+      const densityRadius = float(60.0);
+      const densityRadiusSq = densityRadius.mul(densityRadius);
+      const densityThreshold = float(50.0);
+
+      Loop({ start: uint(0), end: uint(count), type: 'uint', condition: '<' }, ({ i }) => {
+        If(i.equal(birdIndex), () => {
+          Continue();
+        });
+
+        const otherPosition = positionStorage.element(i);
+        const distSq = length(otherPosition.sub(position)).pow(2);
+        
+        If(distSq.lessThan(densityRadiusSq), () => {
+          density.addAssign(1.0);
+        });
+      });
+
       Loop({ start: uint(0), end: uint(count), type: 'uint', condition: '<' }, ({ i }) => {
         
         // A boid does not interact with itself.
@@ -364,6 +460,7 @@ export class BoidsSimulation {
         const otherSpecies = speciesStorage.element(i);
         
         If(species.equal(otherSpecies), () => {
+          const intraSpeciesBoost = float(2.0);
           // If the other boid is outside the zone of influence, skip it.
           If(distToBirdSq.greaterThan(zoneRadiusSq), () => {
             Continue();
@@ -379,7 +476,7 @@ export class BoidsSimulation {
           // 1. Separation: Steer to avoid crowding local flockmates.
           If(percent.lessThan(separationThresh), () => {
             // The repulsive force is stronger for closer boids.
-            const velocityAdjust = (separationThresh.div(percent).sub(1.0)).mul(deltaTime);
+            const velocityAdjust = (separationThresh.div(percent).sub(1.0)).mul(deltaTime).mul(intraSpeciesBoost);
             velocity.subAssign(normalize(dirToBird).mul(velocityAdjust));
           
           // 2. Alignment: Steer towards the average heading of local flockmates.
@@ -391,7 +488,7 @@ export class BoidsSimulation {
 
             const cosRange = cos(adjustedPercent.mul(PI_2));
             const cosRangeAdjust = float(1.0).sub(cosRange.mul(0.5));
-            const velocityAdjust = cosRangeAdjust.mul(deltaTime);
+            const velocityAdjust = cosRangeAdjust.mul(deltaTime).mul(intraSpeciesBoost);
             // Apply the alignment force, steering towards the other boid's velocity.
             velocity.addAssign(normalize(birdVelocity).mul(velocityAdjust));
           
@@ -406,28 +503,42 @@ export class BoidsSimulation {
             const cosRange = cos(adjustedPercent.mul(PI_2));
             const cosRangeAdjust = float(1.0).sub(cosRange.mul(0.5));
 
-            const velocityAdjust = cosRangeAdjust.mul(deltaTime);
+            const velocityAdjust = cosRangeAdjust.mul(deltaTime).mul(intraSpeciesBoost);
             // Apply the cohesion force, steering towards the other boid's position.
             velocity.addAssign(normalize(dirToBird).mul(velocityAdjust));
           });
         }).Else(() => { // Different species interaction
-          If(interSpeciesRule.equal(uint(0)), () => {
-            rockPaperScissorsRule({
-              species,
-              otherSpecies,
-              distToBirdSq,
-              dirToBird,
-              velocity,
-              deltaTime
+          Switch(interSpeciesRule)
+            .Case(uint(0), () => {
+              rockPaperScissorsRule({
+                species,
+                otherSpecies,
+                distToBirdSq,
+                dirToBird,
+                velocity,
+                deltaTime
+              });
+            })
+            .Case(uint(1), () => {
+              densityBasedRule({
+                distToBirdSq,
+                dirToBird,
+                velocity,
+                deltaTime
+              });
+            })
+            .Case(uint(2), () => {
+              densityPreferenceRule({
+                density,
+                densityThreshold,
+                species,
+                otherSpecies,
+                preferenceMatrix,
+                dirToBird,
+                velocity,
+                deltaTime
+              });
             });
-          }).Else(() => {
-            densityBasedRule({
-              distToBirdSq,
-              dirToBird,
-              velocity,
-              deltaTime
-            });
-          });
         });
       });
 
@@ -514,7 +625,21 @@ export class BoidsSimulation {
 
     if (this.config.interSpeciesRule) {
       this.config.interSpeciesRule = this.config.interSpeciesRule;
-      this.uniforms.interSpeciesRule.value = this.config.interSpeciesRule === 'rock-paper-scissors' ? 0 : 1;
+      let ruleIndex;
+      switch (this.config.interSpeciesRule) {
+        case 'rock-paper-scissors':
+          ruleIndex = 0;
+          break;
+        case 'density-based':
+          ruleIndex = 1;
+          break;
+        case 'density-preference':
+          ruleIndex = 2;
+          break;
+        default:
+          ruleIndex = 1;
+      }
+      this.uniforms.interSpeciesRule.value = ruleIndex;
     }
   }
 
@@ -553,7 +678,21 @@ export class BoidsSimulation {
     }
     if (config.interSpeciesRule) {
       this.config.interSpeciesRule = config.interSpeciesRule;
-      this.uniforms.interSpeciesRule.value = this.config.interSpeciesRule === 'rock-paper-scissors' ? 0 : 1;
+      let ruleIndex;
+      switch (config.interSpeciesRule) {
+        case 'rock-paper-scissors':
+          ruleIndex = 0;
+          break;
+        case 'density-based':
+          ruleIndex = 1;
+          break;
+        case 'density-preference':
+          ruleIndex = 2;
+          break;
+        default:
+          ruleIndex = 1;
+      }
+      this.uniforms.interSpeciesRule.value = ruleIndex;
     }
   }
 }
