@@ -508,9 +508,39 @@ renderer.setAnimationLoop(async () => {
           <p>With this, we have a complete, high-performance, GPU-powered simulation and visualization of Conway's Game of Life. The interactive canvas you saw in the previous section is rendered using exactly these techniques.</p>
         </section>
 
+        <!-- Langton's Ant Section -->
+        <section id="langton-ant" class="section">
+          <h2>3. Langton's Ant: Emergent Complexity</h2>
+          <p class="section-intro">Langton's Ant is a fascinating cellular automaton that demonstrates how simple rules can lead to complex emergent behavior. Despite having only two simple rules, the ant creates intricate patterns that transition from apparent randomness to structured "highways" after thousands of steps.</p>
+
+          <h4>The Rules</h4>
+          <p>The simulation follows just two simple rules:</p>
+          <ul class="boids-rules">
+            <li><strong>On a white cell:</strong> Turn right, flip the cell to black, then move forward</li>
+            <li><strong>On a black cell:</strong> Turn left, flip the cell to white, then move forward</li>
+          </ul>
+
+          <h4>Implementation</h4>
+          <p>Our implementation uses a 200×200 grid (40,000 cells) to provide enough space for the ant to develop complex patterns. The simulation runs entirely on the GPU using TSL compute shaders for maximum performance.</p>
+          
+          <div class="example-output">
+            <div id="langton-ant-output" class="output-box">
+              <div class="loading">Initializing Langton's Ant...</div>
+            </div>
+          </div>
+
+          <div class="simulation-controls">
+            <button id="langton-start-btn" class="control-button">Start</button>
+            <button id="langton-stop-btn" class="control-button">Stop</button>
+            <button id="langton-reset-btn" class="control-button">Reset</button>
+            <button id="langton-fast-btn" class="control-button">Run 1000 Steps</button>
+            <span id="langton-step-info" style="margin-left: 1rem; color: var(--text-muted);">Steps: 0</span>
+          </div>
+        </section>
+
         <!-- Boids Simulation Section -->
         <section id="boids-simulation" class="section">
-          <h2>3. Boids: Agent-Based Simulation</h2>
+          <h2>4. Boids: Agent-Based Simulation</h2>
           <p class="section-intro">Next, we'll explore a more complex, dynamic simulation: Boids. Developed by Craig Reynolds, this is an artificial life program that simulates the flocking behavior of birds. Each "boid" follows a set of simple rules, and the combination of these rules leads to complex, emergent flocking behavior. It's a classic example of how simple local interactions can create complex global patterns, making it a perfect candidate for GPU acceleration.</p>
 
           <p>The emergent flocking behavior is governed by three simple rules that each boid follows based on its perception of its local neighbors. These rules, illustrated below, are applied concurrently to every boid in the simulation.</p>

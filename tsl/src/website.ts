@@ -1,11 +1,12 @@
 // Website integration for TSL examples
 import { initGameOfLife } from './game-of-life'
+import { initLangtonAnt } from './langton-ant'
 import { BoidsSimulation, type InterSpeciesRule } from './boids'
 import { BoidsVisualization } from './boids-visualization'
 import hljs from 'highlight.js/lib/core';
 import typescript from 'highlight.js/lib/languages/typescript';
 import * as THREE from 'three/webgpu'
-import { Fn, instanceIndex, vec4, If, instancedArray, positionLocal } from 'three/tsl'
+import { Fn, instanceIndex, vec4, If, instancedArray, positionLocal, int } from 'three/tsl'
 
 hljs.registerLanguage('typescript', typescript);
 
@@ -15,6 +16,9 @@ let basicComputeResult: any = null
 // Game of Life simulation state
 let gameOfLifeState: any = null
 let golVisualizationState: any = null
+
+// Langton's Ant simulation state
+let langtonAntState: any = null
 
 // Shared renderer for all TSL examples
 let sharedRenderer: THREE.WebGPURenderer | null = null;
@@ -269,12 +273,247 @@ function startGameOfLifeAnimation() {
   })
 }
 
+// Update Langton's Ant output
+async function updateLangtonAntOutput() {
+  const outputElement = document.getElementById('langton-ant-output')
+  if (!outputElement) return
+
+  try {
+    outputElement.innerHTML = `
+      <div class="output-success">
+        <div><strong>Grid Size:</strong> 200 × 200 = 40,000 cells</div>
+        <div><strong>Status:</strong> Ant initialized at center facing north.</div>
+        <div><strong>Rules:</strong> White→Turn Right+Black, Black→Turn Left+White</div>
+        <div style="margin-top: 1rem;">
+          <canvas id="langton-canvas" style="
+            border: 1px solid var(--border-color);
+            background: #000;
+            image-rendering: pixelated;
+            width: 512px;
+            height: 512px;
+            cursor: pointer;
+          " width="512" height="512"></canvas>
+        </div>
+      </div>
+    `
+    
+    // Initialize the Langton's Ant visualization
+    await initLangtonAntVisualization()
+    
+  } catch (error) {
+    console.error('Langton\'s Ant error:', error)
+    outputElement.innerHTML = `
+      <div class="output-error">
+        <div>Error running Langton's Ant:</div>
+        <div>${(error as Error).message}</div>
+      </div>
+    `
+  }
+}
+
+// Initialize Langton's Ant visualization
+async function initLangtonAntVisualization() {
+  try {
+    const canvas = document.getElementById('langton-canvas') as HTMLCanvasElement
+    if (!canvas) {
+      console.error('Canvas element not found')
+      return
+    }
+
+    // Create a dedicated renderer for Langton's Ant
+    const langtonRenderer = new THREE.WebGPURenderer({ canvas, antialias: true })
+    await langtonRenderer.init()
+    
+    // Set canvas size and clear color
+    langtonRenderer.setSize(canvas.width, canvas.height)
+    langtonRenderer.setClearColor(0x000000, 1.0) // Black background
+
+    // Initialize Langton's Ant simulation only
+    langtonAntState = await initLangtonAnt({ 
+      canvas, 
+      renderer: langtonRenderer 
+    })
+
+    // Create scene and camera for visualization
+    const scene = new THREE.Scene()
+    const camera = new THREE.OrthographicCamera(-0.5, 0.5, 0.5, -0.5, 0.1, 10)
+    camera.position.z = 1
+    
+    // Create a plane geometry scaled to the size of one cell
+    const cellSize = 1 / langtonAntState.gridWidth
+    console.log('Cell size:', cellSize, 'Grid size:', langtonAntState.gridWidth, 'x', langtonAntState.gridHeight)
+    const geometry = new THREE.PlaneGeometry(cellSize, cellSize)
+
+    // Use an instanced mesh to represent the grid
+    const mesh = new THREE.InstancedMesh(geometry, undefined, langtonAntState.gridWidth * langtonAntState.gridHeight)
+    scene.add(mesh)
+
+    // Buffer to hold the color of each cell
+    const colorBuffer = instancedArray(langtonAntState.gridWidth * langtonAntState.gridHeight, 'vec4')
+    
+    // Proper Langton's Ant color computation
+    const updateColors = Fn(() => {
+      const cellState = langtonAntState.grid.element(instanceIndex)
+      const outputColor = colorBuffer.element(instanceIndex)
+      
+      // Convert 1D index to 2D coordinates
+      const x = instanceIndex.mod(langtonAntState.gridWidth)
+      const y = instanceIndex.div(langtonAntState.gridWidth).toInt()
+      
+      // Get ant position
+      const antX = langtonAntState.antState.element(0)
+      const antY = langtonAntState.antState.element(1)
+
+      const whiteColor = vec4(1.0, 1.0, 1.0, 1.0)
+      const blackColor = vec4(0.0, 0.0, 0.0, 1.0)
+      const antColor = vec4(1.0, 0.0, 0.0, 1.0) // Red for the ant
+      
+      // Check if this cell is the ant's current position
+      If(x.equal(antX).and(y.equal(antY)), () => {
+        outputColor.assign(antColor)
+      }).ElseIf(cellState.equal(1), () => {
+        outputColor.assign(blackColor) // Black cells
+      }).Else(() => {
+        outputColor.assign(whiteColor) // White cells
+      })
+    })()
+
+    const colorCompute = updateColors.compute(langtonAntState.gridWidth * langtonAntState.gridHeight)
+
+    // TSL material that uses the color buffer
+    const material = new THREE.MeshBasicNodeMaterial()
+    material.colorNode = colorBuffer.toAttribute();
+    
+    material.positionNode = Fn(() => {
+      const { gridWidth, gridHeight } = langtonAntState;
+      
+      // Calculate 2D grid position from 1D instance index
+      const x = instanceIndex.mod(gridWidth);
+      const y = instanceIndex.div(gridWidth).toInt();
+
+      // Normalize and center the grid coordinates to create instance offset
+      const uvX = x.toFloat().add(0.5).div(gridWidth).sub(0.5);
+      const uvY = y.toFloat().add(0.5).div(gridHeight).sub(0.5);
+
+      // Add the instance offset to the local position of the geometry's vertices
+      const finalPosition = positionLocal.add(vec4(uvX, uvY, 0, 0));
+
+      return finalPosition;
+    })()
+
+    mesh.material = material
+    mesh.frustumCulled = false
+
+    // Debug the mesh
+    console.log('Mesh created:', mesh)
+    console.log('Mesh count:', mesh.count)
+    console.log('Material:', material)
+    console.log('Scene children:', scene.children.length)
+
+    // Add visualization state to langtonAntState
+    langtonAntState.scene = scene
+    langtonAntState.camera = camera
+    langtonAntState.mesh = mesh
+    langtonAntState.colorCompute = colorCompute
+
+    // Animation state
+    let isRunning = false
+    let stepCount = 0
+    
+    // Run Langton's Ant step
+    const runLangtonAntStep = async () => {
+      if (!langtonAntState) return
+      await langtonRenderer.computeAsync(langtonAntState.stepAnt.compute(1))
+      stepCount++
+    }
+
+    // Set up control buttons
+    const startBtn = document.getElementById('langton-start-btn')
+    const stopBtn = document.getElementById('langton-stop-btn')
+    const resetBtn = document.getElementById('langton-reset-btn')
+    const fastBtn = document.getElementById('langton-fast-btn')
+    const stepInfo = document.getElementById('langton-step-info')
+
+    const updateStepDisplay = () => {
+      if (stepInfo) {
+        stepInfo.textContent = `Steps: ${stepCount}`
+      }
+    }
+
+    startBtn?.addEventListener('click', () => {
+      if (!isRunning) {
+        isRunning = true
+        startLangtonAntAnimation()
+      }
+    })
+
+    stopBtn?.addEventListener('click', () => {
+      isRunning = false
+    })
+
+    resetBtn?.addEventListener('click', async () => {
+      stepCount = 0
+      // Re-initialize the grid and ant
+      await langtonRenderer.computeAsync(langtonAntState.stepAnt.compute(1)) // dummy call to reset
+      await langtonRenderer.computeAsync(colorCompute)
+      langtonRenderer.render(scene, camera)
+      updateStepDisplay()
+    })
+
+    fastBtn?.addEventListener('click', async () => {
+      for (let i = 0; i < 1000; i++) {
+        await runLangtonAntStep()
+      }
+      await langtonRenderer.computeAsync(colorCompute)
+      langtonRenderer.render(scene, camera)
+      updateStepDisplay()
+    })
+
+    // Animation loop function
+    const startLangtonAntAnimation = () => {
+      langtonRenderer.setAnimationLoop(async () => {
+        if (!isRunning) return
+        
+        // Run 10 steps per frame for faster evolution
+        for (let i = 0; i < 10; i++) {
+          await runLangtonAntStep()
+        }
+        
+        await langtonRenderer.computeAsync(colorCompute)
+        langtonRenderer.render(scene, camera)
+        updateStepDisplay()
+      })
+    }
+
+    // Initial render with debugging
+    console.log('Rendering initial frame...')
+    console.log('Canvas dimensions:', canvas.width, 'x', canvas.height)
+    console.log('Renderer size:', langtonRenderer.getSize(new THREE.Vector2()))
+    console.log('Renderer domElement:', langtonRenderer.domElement)
+    console.log('Canvas element:', canvas)
+    console.log('Are they the same?:', langtonRenderer.domElement === canvas)
+    
+    await langtonRenderer.computeAsync(colorCompute)
+    langtonRenderer.render(scene, camera)
+    updateStepDisplay()
+
+    console.log('Langton\'s Ant visualization initialized')
+
+  } catch (error) {
+    console.error('Error initializing Langton\'s Ant visualization:', error)
+  }
+}
+
 async function runBasicExample() {
   await updateBasicExampleOutput();
 }
 
 async function runGameOfLife() {
   await updateGameOfLifeOutput();
+}
+
+async function runLangtonAnt() {
+  await updateLangtonAntOutput();
 }
 
 async function runBoidsSimulation() {
@@ -483,6 +722,7 @@ async function initWebsite() {
   // Update example outputs
   await runBasicExample()
   await runGameOfLife()
+  await runLangtonAnt()
   await runBoidsSimulation()
   
   console.log('Website initialization complete!')
