@@ -470,13 +470,9 @@ async function initLangtonAntVisualization() {
       langtonRenderer.setAnimationLoop(async () => {
         if (!isRunning) return
         
-        // Batch multiple steps into single compute calls for efficiency
-        const stepsPerFrame = 10
-        for (let i = 0; i < stepsPerFrame; i++) {
-          // Run step synchronously without await to reduce overhead
-          langtonRenderer.compute(langtonAntState.stepAnt.compute(1))
-          stepCount++
-        }
+        // Run batched steps (10 steps done inside the shader)
+        langtonRenderer.compute(langtonAntState.stepAnt.compute(1))
+        stepCount += 10
         
         // Only await the final color update and render
         await langtonRenderer.computeAsync(colorCompute)
