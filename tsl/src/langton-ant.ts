@@ -276,49 +276,34 @@ async function initLangtonAnt({ canvas, renderer: existingRenderer }: { canvas?:
   // Fade function to gradually reduce density of unvisited cells
   const fadeGrid = Fn(() => {
     const cellIndex = instanceIndex
+    const counter = stepCounter.element(0) // Read once at the start
+
+    // Increment on first thread for the next frame
+    If(cellIndex.equal(0), () => {
+      stepCounter.element(0).assign(counter.add(1))
+    })
+
     const cellR = gridR.element(cellIndex)
     const cellG = gridG.element(cellIndex)
     const cellB = gridB.element(cellIndex)
-    
-    // Only process on the first thread to increment the counter
-    If(cellIndex.equal(0), () => {
-      const counter = stepCounter.element(0)
-      counter.assign(counter.add(1))
-    })
-    
-    const counter = stepCounter.element(0)
+
     const shouldFade = counter.mod(10).equal(0)
-    
-    // Fade each RGB channel independently
+
+    // Fade each RGB channel independently when fade cycle occurs
     If(shouldFade, () => {
       // Fade red channel
       If(cellR.greaterThan(0), () => {
-        const newR = cellR.sub(1)
-        If(newR.lessThan(0), () => {
-          cellR.assign(0)
-        }).Else(() => {
-          cellR.assign(newR)
-        })
+        cellR.assign(cellR.sub(1))
       })
       
       // Fade green channel
       If(cellG.greaterThan(0), () => {
-        const newG = cellG.sub(1)
-        If(newG.lessThan(0), () => {
-          cellG.assign(0)
-        }).Else(() => {
-          cellG.assign(newG)
-        })
+        cellG.assign(cellG.sub(1))
       })
       
       // Fade blue channel
       If(cellB.greaterThan(0), () => {
-        const newB = cellB.sub(1)
-        If(newB.lessThan(0), () => {
-          cellB.assign(0)
-        }).Else(() => {
-          cellB.assign(newB)
-        })
+        cellB.assign(cellB.sub(1))
       })
     })
   })()

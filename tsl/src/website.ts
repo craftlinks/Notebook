@@ -389,10 +389,10 @@ async function initLangtonAntVisualization() {
         const green = cellG.toFloat().div(100.0)
         const blue = cellB.toFloat().div(100.0)
         
-        // Ensure we have some background when all channels are 0 (white background)
+        // Only show white background when ALL channels are exactly 0
         const totalColor = red.add(green).add(blue)
-        If(totalColor.lessThan(0.01), () => {
-          outputColor.assign(vec4(1.0, 1.0, 1.0, 1.0)) // White background
+        If(totalColor.equal(0.0), () => {
+          outputColor.assign(vec4(0.0, 0.0, 0.0, 1.0)) // Black background for faded cells
         }).Else(() => {
           outputColor.assign(vec4(red, green, blue, 1.0))
         })
@@ -528,16 +528,16 @@ async function initLangtonAntVisualization() {
         if (!isRunning) return
         
         // First, fade the grid
-        langtonRenderer.compute(langtonAntState.fadeGrid.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
+        await langtonRenderer.computeAsync(langtonAntState.fadeGrid.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
         
         if (isMultiAntMode) {
           // Run two-phase multi-ant step
-          langtonRenderer.compute(langtonAntState.stepMultiAntsPhase1.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
-          langtonRenderer.compute(langtonAntState.stepMultiAntsPhase2.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
+          await langtonRenderer.computeAsync(langtonAntState.stepMultiAntsPhase1.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
+          await langtonRenderer.computeAsync(langtonAntState.stepMultiAntsPhase2.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
           stepCount += 1
         } else {
           // Run batched steps (10 steps done inside the shader)
-          langtonRenderer.compute(langtonAntState.stepAnt.compute(1))
+          await langtonRenderer.computeAsync(langtonAntState.stepAnt.compute(1))
           stepCount += 10
         }
         
