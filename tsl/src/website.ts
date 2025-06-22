@@ -299,8 +299,9 @@ async function runBoidsSimulation() {
   const boidsVisualization = new BoidsVisualization(boidsSimulation, {
     particleSize: 6.0,
     useTriangles: true,
-    colorA: new THREE.Color(0x00ff00), // green
-    colorB: new THREE.Color(0xff0000)  // red
+    color1: new THREE.Color(0x00ff00), // green
+    color2: new THREE.Color(0xff0000),  // red
+    color3: new THREE.Color(0x0000ff) // blue
   });
   
   const camera = boidsVisualization.getCamera();

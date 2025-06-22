@@ -2,8 +2,6 @@ import * as THREE from 'three/webgpu';
 import { 
   Fn, 
   normalize, 
-  length, 
-  mix,
   vec3,
   vec4,
   instanceIndex,
