@@ -29,25 +29,10 @@ async function initLangtonAnt({ canvas, renderer: existingRenderer }: { canvas?:
     return y.mul(gridWidth).add(x)
   })
   
-  // Initialize grid - all cells start white (0) with a test pattern
+  // Initialize grid - all cells start white (0)
   const initializeGrid = Fn(() => {
     const cell = grid.element(instanceIndex)
-    const x = instanceIndex.mod(gridWidth)
-    const y = instanceIndex.div(gridWidth).toInt()
-    
-    // Start with all white (0), but add a small test pattern
-    cell.assign(0)
-    
-    // Add a few black cells for testing visibility
-    If(x.equal(int(50)).and(y.equal(int(50))), () => {
-      cell.assign(1)
-    })
-    If(x.equal(int(51)).and(y.equal(int(50))), () => {
-      cell.assign(1)
-    })
-    If(x.equal(int(50)).and(y.equal(int(51))), () => {
-      cell.assign(1)
-    })
+    cell.assign(0) // All cells start white
   })()
   
   // Initialize ant in center facing north
