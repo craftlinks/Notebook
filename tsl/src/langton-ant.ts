@@ -69,10 +69,10 @@ async function initLangtonAnt({ canvas, renderer: existingRenderer }: { canvas?:
     const hasAnt = multiAntGrid.element(hasAntIndex)
     const direction = multiAntGrid.element(directionIndex)
     
-    // Use hash for pseudo-random placement (30% chance)
+    // Use hash for pseudo-random placement (1% chance)
     const randomValue = hash(instanceIndex.add(54321))
     
-    If(randomValue.lessThan(0.3), () => {
+    If(randomValue.lessThan(0.01), () => {
       hasAnt.assign(1) // Place ant
       // Random direction (0-3)
       const randomDir = hash(instanceIndex.add(98765)).mul(4).floor().toInt()
