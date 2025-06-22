@@ -11,7 +11,8 @@ import {
   cameraProjectionMatrix,
   cameraViewMatrix,
   mat3,
-  cross
+  cross,
+  uint
 } from 'three/tsl';
 import { BoidsSimulation } from './boids';
 
@@ -19,6 +20,7 @@ export interface BoidsVisualizationConfig {
   particleSize: number;
   color1: THREE.Color;
   color2: THREE.Color;
+  color3: THREE.Color;
   useTriangles: boolean; // true for triangles, false for quads
 }
 
@@ -37,8 +39,9 @@ export class BoidsVisualization {
   ) {
     this.config = {
       particleSize: 1.0,
-      color1: new THREE.Color(0x00ff00), // Green for species 1
-      color2: new THREE.Color(0xffa500), // Orange for species 2
+      color1: new THREE.Color(0xff0000), // Red for species 1
+      color2: new THREE.Color(0x00ff00), // Green for species 2
+      color3: new THREE.Color(0x0000ff), // Blue for species 3
       useTriangles: true,
       ...config
     };
@@ -126,8 +129,12 @@ export class BoidsVisualization {
       
       const color1 = vec3(this.config.color1.r, this.config.color1.g, this.config.color1.b);
       const color2 = vec3(this.config.color2.r, this.config.color2.g, this.config.color2.b);
+      const color3 = vec3(this.config.color3.r, this.config.color3.g, this.config.color3.b);
       
-      const finalColor = species.equal(0).select(color1, color2);
+      const finalColor = species.equal(uint(0)).select(
+        color1,
+        species.equal(uint(1)).select(color2, color3)
+      );
       
       return vec4(finalColor, 1.0);
     });
@@ -162,7 +169,7 @@ export class BoidsVisualization {
     Object.assign(this.config, config);
     
     // Recreate material if colors changed
-    if (config.color1 || config.color2) {
+    if (config.color1 || config.color2 || config.color3) {
       this.setupMaterial();
       this.mesh.material = this.material;
     }

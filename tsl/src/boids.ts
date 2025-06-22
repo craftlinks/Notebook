@@ -31,6 +31,7 @@ export interface BoidsConfig {
   bounds: number;
   species1: SpeciesConfig;
   species2: SpeciesConfig;
+  species3: SpeciesConfig;
 }
 
 export interface BoidsUniforms {
@@ -40,6 +41,9 @@ export interface BoidsUniforms {
   separation2: ReturnType<typeof uniform>;
   alignment2: ReturnType<typeof uniform>;
   cohesion2: ReturnType<typeof uniform>;
+  separation3: ReturnType<typeof uniform>;
+  alignment3: ReturnType<typeof uniform>;
+  cohesion3: ReturnType<typeof uniform>;
   now: ReturnType<typeof uniform>;
   deltaTime: ReturnType<typeof uniform>;
   rayOrigin: ReturnType<typeof uniform>;
@@ -82,6 +86,13 @@ export class BoidsSimulation {
         freedom: 0.8,
         speedLimit: 7.0,
       },
+      species3: {
+        separation: 20.0,
+        alignment: 25.0,
+        cohesion: 10.0,
+        freedom: 0.85,
+        speedLimit: 8.0,
+      },
     };
 
     this.config = {
@@ -89,6 +100,7 @@ export class BoidsSimulation {
       ...config,
       species1: { ...defaultConfig.species1, ...(config.species1 || {}) },
       species2: { ...defaultConfig.species2, ...(config.species2 || {}) },
+      species3: { ...defaultConfig.species3, ...(config.species3 || {}) },
     };
 
     this.initializeStorage();
@@ -123,7 +135,7 @@ export class BoidsSimulation {
       velocityArray[i * 3 + 2] = velZ * 10;
 
       phaseArray[i] = 1;
-      speciesArray[i] = i < count / 2 ? 0 : 1;
+      speciesArray[i] = i < count / 3 ? 0 : (i < count * 2 / 3 ? 1 : 2);
     }
 
     const positionStorage = attributeArray(positionArray, 'vec3').label('positionStorage');
@@ -155,6 +167,9 @@ export class BoidsSimulation {
       separation2: uniform(this.config.species2.separation).label('separation2'),
       alignment2: uniform(this.config.species2.alignment).label('alignment2'),
       cohesion2: uniform(this.config.species2.cohesion).label('cohesion2'),
+      separation3: uniform(this.config.species3.separation).label('separation3'),
+      alignment3: uniform(this.config.species3.alignment).label('alignment3'),
+      cohesion3: uniform(this.config.species3.cohesion).label('cohesion3'),
       now: uniform(0.0),
       deltaTime: uniform(0.0).label('deltaTime'),
       rayOrigin: uniform(new THREE.Vector3()).label('rayOrigin'),
@@ -174,7 +189,13 @@ export class BoidsSimulation {
       const birdIndex = instanceIndex.toConst('birdIndex');
       const species = speciesStorage.element(birdIndex).toConst('species');
       
-      const speedLimit = species.equal(uint(0)).select(this.config.species1.speedLimit, this.config.species2.speedLimit);
+      const speedLimit = species.equal(uint(0)).select(
+        this.config.species1.speedLimit, 
+        species.equal(uint(1)).select(
+          this.config.species2.speedLimit,
+          this.config.species3.speedLimit
+        )
+      );
       // A per-boid variable for the speed limit. This can be modified, for instance, when a boid is near a ray.
       const limit = property('float', 'limit').assign(speedLimit);
 
@@ -182,12 +203,22 @@ export class BoidsSimulation {
       const { 
         deltaTime, rayOrigin, rayDirection,
         separation1, alignment1, cohesion1,
-        separation2, alignment2, cohesion2
+        separation2, alignment2, cohesion2,
+        separation3, alignment3, cohesion3
       } = this.uniforms;
 
-      const separation = species.equal(uint(0)).select(separation1, separation2);
-      const alignment = species.equal(uint(0)).select(alignment1, alignment2);
-      const cohesion = species.equal(uint(0)).select(cohesion1, cohesion2);
+      const separation = species.equal(uint(0)).select(
+        separation1,
+        species.equal(uint(1)).select(separation2, separation3)
+      );
+      const alignment = species.equal(uint(0)).select(
+        alignment1,
+        species.equal(uint(1)).select(alignment2, alignment3)
+      );
+      const cohesion = species.equal(uint(0)).select(
+        cohesion1,
+        species.equal(uint(1)).select(cohesion2, cohesion3)
+      );
 
       // Define the different zones of interaction for a boid.
       // zoneRadius is the total radius of influence for a boid.
@@ -307,8 +338,11 @@ export class BoidsSimulation {
             velocity.addAssign(normalize(dirToBird).mul(velocityAdjust));
           });
         }).Else(() => { // Different species interaction
-          // Species 1 (index 0) hunts Species 2 (index 1)
-          If(species.equal(uint(0)), () => { // Hunter logic
+          // Rock-Paper-Scissors: 0 hunts 1, 1 hunts 2, 2 hunts 0
+          const preySpecies = species.add(uint(1)).mod(uint(3));
+          const predatorSpecies = species.add(uint(2)).mod(uint(3));
+
+          If(otherSpecies.equal(preySpecies), () => { // This boid is the hunter
             const huntingRadius = float(300.0);
             const huntingRadiusSq = huntingRadius.mul(huntingRadius);
             
@@ -318,7 +352,7 @@ export class BoidsSimulation {
               velocity.addAssign(normalize(dirToBird).mul(velocityAdjust));
             });
 
-          }).Else(() => { // Prey logic, species.equal(uint(1))
+          }).ElseIf(otherSpecies.equal(predatorSpecies), () => { // This boid is the prey
             const fleeRadius = float(200.0);
             const fleeRadiusSq = fleeRadius.mul(fleeRadius);
 
@@ -427,6 +461,7 @@ export class BoidsSimulation {
     if (config.bounds) this.config.bounds = config.bounds;
     if (config.species1) this.config.species1 = { ...this.config.species1, ...config.species1 };
     if (config.species2) this.config.species2 = { ...this.config.species2, ...config.species2 };
+    if (config.species3) this.config.species3 = { ...this.config.species3, ...config.species3 };
     
     this.uniforms.separation1.value = this.config.species1.separation;
     this.uniforms.alignment1.value = this.config.species1.alignment;
@@ -434,5 +469,8 @@ export class BoidsSimulation {
     this.uniforms.separation2.value = this.config.species2.separation;
     this.uniforms.alignment2.value = this.config.species2.alignment;
     this.uniforms.cohesion2.value = this.config.species2.cohesion;
+    this.uniforms.separation3.value = this.config.species3.separation;
+    this.uniforms.alignment3.value = this.config.species3.alignment;
+    this.uniforms.cohesion3.value = this.config.species3.cohesion;
   }
 }
