@@ -341,7 +341,6 @@ async function initLangtonAntVisualization() {
     
     // Create a plane geometry scaled to the size of one cell
     const cellSize = 1 / langtonAntState.gridWidth
-    console.log('Cell size:', cellSize, 'Grid size:', langtonAntState.gridWidth, 'x', langtonAntState.gridHeight)
     const geometry = new THREE.PlaneGeometry(cellSize, cellSize)
 
     // Use an instanced mesh to represent the grid
@@ -404,11 +403,7 @@ async function initLangtonAntVisualization() {
     mesh.material = material
     mesh.frustumCulled = false
 
-    // Debug the mesh
-    console.log('Mesh created:', mesh)
-    console.log('Mesh count:', mesh.count)
-    console.log('Material:', material)
-    console.log('Scene children:', scene.children.length)
+    // Setup complete
 
     // Add visualization state to langtonAntState
     langtonAntState.scene = scene
@@ -475,24 +470,27 @@ async function initLangtonAntVisualization() {
       langtonRenderer.setAnimationLoop(async () => {
         if (!isRunning) return
         
-        // Run 10 steps per frame for faster evolution
-        for (let i = 0; i < 10; i++) {
-          await runLangtonAntStep()
+        // Batch multiple steps into single compute calls for efficiency
+        const stepsPerFrame = 10
+        for (let i = 0; i < stepsPerFrame; i++) {
+          // Run step synchronously without await to reduce overhead
+          langtonRenderer.compute(langtonAntState.stepAnt.compute(1))
+          stepCount++
         }
         
+        // Only await the final color update and render
         await langtonRenderer.computeAsync(colorCompute)
         langtonRenderer.render(scene, camera)
-        updateStepDisplay()
+        
+        // Only update display every few frames to reduce DOM updates
+        if (stepCount % 50 === 0) {
+          updateStepDisplay()
+        }
       })
     }
 
-    // Initial render with debugging
+    // Initial render
     console.log('Rendering initial frame...')
-    console.log('Canvas dimensions:', canvas.width, 'x', canvas.height)
-    console.log('Renderer size:', langtonRenderer.getSize(new THREE.Vector2()))
-    console.log('Renderer domElement:', langtonRenderer.domElement)
-    console.log('Canvas element:', canvas)
-    console.log('Are they the same?:', langtonRenderer.domElement === canvas)
     
     await langtonRenderer.computeAsync(colorCompute)
     langtonRenderer.render(scene, camera)
