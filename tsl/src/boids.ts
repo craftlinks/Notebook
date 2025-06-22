@@ -17,8 +17,6 @@ import {
   property,
   negate,
   Switch,
-  mat4,
-  vec3,
 } from 'three/tsl';
 
 export type InterSpeciesRule = 'rock-paper-scissors' | 'density-based' | 'density-preference';
@@ -350,6 +348,7 @@ export class BoidsSimulation {
 
       const switchCase = Switch(species);
       for (let i = 0; i < this.config.numSpecies; i++) {
+        // @ts-ignore - TSL function call signature issue
         switchCase.Case(uint(i), () => {
           speedLimit.assign(float(this.config.species[i].speedLimit));
           separation.assign(this.uniforms.speciesSeparation[i]);
@@ -363,9 +362,7 @@ export class BoidsSimulation {
 
       // Import uniforms that provide external parameters to the compute shader.
       const { 
-        deltaTime, rayOrigin, rayDirection,
-        interSpeciesRule,
-        preferenceMatrix,
+        deltaTime, rayOrigin, rayDirection
       } = this.uniforms;
 
       // Define the different zones of interaction for a boid.
@@ -421,7 +418,6 @@ export class BoidsSimulation {
       const density = property('float', 'density').assign(0.0);
       const densityRadius = float(60.0);
       const densityRadiusSq = densityRadius.mul(densityRadius);
-      const densityThreshold = float(50.0);
 
       Loop({ start: uint(0), end: uint(count), type: 'uint', condition: '<' }, ({ i }) => {
         If(i.equal(birdIndex), () => {
@@ -439,7 +435,7 @@ export class BoidsSimulation {
       Loop({ start: uint(0), end: uint(count), type: 'uint', condition: '<' }, ({ i }) => {
         
         // A boid does not interact with itself.
-        // @ts-ignore - TSL function call signature issue
+        // @ts-ignore - TSL expects a TSL node, but TS thinks 'i' is a number
         If(i.equal(birdIndex), () => {
           Continue();
         });
@@ -508,7 +504,12 @@ export class BoidsSimulation {
             velocity.addAssign(normalize(dirToBird).mul(velocityAdjust));
           });
         }).Else(() => { // Different species interaction
-          Switch(interSpeciesRule)
+          const preferenceMatrix = this.uniforms.preferenceMatrix;
+
+          // Apply flocking rules between different species
+          // @ts-ignore - TSL function call signature issue
+          Switch(this.uniforms.interSpeciesRule.toUint())
+            // @ts-ignore - TSL function call signature issue
             .Case(uint(0), () => {
               rockPaperScissorsRule({
                 species,
@@ -519,6 +520,7 @@ export class BoidsSimulation {
                 deltaTime
               });
             })
+            // @ts-ignore - TSL function call signature issue
             .Case(uint(1), () => {
               densityBasedRule({
                 distToBirdSq,
@@ -527,10 +529,11 @@ export class BoidsSimulation {
                 deltaTime
               });
             })
+            // @ts-ignore - TSL function call signature issue
             .Case(uint(2), () => {
               densityPreferenceRule({
                 density,
-                densityThreshold,
+                densityThreshold: float(0.5),
                 species,
                 otherSpecies,
                 preferenceMatrix,

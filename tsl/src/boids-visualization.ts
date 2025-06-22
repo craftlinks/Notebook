@@ -132,10 +132,12 @@ export class BoidsVisualization {
       const switchCase = Switch(species);
       for (let i = 0; i < this.config.colors.length; i++) {
         const color = this.config.colors[i];
+        // @ts-ignore - TSL function call signature issue
         switchCase.Case(uint(i), () => {
           finalColor.assign(vec3(color.r, color.g, color.b));
         });
       }
+      // @ts-ignore - TSL function call signature issue
       switchCase.Default(() => {
         // Default color if species index is out of bounds
         finalColor.assign(vec3(1.0, 1.0, 1.0));
