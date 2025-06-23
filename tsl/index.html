@@ -538,7 +538,25 @@ renderer.setAnimationLoop(async () => {
               <input type="checkbox" id="langton-density-toggle" style="margin-right: 0.5rem;">
               Multi-Ant Mode (1% density)
             </label>
+            <label for="langton-rule-select" style="margin-left: 1rem;">Rule System:</label>
+            <select id="langton-rule-select" class="control-select">
+              <option value="chromaticEcosystem" selected>Chromatic Ecosystem</option>
+              <option value="simpleLangton">Simple Langton</option>
+              <option value="competitive">Competitive</option>
+              <option value="symbiotic">Symbiotic</option>
+            </select>
             <span id="langton-step-info" style="margin-left: 1rem; color: var(--text-muted);">Steps: 0</span>
+          </div>
+
+          <div class="concept-item">
+            <h4>Rule System Variations</h4>
+            <p>The multi-ant mode supports different rule systems that create dramatically different behaviors:</p>
+            <ul class="boids-rules">
+              <li><strong>Chromatic Ecosystem:</strong> Complex color interactions where ants compete and cooperate based on color dominance. Creates rich, organic patterns with emergent color relationships.</li>
+              <li><strong>Simple Langton:</strong> Basic Langton's ant rules adapted for RGB channels. Each ant type (red, green, blue) adds/removes its color simply.</li>
+              <li><strong>Competitive:</strong> Ants aggressively fight for territory, with strong color dominance and territorial marking behaviors.</li>
+              <li><strong>Symbiotic:</strong> Ants cooperate to create complementary color patterns, building harmonious color relationships and preserving existing colors.</li>
+            </ul>
           </div>
 
           <div class="concept-item">

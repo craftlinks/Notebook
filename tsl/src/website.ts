@@ -462,18 +462,40 @@ async function initLangtonAntVisualization() {
     const resetBtn = document.getElementById('langton-reset-btn')
     const fastBtn = document.getElementById('langton-fast-btn')
     const densityToggle = document.getElementById('langton-density-toggle') as HTMLInputElement
+    const ruleSelect = document.getElementById('langton-rule-select') as HTMLSelectElement
     const stepInfo = document.getElementById('langton-step-info')
 
     const updateStepDisplay = () => {
       if (stepInfo) {
         const mode = isMultiAntMode ? ' (Multi-Ant)' : ' (Single)'
-        stepInfo.textContent = `Steps: ${stepCount}${mode}`
+        const ruleName = ruleSelect?.value || 'chromaticEcosystem'
+        const ruleDisplayName = {
+          'chromaticEcosystem': 'Chromatic',
+          'simpleLangton': 'Simple',
+          'competitive': 'Competitive', 
+          'symbiotic': 'Symbiotic'
+        }[ruleName] || 'Unknown'
+        stepInfo.textContent = `Steps: ${stepCount}${mode} - ${ruleDisplayName} Rules`
       }
     }
 
     // Toggle handler
     densityToggle?.addEventListener('change', () => {
       isMultiAntMode = densityToggle.checked
+      updateStepDisplay()
+    })
+
+    // Rule system selector handler (async to ensure GPU buffer updates before next frame)
+    ruleSelect?.addEventListener('change', async () => {
+      const selectedRule = ruleSelect.value
+      try {
+        if (langtonAntState && langtonAntState.switchRuleSystem) {
+          await langtonAntState.switchRuleSystem(selectedRule)
+          console.log(`Switched to ${selectedRule} rule system`)
+        }
+      } catch (err) {
+        console.error('Error switching Langton rule system:', err)
+      }
       updateStepDisplay()
     })
 

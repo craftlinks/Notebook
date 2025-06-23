@@ -79,7 +79,7 @@ async function initLangtonAnt({ canvas, renderer: existingRenderer }: { canvas?:
     // Use hash for pseudo-random placement (1% chance)
     const randomValue = hash(instanceIndex.add(54321))
     
-    If(randomValue.lessThan(0.01), () => {
+    If(randomValue.lessThan(0.05), () => {
       atomicStore(hasAnt, 1) // Place ant
       // Random direction (0-3)
       const randomDir = hash(instanceIndex.add(98765)).mul(4).floor().toInt()
@@ -94,6 +94,28 @@ async function initLangtonAnt({ canvas, renderer: existingRenderer }: { canvas?:
     })
   })()
   
+  // Rule system selector - uniform to control which rule system is active
+  // 0 = Chromatic Ecosystem, 1 = Simple Langton, 2 = Competitive, 3 = Symbiotic
+  const ruleSystemMode = instancedArray(1, 'int')
+  
+  // Initialize rule system to Chromatic Ecosystem (0)
+  const initRuleSystem = Fn(() => {
+    ruleSystemMode.element(0).assign(0)
+  })()
+  
+  // Helper function that writes the selected rule mode _into the GPU buffer_.
+  // We have to dispatch a 1-thread compute shader because `ruleSystemMode` lives
+  // in GPU memory – assigning on the CPU alone has no effect.
+  const switchRuleSystem = async (mode: number) => {
+    const setMode = Fn(() => {
+      ruleSystemMode.element(0).assign(int(mode))
+    })()
+
+    // Fire-and-forget is fine here, but returning the promise allows callers to
+    // `await` if they want to ensure the update completed before the next step.
+    return renderer.computeAsync(setMode.compute(1))
+  }
+
   // Langton's Ant step function - optimized to only run on first thread
   const stepAnt = Fn(() => {
     // Only run on the first GPU thread to avoid redundant work
@@ -114,9 +136,9 @@ async function initLangtonAnt({ canvas, renderer: existingRenderer }: { canvas?:
         const totalIntensity = currentR.add(currentG).add(currentB)
         
         // Langton's Ant rules (conservative - only affect own color):
-        // If on light (total intensity < 50): turn right, add to red channel
-        // If on dark (total intensity >= 50): turn left, subtract from red channel only
-        If(totalIntensity.lessThan(50), () => {
+        // If on light (total intensity < 100): turn right, add to red channel
+        // If on dark (total intensity >= 100): turn left, subtract from red channel only
+        If(totalIntensity.lessThan(100), () => {
           antDir.assign(antDir.add(1).mod(4))
           currentR.assign(100) // Single ant contributes to red channel
         }).Else(() => {
@@ -170,78 +192,183 @@ async function initLangtonAnt({ canvas, renderer: existingRenderer }: { canvas?:
       const currentB = gridB.element(cellIndex)
       const totalIntensity = currentR.add(currentG).add(currentB)
       
-      // Apply Chromatic Ecosystem Rules - complex color interactions
-      If(totalIntensity.lessThan(50), () => {
-        // On light cells: turn right, but behavior depends on color dominance
-        atomicStore(direction, atomicLoad(direction).toInt().add(1).mod(4))
-        
-        // Find dominant color channel
-        const isRedDominant = currentR.greaterThanEqual(currentG).and(currentR.greaterThanEqual(currentB))
-        const isGreenDominant = currentG.greaterThan(currentR).and(currentG.greaterThanEqual(currentB))
-        
-        // Chromatic interaction rules
-        If(atomicLoad(antColor).toInt().equal(0), () => {
-          // Red ant behavior
-          If(isRedDominant, () => {
-            currentR.assign(currentR.add(50).min(100)) // Strengthen red dominance
-          }).ElseIf(isGreenDominant, () => {
-            currentG.assign(currentG.sub(30).max(0)) // Compete with green
-            currentR.assign(100) // Assert red presence
+      // Apply the selected rule system based on ruleSystemMode
+      const currentRuleMode = ruleSystemMode.element(0)
+      
+      If(currentRuleMode.equal(0), () => {
+        // Chromatic Ecosystem Rules
+        If(totalIntensity.lessThan(100), () => {
+          // On light cells: turn right, but behavior depends on color dominance
+          atomicStore(direction, atomicLoad(direction).toInt().add(1).mod(4))
+          
+          // Find dominant color channel
+          const isRedDominant = currentR.greaterThanEqual(currentG).and(currentR.greaterThanEqual(currentB))
+          const isGreenDominant = currentG.greaterThan(currentR).and(currentG.greaterThanEqual(currentB))
+          
+          // Chromatic interaction rules
+          If(atomicLoad(antColor).toInt().equal(0), () => {
+            // Red ant behavior
+            If(isRedDominant, () => {
+              currentR.assign(currentR.add(50).min(100)) // Strengthen red dominance
+            }).ElseIf(isGreenDominant, () => {
+              currentG.assign(currentG.sub(30).max(0)) // Compete with green
+              currentR.assign(100) // Assert red presence
+            }).Else(() => {
+              // Blue dominant or mixed
+              currentB.assign(currentB.sub(20).max(0)) // Weaken blue
+              currentR.assign(80) // Moderate red addition
+            })
+          }).ElseIf(atomicLoad(antColor).toInt().equal(1), () => {
+            // Green ant behavior (symbiotic with red, competitive with blue)
+            If(isRedDominant, () => {
+              currentG.assign(60) // Moderate green in red areas
+              currentR.assign(currentR.add(20).min(100)) // Boost red slightly
+            }).ElseIf(isGreenDominant, () => {
+              currentG.assign(100) // Maintain green dominance
+            }).Else(() => {
+              // Blue dominant or mixed
+              currentB.assign(currentB.sub(40).max(0)) // Strongly compete with blue
+              currentG.assign(100) // Assert green presence
+            })
           }).Else(() => {
-            // Blue dominant or mixed
-            currentB.assign(currentB.sub(20).max(0)) // Weaken blue
-            currentR.assign(80) // Moderate red addition
-          })
-        }).ElseIf(atomicLoad(antColor).toInt().equal(1), () => {
-          // Green ant behavior (symbiotic with red, competitive with blue)
-          If(isRedDominant, () => {
-            currentG.assign(60) // Moderate green in red areas
-            currentR.assign(currentR.add(20).min(100)) // Boost red slightly
-          }).ElseIf(isGreenDominant, () => {
-            currentG.assign(100) // Maintain green dominance
-          }).Else(() => {
-            // Blue dominant or mixed
-            currentB.assign(currentB.sub(40).max(0)) // Strongly compete with blue
-            currentG.assign(100) // Assert green presence
+            // Blue ant behavior (creates cool zones, competitive with warm colors)
+            If(isRedDominant.or(isGreenDominant), () => {
+              // In warm areas, create cooling effect
+              currentR.assign(currentR.sub(25).max(0))
+              currentG.assign(currentG.sub(25).max(0))
+              currentB.assign(currentB.add(60).min(100))
+            }).Else(() => {
+              // In blue or mixed areas, strengthen blue
+              currentB.assign(100)
+            })
           })
         }).Else(() => {
-          // Blue ant behavior (creates cool zones, competitive with warm colors)
-          If(isRedDominant.or(isGreenDominant), () => {
-            // In warm areas, create cooling effect
-            currentR.assign(currentR.sub(25).max(0))
-            currentG.assign(currentG.sub(25).max(0))
-            currentB.assign(currentB.add(60).min(100))
+          // On dark cells: turn left, color decay with cross-channel effects
+          atomicStore(direction, atomicLoad(direction).toInt().add(3).mod(4))
+          
+          // Calculate color influence for fading
+          const colorIntensity = currentR.add(currentG).add(currentB)
+          const fadeAmount = colorIntensity.div(6).max(10).min(50) // Adaptive fade
+          
+          If(atomicLoad(antColor).toInt().equal(0), () => {
+            // Red ant causes purple shift when fading
+            currentR.assign(currentR.sub(fadeAmount).max(0))
+            If(currentB.greaterThan(20), () => {
+              currentB.assign(currentB.sub(fadeAmount.div(2)).max(0)) // Slower blue fade
+            })
+          }).ElseIf(atomicLoad(antColor).toInt().equal(1), () => {
+            // Green ant causes yellow-to-red shift when fading
+            currentG.assign(currentG.sub(fadeAmount).max(0))
+            If(currentR.greaterThan(currentG), () => {
+              currentR.assign(currentR.sub(fadeAmount.div(3)).max(0)) // Preserve some red
+            })
           }).Else(() => {
-            // In blue or mixed areas, strengthen blue
+            // Blue ant causes cyan shift when fading
+            currentB.assign(currentB.sub(fadeAmount).max(0))
+            If(currentG.greaterThan(10), () => {
+              currentG.assign(currentG.sub(fadeAmount.div(2)).max(0)) // Slower green fade
+            })
+          })
+        })
+      }).ElseIf(currentRuleMode.equal(1), () => {
+        // Simple Langton Rules
+        If(totalIntensity.lessThan(100), () => {
+          // On light cells: turn right, add color based on ant type
+          atomicStore(direction, atomicLoad(direction).toInt().add(1).mod(4))
+          
+          If(atomicLoad(antColor).toInt().equal(0), () => {
+            currentR.assign(100) // Red ant adds red
+          }).ElseIf(atomicLoad(antColor).toInt().equal(1), () => {
+            currentG.assign(100) // Green ant adds green
+          }).Else(() => {
+            currentB.assign(100) // Blue ant adds blue
+          })
+        }).Else(() => {
+          // On dark cells: turn left, remove color
+          atomicStore(direction, atomicLoad(direction).toInt().add(3).mod(4))
+          
+          If(atomicLoad(antColor).toInt().equal(0), () => {
+            currentR.assign(currentR.sub(50).max(0)) // Red ant removes red
+          }).ElseIf(atomicLoad(antColor).toInt().equal(1), () => {
+            currentG.assign(currentG.sub(50).max(0)) // Green ant removes green
+          }).Else(() => {
+            currentB.assign(currentB.sub(50).max(0)) // Blue ant removes blue
+          })
+        })
+      }).ElseIf(currentRuleMode.equal(2), () => {
+        // Competitive Rules
+        If(totalIntensity.lessThan(100), () => {
+          // On light cells: turn right, aggressively claim territory
+          atomicStore(direction, atomicLoad(direction).toInt().add(1).mod(4))
+          
+          If(atomicLoad(antColor).toInt().equal(0), () => {
+            // Red ant: aggressive takeover
+            currentR.assign(100)
+            currentG.assign(currentG.sub(30).max(0))
+            currentB.assign(currentB.sub(30).max(0))
+          }).ElseIf(atomicLoad(antColor).toInt().equal(1), () => {
+            // Green ant: balanced approach
+            currentG.assign(100)
+            currentR.assign(currentR.sub(15).max(0))
+            currentB.assign(currentB.sub(15).max(0))
+          }).Else(() => {
+            // Blue ant: defensive expansion
             currentB.assign(100)
+            If(currentR.add(currentG).greaterThan(50), () => {
+              currentR.assign(currentR.sub(20).max(0))
+              currentG.assign(currentG.sub(20).max(0))
+            })
+          })
+        }).Else(() => {
+          // On dark cells: turn left, retreat or defend
+          atomicStore(direction, atomicLoad(direction).toInt().add(3).mod(4))
+          
+          // Gradual decay based on ant color
+          If(atomicLoad(antColor).toInt().equal(0), () => {
+            currentR.assign(currentR.sub(25).max(0))
+          }).ElseIf(atomicLoad(antColor).toInt().equal(1), () => {
+            currentG.assign(currentG.sub(25).max(0))
+          }).Else(() => {
+            currentB.assign(currentB.sub(25).max(0))
           })
         })
       }).Else(() => {
-        // On dark cells: turn left, color decay with cross-channel effects
-        atomicStore(direction, atomicLoad(direction).toInt().add(3).mod(4))
-        
-        // Calculate color influence for fading
-        const colorIntensity = currentR.add(currentG).add(currentB)
-        const fadeAmount = colorIntensity.div(6).max(10).min(50) // Adaptive fade
-        
-        If(atomicLoad(antColor).toInt().equal(0), () => {
-          // Red ant causes purple shift when fading
-          currentR.assign(currentR.sub(fadeAmount).max(0))
-          If(currentB.greaterThan(20), () => {
-            currentB.assign(currentB.sub(fadeAmount.div(2)).max(0)) // Slower blue fade
-          })
-        }).ElseIf(atomicLoad(antColor).toInt().equal(1), () => {
-          // Green ant causes yellow-to-red shift when fading
-          currentG.assign(currentG.sub(fadeAmount).max(0))
-          If(currentR.greaterThan(currentG), () => {
-            currentR.assign(currentR.sub(fadeAmount.div(3)).max(0)) // Preserve some red
+        // Symbiotic Rules (mode 3)
+        If(totalIntensity.lessThan(50), () => {
+          // On light cells: turn right, build complementary colors
+          atomicStore(direction, atomicLoad(direction).toInt().add(1).mod(4))
+          
+          If(atomicLoad(antColor).toInt().equal(0), () => {
+            // Red ant: create warm tones
+            currentR.assign(currentR.add(40).min(100))
+            If(currentG.lessThan(20), () => {
+              currentG.assign(currentG.add(20).min(100)) // Add yellow tints
+            })
+          }).ElseIf(atomicLoad(antColor).toInt().equal(1), () => {
+            // Green ant: bridge colors
+            currentG.assign(currentG.add(40).min(100))
+            If(currentR.greaterThan(30), () => {
+              currentR.assign(currentR.add(10).min(100)) // Enhance existing red
+            })
+            If(currentB.greaterThan(30), () => {
+              currentB.assign(currentB.add(10).min(100)) // Enhance existing blue
+            })
+          }).Else(() => {
+            // Blue ant: create cool tones
+            currentB.assign(currentB.add(40).min(100))
+            If(currentG.lessThan(20), () => {
+              currentG.assign(currentG.add(15).min(100)) // Add cyan tints
+            })
           })
         }).Else(() => {
-          // Blue ant causes cyan shift when fading
+          // On dark cells: turn left, preserve existing colors
+          atomicStore(direction, atomicLoad(direction).toInt().add(3).mod(4))
+          
+          // Gentle fade that preserves color balance
+          const fadeAmount = int(15)
+          currentR.assign(currentR.sub(fadeAmount).max(0))
+          currentG.assign(currentG.sub(fadeAmount).max(0))
           currentB.assign(currentB.sub(fadeAmount).max(0))
-          If(currentG.greaterThan(10), () => {
-            currentG.assign(currentG.sub(fadeAmount.div(2)).max(0)) // Slower green fade
-          })
         })
       })
       
@@ -363,11 +490,12 @@ async function initLangtonAnt({ canvas, renderer: existingRenderer }: { canvas?:
   await renderer.computeAsync(initializeGrid.compute(totalCells))
   await renderer.computeAsync(initializeAnt.compute(1))
   
-  // Initialize step counter
+  // Initialize step counter and rule system
   const initCounter = Fn(() => {
     stepCounter.element(0).assign(0)
   })()
   await renderer.computeAsync(initCounter.compute(1))
+  await renderer.computeAsync(initRuleSystem.compute(1))
   
   console.log('Langton\'s Ant initialized!')
 
@@ -389,7 +517,22 @@ async function initLangtonAnt({ canvas, renderer: existingRenderer }: { canvas?:
     initializeGrid,
     initializeAnt,
     initializeMultiAnts,
-    clearMultiAnts
+    clearMultiAnts,
+    // Expose a convenient string-based selector for external UI code.
+    ruleSystemMode,
+    switchRuleSystem: async (ruleName: string) => {
+      const ruleMap = {
+        'chromaticEcosystem': 0,
+        'simpleLangton': 1,
+        'competitive': 2,
+        'symbiotic': 3
+      } as const
+
+      const mode = ruleMap[ruleName as keyof typeof ruleMap]
+      if (mode !== undefined) {
+        await switchRuleSystem(mode)
+      }
+    }
   }
 }
 
