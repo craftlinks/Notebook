@@ -540,6 +540,48 @@ renderer.setAnimationLoop(async () => {
             </label>
             <span id="langton-step-info" style="margin-left: 1rem; color: var(--text-muted);">Steps: 0</span>
           </div>
+
+          <div class="concept-item">
+            <h4>Multi-Ant Challenge: Race Conditions on the GPU</h4>
+            <p>
+                The "Multi-Ant Mode" introduces a classic parallel programming challenge: <strong>race conditions</strong>. On the GPU, thousands of threads execute simultaneously—one for each cell. If two ants calculate that their next move is to the *same* empty cell, they will "race" to write their new state to that cell's memory.
+            </p>
+            <p>Without a system to manage this conflict, one write would overwrite the other. The result: one ant would simply vanish from the simulation, and the grid's state would become corrupt and non-deterministic.
+            </p>
+        
+            <h4>The Solution: A Multi-Phase, Atomic "Claim" System</h4>
+            <p>To solve this, the simulation breaks each ant's turn into three distinct compute shaders that run in sequence. The key is the second phase, which uses an <strong>atomic operation</strong> to let ants "claim" a cell in a safe, ordered way.</p>
+            
+            <div class="concept-item">
+                <h3>Core Concept: Atomic Operations</h3>
+                <p>An atomic operation is an instruction that the GPU guarantees will execute as a single, indivisible step. When a thread performs an atomic operation on a piece of memory (like a cell's state), no other thread can interfere until it's complete. It's like a "talking stick" for memory—only one thread can hold it at a time.</p>
+            </div>
+        
+            <p>The simulation uses a three-phase approach:</p>
+            <ol class="detailed-steps" style="list-style-type: decimal; padding-left: 20px; margin-top: 1em;">
+                <li><strong>Phase 1: Decide & Prepare.</strong> Each thread checks if its cell contains an ant. If so, it calculates the ant's next move but <strong>does not move yet</strong>. It simply updates its current cell's color and marks the ant as "ready to move" by setting its state to 2.</li>
+                <li><strong>Phase 2: The Atomic Claim.</strong> This is where the race is won or lost. An ant's thread calculates its target cell and uses <code>atomicAdd</code> to attempt to claim it.
+                <pre class="code-block" style="margin-top: 1em;"><code class="language-typescript">// A simplified view of the claim logic from src/langton-ant.ts
+const claimValue = 2;
+const originalValue = atomicAdd(newTargetHasAnt, claimValue);
+
+If(originalValue.equal(0), () => {
+  // SUCCESS: We were the first to claim this empty cell.
+  // Move the ant's data to the new location.
+  // ...
+  atomicStore(hasAnt, 0); // Clear the old cell.
+}).Else(() => {
+  // COLLISION: Another ant claimed it first.
+  // Revert our claim and the ant stays put this turn.
+  atomicSub(newTargetHasAnt, claimValue);
+  atomicStore(hasAnt, 1); // Reset state to active.
+});</code></pre>
+                <p style="margin-top: 1em;">The <code>atomicAdd</code> function is crucial: it adds a value and returns the value that was in memory *before* the addition, all in one step. The first ant to arrive at an empty cell (value 0) will get 0 back, succeeding its claim. Any other ant arriving nanoseconds later will get a non-zero value back, failing the claim and staying put. This provides a deterministic and provably correct way to resolve conflicts.</p>
+                </li>
+                <li><strong>Phase 3: Finalize & Cleanup.</strong> A final compute pass runs to change the state of all ants that successfully moved from "ready to move" (state 2) back to "active" (state 1), preparing them for the next full simulation cycle.</li>
+            </ol>
+            <p>By combining a multi-phase algorithm with the indivisible nature of atomic operations, the simulation can correctly handle thousands of concurrent agents without data corruption, unlocking the massive parallelism of the GPU.</p>
+        </div>
         </section>
 
         <!-- Boids Simulation Section -->
