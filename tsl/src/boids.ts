@@ -419,131 +419,123 @@ export class BoidsSimulation {
       const densityRadius = float(60.0);
       const densityRadiusSq = densityRadius.mul(densityRadius);
 
+      // --- Combined Density & Interaction Loop ---
       Loop({ start: uint(0), end: uint(count), type: 'uint', condition: '<' }, ({ i }) => {
-        // @ts-ignore - TSL expects a TSL node, but TS thinks 'i' is a number
-        If(i.equal(birdIndex), () => {
-          Continue();
-        });
+         
+         // A boid does not interact with itself.
+         // @ts-ignore - TSL expects a TSL node, but TS thinks 'i' is a number
+         If(i.equal(birdIndex), () => {
+           Continue();
+         });
 
-        const otherPosition = positionStorage.element(i);
-        const distSq = length(otherPosition.sub(position)).pow(2);
-        
-        If(distSq.lessThan(densityRadiusSq), () => {
-          density.addAssign(1.0);
-        });
-      });
+         // Get the position of the other boid.
+         const birdPosition = positionStorage.element(i);
+         // Calculate the direction and distance to the other boid.
+         const dirToBird = birdPosition.sub(position);
+         const distToBird = length(dirToBird);
 
-      Loop({ start: uint(0), end: uint(count), type: 'uint', condition: '<' }, ({ i }) => {
-        
-        // A boid does not interact with itself.
-        // @ts-ignore - TSL expects a TSL node, but TS thinks 'i' is a number
-        If(i.equal(birdIndex), () => {
-          Continue();
-        });
+         // If boids are too close, they can cause instability. Skip this interaction.
+         If(distToBird.lessThan(0.0001), () => {
+           Continue();
+         });
 
-        // Get the position of the other boid.
-        const birdPosition = positionStorage.element(i);
-        // Calculate the direction and distance to the other boid.
-        const dirToBird = birdPosition.sub(position);
-        const distToBird = length(dirToBird);
+         const distToBirdSq = distToBird.mul(distToBird);
 
-        // If boids are too close, they can cause instability. Skip this interaction.
-        If(distToBird.lessThan(0.0001), () => {
-          Continue();
-        });
+         // Accumulate local density (previously done in a separate loop).
+         If(distToBirdSq.lessThan(densityRadiusSq), () => {
+           density.addAssign(1.0);
+         });
 
-        const distToBirdSq = distToBird.mul(distToBird);
+         const otherSpecies = speciesStorage.element(i);
+         
+         If(species.equal(otherSpecies), () => {
+           const intraSpeciesBoost = float(2.0);
+           // If the other boid is outside the zone of influence, skip it.
+           If(distToBirdSq.greaterThan(zoneRadiusSq), () => {
+             Continue();
+           });
 
-        const otherSpecies = speciesStorage.element(i);
-        
-        If(species.equal(otherSpecies), () => {
-          const intraSpeciesBoost = float(2.0);
-          // If the other boid is outside the zone of influence, skip it.
-          If(distToBirdSq.greaterThan(zoneRadiusSq), () => {
-            Continue();
-          });
+           // 'percent' represents how deep the other boid is within the current boid's zone of influence.
+           const percent = distToBirdSq.div(zoneRadiusSq);
 
-          // 'percent' represents how deep the other boid is within the current boid's zone of influence.
-          const percent = distToBirdSq.div(zoneRadiusSq);
+           // --- Separation, Alignment, and Cohesion Rules ---
+           // These rules are applied based on the other boid's proximity.
+           // The influence of each rule is smoothly blended using cosine-based weights for more natural flocking behavior.
 
-          // --- Separation, Alignment, and Cohesion Rules ---
-          // These rules are applied based on the other boid's proximity.
-          // The influence of each rule is smoothly blended using cosine-based weights for more natural flocking behavior.
+           // 1. Separation: Steer to avoid crowding local flockmates.
+           If(percent.lessThan(separationThresh), () => {
+             // The repulsive force is stronger for closer boids.
+             const velocityAdjust = (separationThresh.div(percent).sub(1.0)).mul(deltaTime).mul(intraSpeciesBoost);
+             velocity.subAssign(normalize(dirToBird).mul(velocityAdjust));
+           
+           // 2. Alignment: Steer towards the average heading of local flockmates.
+           }).ElseIf(percent.lessThan(alignmentThresh), () => {
+             // Calculate a smooth weight for the alignment force using a cosine function.
+             const threshDelta = alignmentThresh.sub(separationThresh);
+             const adjustedPercent = (percent.sub(separationThresh)).div(threshDelta);
+             const birdVelocity = velocityStorage.element(i);
 
-          // 1. Separation: Steer to avoid crowding local flockmates.
-          If(percent.lessThan(separationThresh), () => {
-            // The repulsive force is stronger for closer boids.
-            const velocityAdjust = (separationThresh.div(percent).sub(1.0)).mul(deltaTime).mul(intraSpeciesBoost);
-            velocity.subAssign(normalize(dirToBird).mul(velocityAdjust));
-          
-          // 2. Alignment: Steer towards the average heading of local flockmates.
-          }).ElseIf(percent.lessThan(alignmentThresh), () => {
-            // Calculate a smooth weight for the alignment force using a cosine function.
-            const threshDelta = alignmentThresh.sub(separationThresh);
-            const adjustedPercent = (percent.sub(separationThresh)).div(threshDelta);
-            const birdVelocity = velocityStorage.element(i);
+             const cosRange = cos(adjustedPercent.mul(PI_2));
+             const cosRangeAdjust = float(1.0).sub(cosRange.mul(0.5));
+             const velocityAdjust = cosRangeAdjust.mul(deltaTime).mul(intraSpeciesBoost);
+             // Apply the alignment force, steering towards the other boid's velocity.
+             velocity.addAssign(normalize(birdVelocity).mul(velocityAdjust));
+           
+           // 3. Cohesion: Steer to move toward the average position of local flockmates.
+           }).Else(() => {
+             // Calculate a smooth weight for the cohesion force.
+             const threshDelta = alignmentThresh.oneMinus();
+             const adjustedPercent = threshDelta.equal(0.0).select(1.0, (percent.sub(alignmentThresh)).div(threshDelta));
 
-            const cosRange = cos(adjustedPercent.mul(PI_2));
-            const cosRangeAdjust = float(1.0).sub(cosRange.mul(0.5));
-            const velocityAdjust = cosRangeAdjust.mul(deltaTime).mul(intraSpeciesBoost);
-            // Apply the alignment force, steering towards the other boid's velocity.
-            velocity.addAssign(normalize(birdVelocity).mul(velocityAdjust));
-          
-          // 3. Cohesion: Steer to move toward the average position of local flockmates.
-          }).Else(() => {
-            // Calculate a smooth weight for the cohesion force.
-            const threshDelta = alignmentThresh.oneMinus();
-            const adjustedPercent = threshDelta.equal(0.0).select(1.0, (percent.sub(alignmentThresh)).div(threshDelta));
+             // The weighting function for cohesion is the same as for alignment.
+             // It creates a force that is strongest in the middle of the zone.
+             const cosRange = cos(adjustedPercent.mul(PI_2));
+             const cosRangeAdjust = float(1.0).sub(cosRange.mul(0.5));
 
-            // The weighting function for cohesion is the same as for alignment.
-            // It creates a force that is strongest in the middle of the zone.
-            const cosRange = cos(adjustedPercent.mul(PI_2));
-            const cosRangeAdjust = float(1.0).sub(cosRange.mul(0.5));
+             const velocityAdjust = cosRangeAdjust.mul(deltaTime).mul(intraSpeciesBoost);
+             // Apply the cohesion force, steering towards the other boid's position.
+             velocity.addAssign(normalize(dirToBird).mul(velocityAdjust));
+           });
+         }).Else(() => { // Different species interaction
+           const preferenceMatrix = this.uniforms.preferenceMatrix;
 
-            const velocityAdjust = cosRangeAdjust.mul(deltaTime).mul(intraSpeciesBoost);
-            // Apply the cohesion force, steering towards the other boid's position.
-            velocity.addAssign(normalize(dirToBird).mul(velocityAdjust));
-          });
-        }).Else(() => { // Different species interaction
-          const preferenceMatrix = this.uniforms.preferenceMatrix;
-
-          // Apply flocking rules between different species
-          // @ts-ignore - TSL function call signature issue
-          Switch(this.uniforms.interSpeciesRule.toUint())
-            // @ts-ignore - TSL function call signature issue
-            .Case(uint(0), () => {
-              rockPaperScissorsRule({
-                species,
-                otherSpecies,
-                distToBirdSq,
-                dirToBird,
-                velocity,
-                deltaTime
-              });
-            })
-            // @ts-ignore - TSL function call signature issue
-            .Case(uint(1), () => {
-              densityBasedRule({
-                distToBirdSq,
-                dirToBird,
-                velocity,
-                deltaTime
-              });
-            })
-            // @ts-ignore - TSL function call signature issue
-            .Case(uint(2), () => {
-              densityPreferenceRule({
-                density,
-                densityThreshold: float(0.5),
-                species,
-                otherSpecies,
-                preferenceMatrix,
-                dirToBird,
-                velocity,
-                deltaTime
-              });
-            });
-        });
+           // Apply flocking rules between different species
+           // @ts-ignore - TSL function call signature issue
+           Switch(this.uniforms.interSpeciesRule.toUint())
+             // @ts-ignore - TSL function call signature issue
+             .Case(uint(0), () => {
+               rockPaperScissorsRule({
+                 species,
+                 otherSpecies,
+                 distToBirdSq,
+                 dirToBird,
+                 velocity,
+                 deltaTime
+               });
+             })
+             // @ts-ignore - TSL function call signature issue
+             .Case(uint(1), () => {
+               densityBasedRule({
+                 distToBirdSq,
+                 dirToBird,
+                 velocity,
+                 deltaTime
+               });
+             })
+             // @ts-ignore - TSL function call signature issue
+             .Case(uint(2), () => {
+               densityPreferenceRule({
+                 density,
+                 densityThreshold: float(0.5),
+                 species,
+                 otherSpecies,
+                 preferenceMatrix,
+                 dirToBird,
+                 velocity,
+                 deltaTime
+               });
+             });
+         });
       });
 
       // --- Velocity Limiting ---
