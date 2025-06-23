@@ -453,8 +453,12 @@ async function initLangtonAntVisualization() {
     const runLangtonAntStep = async () => {
       if (!langtonAntState) return
       
-      // Fade grid first (cached compute)
-      await langtonRenderer.computeAsync(fadeCompute)
+      // Fade grid only when running in multi-ant mode. Classic single-ant
+      // behaviour should *not* fade the trail, otherwise the ant will forget
+      // its previous visits and diverge from the canonical pattern.
+      if (isMultiAntMode) {
+        await langtonRenderer.computeAsync(fadeCompute)
+      }
       
       if (isMultiAntMode) {
         // Run three-phase multi-ant step (cached computes)
@@ -563,8 +567,10 @@ async function initLangtonAntVisualization() {
       langtonRenderer.setAnimationLoop(async () => {
         if (!isRunning) return
         
-        // First, fade the grid (cached compute)
-        await langtonRenderer.computeAsync(fadeCompute)
+        // Fade only in multi-ant mode to preserve classic single-ant trail
+        if (isMultiAntMode) {
+          await langtonRenderer.computeAsync(fadeCompute)
+        }
         
         if (isMultiAntMode) {
           // Run three-phase multi-ant step (cached computes)
