@@ -9,10 +9,10 @@ import {
   cameraProjectionMatrix,
   cameraViewMatrix,
   mat3,
-  cross,
   uint,
   Switch,
-  property
+  property,
+  cross
 } from 'three/tsl';
 import { BoidsSimulation } from './boids';
 
@@ -99,20 +99,23 @@ export class BoidsVisualization {
       const localPos = positionLocal.toVar();
       localPos.mulAssign(this.config.particleSize);
       
-      // Create a rotation matrix to align the boid with its velocity
-      const velocity = normalize(boidVelocity.add(vec3(0.001, 0.001, 0.001))); // Add epsilon to avoid zero velocity
+      // Align local +Y axis (triangle tip) to velocity using an orthonormal basis
+      const forward = normalize(boidVelocity.add(vec3(0.0001, 0.0001, 0.0001))).toVar('forward');
 
-      const forward = velocity.toVar('forward');
-      const up = vec3(0.0, 1.0, 0.0).toVar('up');
-      const right = normalize(cross(up, forward)).toVar('right');
+      // Choose a reference up vector that is not parallel to forward
+      const worldUp = vec3(0.0, 0.0, 1.0).toVar('worldUp');
+
+      // Build right and up vectors for the boid's local frame
+      const right = normalize(cross(worldUp, forward)).toVar('right');
       const newUp = normalize(cross(forward, right)).toVar('newUp');
-      
+
+      // Construct a rotation matrix whose columns map local (X,Y,Z) -> (right, forward, newUp)
       const rotationMatrix = mat3(
         right.x, forward.x, newUp.x,
         right.y, forward.y, newUp.y,
         right.z, forward.z, newUp.z
-      ).toVar();
-      
+      ).toVar('rotationMatrix');
+
       const rotatedPos = rotationMatrix.mul(localPos);
       
       // Translate to boid position
