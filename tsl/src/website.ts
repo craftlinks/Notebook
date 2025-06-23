@@ -6,7 +6,7 @@ import { BoidsVisualization } from './boids-visualization'
 import hljs from 'highlight.js/lib/core';
 import typescript from 'highlight.js/lib/languages/typescript';
 import * as THREE from 'three/webgpu'
-import { Fn, instanceIndex, vec4, If, instancedArray, positionLocal, int } from 'three/tsl'
+import { Fn, instanceIndex, vec4, If, instancedArray, positionLocal } from 'three/tsl'
 
 hljs.registerLanguage('typescript', typescript);
 

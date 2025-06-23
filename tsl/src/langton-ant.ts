@@ -1,6 +1,6 @@
 import './styles.css'
 import * as THREE from 'three/webgpu'
-import { Fn, instancedArray, instanceIndex, int, vec4, positionLocal, If, Loop, hash } from 'three/tsl'
+import { Fn, instancedArray, instanceIndex, int, If, Loop, hash } from 'three/tsl'
 
 async function initLangtonAnt({ canvas, renderer: existingRenderer }: { canvas?: HTMLCanvasElement; renderer?: THREE.WebGPURenderer } = {}) {
   // Initialize WebGPU renderer
@@ -32,11 +32,6 @@ async function initLangtonAnt({ canvas, renderer: existingRenderer }: { canvas?:
   // direction: 0=North, 1=East, 2=South, 3=West
   // colorChannel: 0=Red, 1=Green, 2=Blue
   const multiAntGrid = instancedArray(totalCells * 3, 'int')
-  
-  // Helper function to convert 2D coordinates to 1D index
-  const getIndex = Fn(([x, y]: any) => {
-    return y.mul(gridWidth).add(x)
-  })
   
   // Initialize grid - all cells start white (0 in all channels)
   const initializeGrid = Fn(() => {
@@ -157,8 +152,6 @@ async function initLangtonAnt({ canvas, renderer: existingRenderer }: { canvas?:
   // Multi-ant step function - uses a two-phase approach to avoid race conditions
   const stepMultiAntsPhase1 = Fn(() => {
     const cellIndex = instanceIndex
-    const x = cellIndex.mod(gridWidth)
-    const y = cellIndex.div(gridWidth).toInt()
     
     const hasAntIndex = cellIndex.mul(3)
     const directionIndex = cellIndex.mul(3).add(1)
