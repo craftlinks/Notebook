@@ -425,6 +425,17 @@ async function initLangtonAntVisualization() {
     mesh.material = material
     mesh.frustumCulled = false
 
+    // ------------------------------------------------------------------
+    // Pre-compile compute shaders once and reuse them every frame
+    // ------------------------------------------------------------------
+    const workItems = langtonAntState.gridWidth * langtonAntState.gridHeight
+    const fadeCompute      = langtonAntState.fadeGrid.compute(workItems)
+    const phase1Compute    = langtonAntState.stepMultiAntsPhase1.compute(workItems)
+    const phase2Compute    = langtonAntState.stepMultiAntsPhase2.compute(workItems)
+    const phase3Compute    = langtonAntState.stepMultiAntsPhase3.compute(workItems)
+    const singleAntCompute = langtonAntState.stepAnt.compute(1)
+    // ------------------------------------------------------------------
+
     // Setup complete
 
     // Add visualization state to langtonAntState
@@ -442,18 +453,20 @@ async function initLangtonAntVisualization() {
     const runLangtonAntStep = async () => {
       if (!langtonAntState) return
       
-      // First, fade the grid
-      await langtonRenderer.computeAsync(langtonAntState.fadeGrid.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
+      // Fade grid first (cached compute)
+      await langtonRenderer.computeAsync(fadeCompute)
       
       if (isMultiAntMode) {
-        // Three-phase approach to avoid race conditions
-        await langtonRenderer.computeAsync(langtonAntState.stepMultiAntsPhase1.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
-        await langtonRenderer.computeAsync(langtonAntState.stepMultiAntsPhase2.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
-        await langtonRenderer.computeAsync(langtonAntState.stepMultiAntsPhase3.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
+        // Run three-phase multi-ant step (cached computes)
+        await langtonRenderer.computeAsync(phase1Compute)
+        await langtonRenderer.computeAsync(phase2Compute)
+        await langtonRenderer.computeAsync(phase3Compute)
+        stepCount += 1
       } else {
-        await langtonRenderer.computeAsync(langtonAntState.stepAnt.compute(1))
+        // Single ant – 10 internal steps per invocation (cached compute)
+        await langtonRenderer.computeAsync(singleAntCompute)
+        stepCount += 10
       }
-      stepCount++
     }
 
     // Set up control buttons
@@ -550,19 +563,17 @@ async function initLangtonAntVisualization() {
       langtonRenderer.setAnimationLoop(async () => {
         if (!isRunning) return
         
-        // First, fade the grid
-        await langtonRenderer.computeAsync(langtonAntState.fadeGrid.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
+        // First, fade the grid (cached compute)
+        await langtonRenderer.computeAsync(fadeCompute)
         
         if (isMultiAntMode) {
-          // Run three-phase multi-ant step
-          await langtonRenderer.computeAsync(langtonAntState.stepMultiAntsPhase1.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
-          await langtonRenderer.computeAsync(langtonAntState.stepMultiAntsPhase2.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
-          await langtonRenderer.computeAsync(langtonAntState.stepMultiAntsPhase3.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
-          stepCount += 1
+          // Run three-phase multi-ant step (cached computes)
+          await langtonRenderer.computeAsync(phase1Compute)
+          await langtonRenderer.computeAsync(phase2Compute)
+          await langtonRenderer.computeAsync(phase3Compute)
         } else {
-          // Run batched steps (10 steps done inside the shader)
-          await langtonRenderer.computeAsync(langtonAntState.stepAnt.compute(1))
-          stepCount += 10
+          // Run batched steps (10 steps inside shader) – cached compute
+          await langtonRenderer.computeAsync(singleAntCompute)
         }
         
         // Only await the final color update and render
