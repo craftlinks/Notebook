@@ -1,6 +1,6 @@
 import './styles.css'
 import * as THREE from 'three/webgpu'
-import { Fn, instancedArray, instanceIndex, int, If, Loop, hash } from 'three/tsl'
+import { Fn, instancedArray, instanceIndex, int, If, Loop, hash, atomicAdd, atomicSub, atomicStore, atomicLoad } from 'three/tsl'
 
 async function initLangtonAnt({ canvas, renderer: existingRenderer }: { canvas?: HTMLCanvasElement; renderer?: THREE.WebGPURenderer } = {}) {
   // Initialize WebGPU renderer
@@ -31,7 +31,7 @@ async function initLangtonAnt({ canvas, renderer: existingRenderer }: { canvas?:
   // hasAnt: 0 = no ant, 1 = has ant
   // direction: 0=North, 1=East, 2=South, 3=West
   // colorChannel: 0=Red, 1=Green, 2=Blue
-  const multiAntGrid = instancedArray(totalCells * 3, 'int')
+  const multiAntGrid = instancedArray(totalCells * 3, 'int').toAtomic()
   
   // Initialize grid - all cells start white (0 in all channels)
   const initializeGrid = Fn(() => {
@@ -60,9 +60,9 @@ async function initLangtonAnt({ canvas, renderer: existingRenderer }: { canvas?:
     const directionIndex = instanceIndex.mul(3).add(1)
     const colorIndex = instanceIndex.mul(3).add(2)
     
-    multiAntGrid.element(hasAntIndex).assign(0)
-    multiAntGrid.element(directionIndex).assign(0)
-    multiAntGrid.element(colorIndex).assign(0)
+    atomicStore(multiAntGrid.element(hasAntIndex), 0)
+    atomicStore(multiAntGrid.element(directionIndex), 0)
+    atomicStore(multiAntGrid.element(colorIndex), 0)
   })()
   
   // Initialize multi-ant grid with 1% ant density
@@ -80,17 +80,17 @@ async function initLangtonAnt({ canvas, renderer: existingRenderer }: { canvas?:
     const randomValue = hash(instanceIndex.add(54321))
     
     If(randomValue.lessThan(0.01), () => {
-      hasAnt.assign(1) // Place ant
+      atomicStore(hasAnt, 1) // Place ant
       // Random direction (0-3)
       const randomDir = hash(instanceIndex.add(98765)).mul(4).floor().toInt()
-      direction.assign(randomDir)
+      atomicStore(direction, randomDir)
       // Random color channel (0=Red, 1=Green, 2=Blue)
       const randomColor = hash(instanceIndex.add(13579)).mul(3).floor().toInt()
-      colorChannel.assign(randomColor)
+      atomicStore(colorChannel, randomColor)
     }).Else(() => {
-      hasAnt.assign(0) // No ant
-      direction.assign(0) // Direction doesn't matter
-      colorChannel.assign(0) // Color doesn't matter
+      atomicStore(hasAnt, 0) // No ant
+      atomicStore(direction, 0) // Direction doesn't matter
+      atomicStore(colorChannel, 0) // Color doesn't matter
     })
   })()
   
@@ -161,8 +161,9 @@ async function initLangtonAnt({ canvas, renderer: existingRenderer }: { canvas?:
     const direction = multiAntGrid.element(directionIndex)
     const antColor = multiAntGrid.element(colorIndex)
     
+    const loadedHasAnt = atomicLoad(hasAnt).toInt().toVar()
     // Only process cells that have ants
-    If(hasAnt.equal(1), () => {
+    If(loadedHasAnt.equal(1), () => {
       // Get current cell RGB values
       const currentR = gridR.element(cellIndex)
       const currentG = gridG.element(cellIndex)
@@ -172,14 +173,14 @@ async function initLangtonAnt({ canvas, renderer: existingRenderer }: { canvas?:
       // Apply Chromatic Ecosystem Rules - complex color interactions
       If(totalIntensity.lessThan(50), () => {
         // On light cells: turn right, but behavior depends on color dominance
-        direction.assign(direction.add(1).mod(4))
+        atomicStore(direction, atomicLoad(direction).toInt().add(1).mod(4))
         
         // Find dominant color channel
         const isRedDominant = currentR.greaterThanEqual(currentG).and(currentR.greaterThanEqual(currentB))
         const isGreenDominant = currentG.greaterThan(currentR).and(currentG.greaterThanEqual(currentB))
         
         // Chromatic interaction rules
-        If(antColor.equal(0), () => {
+        If(atomicLoad(antColor).toInt().equal(0), () => {
           // Red ant behavior
           If(isRedDominant, () => {
             currentR.assign(currentR.add(50).min(100)) // Strengthen red dominance
@@ -191,7 +192,7 @@ async function initLangtonAnt({ canvas, renderer: existingRenderer }: { canvas?:
             currentB.assign(currentB.sub(20).max(0)) // Weaken blue
             currentR.assign(80) // Moderate red addition
           })
-        }).ElseIf(antColor.equal(1), () => {
+        }).ElseIf(atomicLoad(antColor).toInt().equal(1), () => {
           // Green ant behavior (symbiotic with red, competitive with blue)
           If(isRedDominant, () => {
             currentG.assign(60) // Moderate green in red areas
@@ -217,19 +218,19 @@ async function initLangtonAnt({ canvas, renderer: existingRenderer }: { canvas?:
         })
       }).Else(() => {
         // On dark cells: turn left, color decay with cross-channel effects
-        direction.assign(direction.add(3).mod(4))
+        atomicStore(direction, atomicLoad(direction).toInt().add(3).mod(4))
         
         // Calculate color influence for fading
         const colorIntensity = currentR.add(currentG).add(currentB)
         const fadeAmount = colorIntensity.div(6).max(10).min(50) // Adaptive fade
         
-        If(antColor.equal(0), () => {
+        If(atomicLoad(antColor).toInt().equal(0), () => {
           // Red ant causes purple shift when fading
           currentR.assign(currentR.sub(fadeAmount).max(0))
           If(currentB.greaterThan(20), () => {
             currentB.assign(currentB.sub(fadeAmount.div(2)).max(0)) // Slower blue fade
           })
-        }).ElseIf(antColor.equal(1), () => {
+        }).ElseIf(atomicLoad(antColor).toInt().equal(1), () => {
           // Green ant causes yellow-to-red shift when fading
           currentG.assign(currentG.sub(fadeAmount).max(0))
           If(currentR.greaterThan(currentG), () => {
@@ -245,25 +246,24 @@ async function initLangtonAnt({ canvas, renderer: existingRenderer }: { canvas?:
       })
       
       // Mark this ant for removal (we'll move it in phase 2)
-      hasAnt.assign(2) // Use 2 as "marked for movement"
+      atomicStore(hasAnt, 2) // Use 2 as "marked for movement"
     })
   })()
   
   const stepMultiAntsPhase2 = Fn(() => {
     const cellIndex = instanceIndex
-    const x = cellIndex.mod(gridWidth)
-    const y = cellIndex.div(gridWidth).toInt()
-    
     const hasAntIndex = cellIndex.mul(3)
-    const directionIndex = cellIndex.mul(3).add(1)
-    const colorIndex = cellIndex.mul(3).add(2)
-    
     const hasAnt = multiAntGrid.element(hasAntIndex)
-    const direction = multiAntGrid.element(directionIndex)
-    const antColor = multiAntGrid.element(colorIndex)
     
+    const loadedHasAnt2 = atomicLoad(hasAnt).toInt().toVar()
     // Only process ants marked for movement
-    If(hasAnt.equal(2), () => {
+    If(loadedHasAnt2.equal(2), () => {
+      const x = cellIndex.mod(gridWidth)
+      const y = cellIndex.div(gridWidth).toInt()
+      
+      const direction = atomicLoad(multiAntGrid.element(hasAntIndex.add(1))).toInt()
+      const antColor = atomicLoad(multiAntGrid.element(hasAntIndex.add(2))).toInt()
+      
       // Calculate new position
       const newX = x.toVar()
       const newY = y.toVar()
@@ -281,28 +281,42 @@ async function initLangtonAnt({ canvas, renderer: existingRenderer }: { canvas?:
       // Wrap boundaries
       newX.assign(newX.add(gridWidth).mod(gridWidth))
       newY.assign(newY.add(gridHeight).mod(gridHeight))
-
-      // Set new position, preventing collisions
+      
       const newCellIndex = newY.mul(gridWidth).add(newX)
       const newHasAntIndex = newCellIndex.mul(3)
-      const newDirectionIndex = newCellIndex.mul(3).add(1)
-      const newColorIndex = newCellIndex.mul(3).add(2)
+      const newTargetHasAnt = multiAntGrid.element(newHasAntIndex)
       
-      const targetHasAnt = multiAntGrid.element(newHasAntIndex)
+      const claimValue = 2
+      const originalValue = atomicAdd(newTargetHasAnt, claimValue)
       
-      // Only move if the target cell is not occupied by another moving ant
-      If(targetHasAnt.lessThan(2), () => {
-        // Clear current position
-        hasAnt.assign(0)
-
-        // Set new position
-        multiAntGrid.element(newHasAntIndex).assign(1)
-        multiAntGrid.element(newDirectionIndex).assign(direction)
-        multiAntGrid.element(newColorIndex).assign(antColor)
+      If(originalValue.equal(0), () => {
+        // Success: We claimed the new cell
+        // Move ant's data to the new location
+        atomicStore(multiAntGrid.element(newHasAntIndex.add(1)), direction)
+        atomicStore(multiAntGrid.element(newHasAntIndex.add(2)), antColor)
+        
+        // Clear the old cell
+        atomicStore(hasAnt, 0)
       }).Else(() => {
-        // Collision detected, ant stays in place but is no longer marked for movement
-        hasAnt.assign(1)
+        // Collision: The target cell was already occupied or claimed.
+        // Revert the claim and have the ant stay in its original position.
+        atomicSub(newTargetHasAnt, claimValue)
+        atomicStore(hasAnt, 1)
       })
+    })
+  })()
+  
+  // A new third phase to finalize the move
+  const stepMultiAntsPhase3 = Fn(() => {
+    const cellIndex = instanceIndex
+    const hasAntIndex = cellIndex.mul(3)
+    const hasAnt = multiAntGrid.element(hasAntIndex)
+    
+    const loadedHasAnt3 = atomicLoad(hasAnt).toInt().toVar()
+    // An ant with state 2 has successfully moved in phase 2.
+    // We now set its state to 1 (active) for the next simulation step.
+    If(loadedHasAnt3.equal(2), () => {
+      atomicStore(hasAnt, 1)
     })
   })()
   
@@ -370,6 +384,7 @@ async function initLangtonAnt({ canvas, renderer: existingRenderer }: { canvas?:
     stepAnt,
     stepMultiAntsPhase1,
     stepMultiAntsPhase2,
+    stepMultiAntsPhase3,
     fadeGrid,
     initializeGrid,
     initializeAnt,

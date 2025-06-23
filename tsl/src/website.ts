@@ -6,7 +6,7 @@ import { BoidsVisualization } from './boids-visualization'
 import hljs from 'highlight.js/lib/core';
 import typescript from 'highlight.js/lib/languages/typescript';
 import * as THREE from 'three/webgpu'
-import { Fn, instanceIndex, vec4, If, instancedArray, positionLocal } from 'three/tsl'
+import { Fn, instanceIndex, vec4, If, instancedArray, positionLocal, atomicLoad } from 'three/tsl'
 
 hljs.registerLanguage('typescript', typescript);
 
@@ -372,11 +372,11 @@ async function initLangtonAntVisualization() {
       const antY = langtonAntState.antState.element(1)
       
       // Check for ants first (both single and multi modes will be rendered)
-      If(hasAnt.equal(1), () => {
+      If(atomicLoad(hasAnt).toInt().equal(1), () => {
         // Multi-ant mode - show ant with bright color based on its channel
-        If(antColorChannel.equal(0), () => {
+        If(atomicLoad(antColorChannel).toInt().equal(0), () => {
           outputColor.assign(vec4(1.0, 0.5, 0.5, 1.0)) // Bright red ant
-        }).ElseIf(antColorChannel.equal(1), () => {
+                  }).ElseIf(atomicLoad(antColorChannel).toInt().equal(1), () => {
           outputColor.assign(vec4(0.5, 1.0, 0.5, 1.0)) // Bright green ant
         }).Else(() => {
           outputColor.assign(vec4(0.5, 0.5, 1.0, 1.0)) // Bright blue ant
@@ -446,9 +446,10 @@ async function initLangtonAntVisualization() {
       await langtonRenderer.computeAsync(langtonAntState.fadeGrid.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
       
       if (isMultiAntMode) {
-        // Two-phase approach to avoid race conditions
+        // Three-phase approach to avoid race conditions
         await langtonRenderer.computeAsync(langtonAntState.stepMultiAntsPhase1.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
         await langtonRenderer.computeAsync(langtonAntState.stepMultiAntsPhase2.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
+        await langtonRenderer.computeAsync(langtonAntState.stepMultiAntsPhase3.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
       } else {
         await langtonRenderer.computeAsync(langtonAntState.stepAnt.compute(1))
       }
@@ -531,9 +532,10 @@ async function initLangtonAntVisualization() {
         await langtonRenderer.computeAsync(langtonAntState.fadeGrid.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
         
         if (isMultiAntMode) {
-          // Run two-phase multi-ant step
+          // Run three-phase multi-ant step
           await langtonRenderer.computeAsync(langtonAntState.stepMultiAntsPhase1.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
           await langtonRenderer.computeAsync(langtonAntState.stepMultiAntsPhase2.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
+          await langtonRenderer.computeAsync(langtonAntState.stepMultiAntsPhase3.compute(langtonAntState.gridWidth * langtonAntState.gridHeight))
           stepCount += 1
         } else {
           // Run batched steps (10 steps done inside the shader)
