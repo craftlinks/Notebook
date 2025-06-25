@@ -7,6 +7,9 @@ export default defineConfig({
   // Add MDX integration
   integrations: [mdx()],
 
+  site: 'https://www.craftlinks.art/Notebook/',
+  base: '/Notebook/',
+
   
   // Serve the existing tsl folder as static files
   publicDir: 'public',
