@@ -61,12 +61,19 @@ jobs:
           echo "$body" | jq . | tee -a "$GITHUB_STEP_SUMMARY"
       
           # ── extract labels (array or empty string) ─────────────
-          labels=$(
-            echo "$body" \
-              | jq -r '.choices[0].message.content // empty' \
-              | sed -e 's/```json//g' -e 's/```//g' \
-              | jq -cM 'try fromjson | select(type=="array")' || true
-          )
+          echo "### 🔍 Debugging label extraction" >> "$GITHUB_STEP_SUMMARY"
+          
+          # Step 1: Extract content
+          content=$(echo "$body" | jq -r '.choices[0].message.content // empty')
+          echo "Step 1 - Raw content: $content" | tee -a "$GITHUB_STEP_SUMMARY"
+          
+          # Step 2: Clean markdown fences
+          cleaned=$(echo "$content" | sed -e 's/```json//g' -e 's/```//g')
+          echo "Step 2 - Cleaned: $cleaned" | tee -a "$GITHUB_STEP_SUMMARY"
+          
+          # Step 3: Parse as JSON array
+          labels=$(echo "$cleaned" | jq -cM 'try . | select(type=="array")' || echo "")
+          echo "Step 3 - Final labels: $labels" | tee -a "$GITHUB_STEP_SUMMARY"
       
           echo "labels=$labels" >> "$GITHUB_OUTPUT"
 
