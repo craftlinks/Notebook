@@ -82,4 +82,8 @@ jobs:
         run: |
           echo '${{ steps.llm.outputs.labels }}' \
             | jq -r '.[]' \
-            | xargs -r -I{} gh issue edit ${{ github.event.issue.number }} --add-label "{}" --repo "${{ github.repository }}"
+            | while read -r label; do
+                # Create label if it doesn't exist, then add it to the issue
+                gh label create "$label" --repo "${{ github.repository }}" || true
+                gh issue edit ${{ github.event.issue.number }} --add-label "$label" --repo "${{ github.repository }}"
+              done
