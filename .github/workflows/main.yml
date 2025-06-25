@@ -82,4 +82,4 @@ jobs:
         run: |
           echo '${{ steps.llm.outputs.labels }}' \
             | jq -r '.[]' \
-            | xargs -r -I{} gh issue edit ${{ github.event.issue.number }} --add-label "{}"
+            | xargs -r -I{} gh issue edit ${{ github.event.issue.number }} --add-label "{}" --repo "${{ github.repository }}"
