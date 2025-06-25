@@ -6,11 +6,7 @@ import mdx from '@astrojs/mdx';
 export default defineConfig({
   // Add MDX integration
   integrations: [mdx()],
-  
-  redirects: {
-    '/tsl-guide': '/tsl-guide/index.html',
-    '/tsl-guide/': '/tsl-guide/index.html'
-  },
+
   
   // Serve the existing tsl folder as static files
   publicDir: 'public',
