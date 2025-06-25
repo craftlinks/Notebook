@@ -1,0 +1,58 @@
+name: Auto-label new issues with LLM
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  labeler:
+    runs-on: ubuntu-latest
+
+    # Required so the job can write labels
+    permissions:
+      issues: write           # add / remove labels
+      contents: read          # read repository data (not strictly needed here)
+
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}   # add in repo / org secrets
+      GH_TOKEN:        ${{ secrets.GITHUB_TOKEN }}    # supplied automatically
+
+    steps:
+      - name: Build LLM prompt
+        id: prompt
+        run: |
+          jq -n \
+            --arg title "${{ github.event.issue.title }}" \
+            --arg body  "${{ github.event.issue.body }}" \
+            '{
+               model:       "gpt-4o-mini",          # or gpt-4o, gpt-3.5-turbo-1106, etc.
+               temperature: 0.0,
+               max_tokens:  64,
+               messages: [
+                 { role: "system",
+                   content: "You are an assistant that assigns GitHub issue labels. \
+                             Only return a JSON array of existing label names for this repository." },
+                 { role: "user",
+                   content: "Issue title:\n\($title)\n\nIssue body:\n\($body)" }
+               ]
+             }' > payload.json
+
+      - name: Call OpenAI Chat Completion API
+        id: llm
+        run: |
+          response=$(curl -sS https://api.openai.com/v1/chat/completions \
+                     -H "Content-Type: application/json" \
+                     -H "Authorization: Bearer $OPENAI_API_KEY" \
+                     -d @payload.json)
+          # extract content returned by the assistant, e.g. ["bug","docs"]
+          labels=$(echo "$response" \
+                   | jq -r '.choices[0].message.content' \
+                   | jq -rc '.')  # force compact valid JSON
+          echo "labels=$labels" >> "$GITHUB_OUTPUT"
+
+      - name: Apply labels returned by LLM
+        if: ${{ steps.llm.outputs.labels != '' }}
+        run: |
+          echo "${{ steps.llm.outputs.labels }}" \
+            | jq -r '.[]' \
+            | xargs -I{} gh issue edit ${{ github.event.issue.number }} --add-label "{}"
