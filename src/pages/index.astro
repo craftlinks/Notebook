@@ -54,30 +54,18 @@ const description = "Interactive tutorials and projects for web technologies, GP
 			}
 			
 			.project-title {
-				margin: 0 0 1rem 0;
+				margin: 0 0 0.1rem 0;
 				color: #f3f4f6;
+				font-size: 1.0rem; /* ~20px */
 			}
 			
 			.project-description {
 				color: #9ca3af;
-				margin-bottom: 1rem;
+				margin-bottom: 0;
+				font-size: 0.9rem; /* ~14.4px */
 			}
 			
-			.project-link {
-				display: inline-block;
-				background: #3b82f6;
-				color: white;
-				padding: 0.5rem 1rem;
-				border-radius: 4px;
-				text-decoration: none;
-				transition: background 0.2s;
-			}
-			
-			.project-link:hover {
-				background: #2563eb;
-			}
-			
-			/* New image styling */
+			/* New image styling (desktop) */
 			.project-image {
 				width: 100%;
 				height: 180px;
@@ -108,6 +96,14 @@ const description = "Interactive tutorials and projects for web technologies, GP
 				text-decoration: none;
 				color: inherit;
 			}
+			
+			/* content grouping */
+			.project-content {
+				display: flex;
+				flex-direction: column;
+				justify-content: center;
+				flex: 1;
+			}
 		</style>
 	</head>
 	<body>
@@ -121,12 +117,12 @@ const description = "Interactive tutorials and projects for web technologies, GP
 			<div class="projects-grid">
 				<a href="tsl-guide" class="project-card card-link">
 					<img src={import.meta.env.BASE_URL + 'index/scaled-boids.png'} alt="Boids visualization" class="project-image" />
-					<h2 class="project-title">TSL Compute Shaders</h2>
-					<p class="project-description">
-						Interactive guide to Three.js Shading Language (TSL) and WebGPU compute shaders. 
-						Learn to build simulations like Game of Life, Boids, and Langton's Ant entirely on the GPU.
-					</p>
-					<span class="project-link" style="pointer-events:none;">Explore TSL Guide →</span>
+					<div class="project-content">
+						<h2 class="project-title">TSL Compute Shaders</h2>
+						<p class="project-description">
+							Interactive guide to Three.js Shading Language (TSL) and WebGPU compute shaders. 
+						</p>
+					</div>
 				</a>
 			</div>
 		</main>
