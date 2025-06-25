@@ -30,7 +30,7 @@ jobs:
                max_tokens:  64,
                messages: [
                  { role: "system",
-                   content: "You are an assistant that assigns GitHub issue labels. Only return a JSON array of existing label names for this repository." },
+                   content: "You are an assistant that assigns GitHub issue labels. Return ONLY a raw JSON array (no back-ticks, no keys, no extra text)." },
                  { role: "user",
                    content: "Issue title:\n\($title)\n\nIssue body:\n\($body)" }
                ]
@@ -46,7 +46,8 @@ jobs:
           # extract content returned by the assistant, e.g. ["bug","docs"]
           labels=$(echo "$response" \
                    | jq -r '.choices[0].message.content' \
-                   | jq -rc '.')  # force compact valid JSON
+                   | sed -e 's/```json//g' -e 's/```//g' \
+                   | jq -cM 'try fromjson | select(type=="array")' || true)
           echo "labels=$labels" >> "$GITHUB_OUTPUT"
 
       - name: Apply labels returned by LLM
