@@ -1,0 +1,1367 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TSL Compute Shaders: Interactive Guide</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+      .simulation-controls {
+        margin-top: 1rem;
+        text-align: center;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 0.5rem;
+      }
+      .control-select {
+        padding: 0.5rem;
+        border-radius: 4px;
+        border: 1px solid var(--border-color);
+        background-color: var(--bg-secondary);
+        color: var(--text-color);
+        font-family: 'Inter', sans-serif;
+      }
+      .control-button {
+        padding: 0.3rem 0.6rem;
+        border-radius: 4px;
+        border: 1px solid var(--border-color);
+        background-color: var(--bg-secondary);
+        color: var(--text-color);
+        font-family: 'Inter', sans-serif;
+        cursor: pointer;
+        font-weight: bold;
+      }
+      .control-button:hover {
+        background-color: var(--border-color);
+      }
+    </style>
+    <script type="module" crossorigin src="./assets/index-530JlqOr.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-fywPgFDv.css">
+  </head>
+  <body>
+    <header class="header">
+      <div class="container">
+        <h1 class="header-title">TSL Compute Shaders: Introduction</h1>
+      </div>
+    </header>
+
+    <main class="main">
+      <div class="container">
+        
+        <!-- Basic Example Section -->
+        <section id="basic-example" class="section">
+          <h2>1. Basic Example: Your First Compute Shader</h2>
+          <p class="section-intro">Let's start with a simple compute shader that multiplies an array of numbers by 2. This demonstrates the fundamental workflow of TSL compute shaders. We'll build it step-by-step.</p>
+          
+          <h4>Step 1: Setup Renderer and Buffers</h4>
+          <p>The first step in any GPU computation is to prepare the data. We need a WebGPU renderer to communicate with the GPU and buffers to hold our data.</p>
+          <pre class="code-block"><code class="language-typescript">// Initialize WebGPU renderer
+const renderer = new THREE.WebGPURenderer()
+await renderer.init()
+
+// Create buffers for 10 float values
+const count = 10
+const inputBuffer = instancedArray(count, 'float')
+const outputBuffer = instancedArray(count, 'float')</code></pre>
+
+          <div class="concept-item">
+            <p><code>instancedArray(count, type)</code> is a TSL helper that creates a GPU buffer. Think of it as a specialized array that lives in the GPU's high-speed memory, making it directly accessible to shader programs.</p>
+            <ul class="param-list">
+              <li><strong>count:</strong> The number of elements in the buffer.</li>
+              <li><strong>type:</strong> The data type for each element (e.g., 'float', 'int', 'vec2', 'vec3'). This maps directly to data types in the underlying shader language (WGSL/GLSL).</li>
+            </ul>
+            <p>This buffer is "instanced" because each of the thousands of GPU threads (or instances) that run in parallel can be assigned a unique element from this array to work on, which is the foundation of data parallelism on the GPU.</p>
+          </div>
+          <h4>Step 2: Define the Compute Logic</h4>
+          <p>With our buffers ready, we define the actual computation to be performed on the GPU. This is done by creating a TSL function.</p>
+          <pre class="code-block"><code class="language-typescript">// Main computation: multiply each value by 2
+const multiplyCompute = Fn(() => {
+  const input = inputBuffer.element(instanceIndex)
+  const output = outputBuffer.element(instanceIndex)
+  output.assign(input.mul(2))
+})()</code></pre>
+          
+          <div class="concept-item">
+            <p><strong><code>Fn(() => { ... })</code></strong> is the heart of TSL. The JavaScript code you write inside this function is not executed directly by the CPU. Instead, TSL parses this code and compiles it into a low-level shader program (like WGSL) that can run on the GPU. This allows you to write GPU logic using familiar JavaScript-like syntax.</p>
+            <p><strong><code>instanceIndex</code></strong> is a special variable provided by TSL within a compute shader. It represents the unique ID of the current thread, ranging from 0 to N-1 (where N is the total number of threads launched). Each thread gets a different <code>instanceIndex</code>, allowing it to work on a different piece of data. Here, we use it as an index to get the specific element this thread is responsible for from our <code>inputBuffer</code> and <code>outputBuffer</code>.</p>
+          </div>
+
+          <p>We also need a small function to initialize our input data with values from 1 to 10. This uses the same principles.</p>
+           <pre class="code-block"><code class="language-typescript">// Initialize input data: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+const initCompute = Fn(() => {
+  const input = inputBuffer.element(instanceIndex)
+  input.assign(instanceIndex.add(1).toFloat())
+})()</code></pre>
+
+          <h4>Step 3: Execute and Retrieve Data</h4>
+          <p>Now we tell the GPU to run our compiled functions and then we retrieve the results.</p>
+          <pre class="code-block"><code class="language-typescript">// Execute compute shaders
+await renderer.computeAsync(initCompute.compute(count))
+await renderer.computeAsync(multiplyCompute.compute(count))
+
+// Read results back to CPU
+const inputArray = await renderer.getArrayBufferAsync(inputBuffer.value)
+const outputArray = await renderer.getArrayBufferAsync(outputBuffer.value)</code></pre>
+          
+          <div class="concept-item">
+            <p><strong><code>renderer.computeAsync(shader.compute(count))</code></strong> is the command that dispatches the workload to the GPU. The <code>.compute(count)</code> part tells the GPU to launch 10 threads in parallel. The operation is asynchronous (hence `computeAsync` and `await`) because the CPU sends the command and moves on. The `await` ensures our JavaScript code pauses until the GPU signals that it has finished its work.</p>
+            <p><strong><code>renderer.getArrayBufferAsync(buffer)</code></strong> is how we get data back from the GPU. It copies the specified GPU buffer into a standard JavaScript <code>ArrayBuffer</code> on the CPU. This read-back operation can be a performance bottleneck as it requires synchronization between the CPU and GPU, so it should be used only when necessary.</p>
+          </div>
+          <p>Here is the live output from the running code. As you can see, each number in the input array has been successfully multiplied by 2.</p>
+          <div class="example-output">
+            <div id="basic-output" class="output-box">
+              <div class="loading">Running compute shader...</div>
+            </div>
+          </div>
+
+          <p>And here is the complete, self-contained function that accomplishes the task. The code below is what's actually running on this page.</p>
+          <pre class="code-block"><code class="language-typescript">import * as THREE from 'three/webgpu'
+import { Fn, instancedArray, instanceIndex } from 'three/tsl'
+
+async function initComputeShader() {
+  // Initialize WebGPU renderer
+  const renderer = new THREE.WebGPURenderer()
+  await renderer.init()
+  
+  // Create buffers for 10 float values
+  const count = 10
+  const inputBuffer = instancedArray(count, 'float')
+  const outputBuffer = instancedArray(count, 'float')
+  
+  // Initialize input data: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+  const initCompute = Fn(() => {
+    const input = inputBuffer.element(instanceIndex)
+    input.assign(instanceIndex.add(1).toFloat())
+  })()
+  
+  // Main computation: multiply each value by 2
+  const multiplyCompute = Fn(() => {
+    const input = inputBuffer.element(instanceIndex)
+    const output = outputBuffer.element(instanceIndex)
+    output.assign(input.mul(2))
+  })()
+  
+  // Execute compute shaders
+  await renderer.computeAsync(initCompute.compute(count))
+  await renderer.computeAsync(multiplyCompute.compute(count))
+  
+  // Read results back to CPU
+  const inputArray = await renderer.getArrayBufferAsync(inputBuffer.value)
+  const outputArray = await renderer.getArrayBufferAsync(outputBuffer.value)
+  
+  return {
+    input: Array.from(new Float32Array(inputArray)),
+    output: Array.from(new Float32Array(outputArray))
+  }
+}</code></pre>
+          
+        </section>
+
+        <!-- Game of Life Section -->
+        <section id="game-of-life" class="section">
+          <h2>2. Game of Life: 2D Grid Simulation</h2>
+          <p class="section-intro">Now let's see something more complex: a complete implementation of Conway's Game of Life running entirely on the GPU. This showcases 2D array processing, neighbor counting, and conditional logic, all built step-by-step.</p>
+
+          <h4>Step 1: Setup Grid and Buffers</h4>
+          <p>We start by setting up our simulation environment. This includes defining the grid size and creating two GPU buffers with <code>instancedArray</code>: one to hold the current state of the cells (<code>currentGeneration</code>) and another for the next state (<code>nextGeneration</code>). We use two buffers to avoid race conditions, where a cell's new state might incorrectly influence its neighbors' calculations in the same step.</p>
+          <pre class="code-block"><code class="language-typescript">// Grid dimensions - 64x64 = 4,096 cells total
+const gridWidth = 64;
+const gridHeight = 64;
+const totalCells = gridWidth * gridHeight;
+
+// Create buffers for current and next generation (using integers: 0 for dead, 1 for alive)
+const currentGeneration = instancedArray(totalCells, 'int');
+const nextGeneration = instancedArray(totalCells, 'int');</code></pre>
+          <div class="concept-item">
+            <h3>Core Concept: Double Buffering</h3>
+            <p>Using two buffers is a common and essential technique in simulations. All reads for a given step come from a single source (<code>currentGeneration</code>), and all writes go to a separate destination (<code>nextGeneration</code>). After the step is complete, the buffers are "swapped" for the next iteration. This ensures that the calculation for each cell is based on a consistent snapshot of the grid from the beginning of the step.</p>
+          </div>
+
+          <h4>Step 2: 2D to 1D Mapping</h4>
+          <p>GPU buffers are linear, one-dimensional arrays. To simulate a 2D grid, we need helper functions to convert (x, y) coordinates into a 1D index. We also create a helper to get a cell's state with "toroidal" or "wrapping" boundaries, where the grid's edges connect to each other.</p>
+          <pre class="code-block"><code class="language-typescript">// Helper function to convert 2D coordinates to a 1D index
+const getIndex = Fn(([x, y]) => {
+  return y.mul(gridWidth).add(x);
+});
+
+// Helper function to get cell state with boundary wrapping
+const getCell = Fn(([buffer, x, y]) => {
+  // Wrap coordinates for toroidal topology (edges connect)
+  const wrappedX = x.add(gridWidth).mod(gridWidth);
+  const wrappedY = y.add(gridHeight).mod(gridHeight);
+  const index = getIndex(wrappedX, wrappedY);
+  return buffer.element(index);
+});</code></pre>
+          <div class="concept-item">
+            <h3>Core Concept: Working with Grids on the GPU</h3>
+            <p>Since GPU memory is a flat list, we use a standard formula to access 2D data: <code>index = y * width + x</code>. In TSL, this translates to <code>y.mul(gridWidth).add(x)</code>. The modulo operator (<code>.mod()</code>) is a powerful tool for creating seamless, wrapping boundaries, which is a common pattern in simulations like this.</p>
+          </div>
+
+          <h4>Step 3: Initializing the Grid</h4>
+          <p>To start the simulation, we need an initial pattern. We'll write a compute shader that gives each cell a 30% chance of being "alive." We use TSL's built-in <code>hash()</code> function to generate a pseudo-random value for each cell based on its <code>instanceIndex</code>.</p>
+          <pre class="code-block"><code class="language-typescript">// Initialize grid with a random pattern
+const initializeGrid = Fn(() => {
+  const currentCell = currentGeneration.element(instanceIndex);
+
+  // Use hash function for pseudo-random initialization
+  const randomValue = hash(instanceIndex.add(12345)); // Add a seed
+
+  // 30% chance for a cell to be alive initially
+  If(randomValue.lessThan(0.3), () => {
+    currentCell.assign(1); // Alive
+  }).Else(() => {
+    currentCell.assign(0); // Dead
+  });
+})();</code></pre>
+
+          <h4>Step 4: The Game of Life Update Logic</h4>
+          <p>This is the core of the simulation. For each cell, we count its eight living neighbors. Then, we apply the classic rules of Conway's Game of Life using TSL's <code>If().ElseIf().Else()</code> structure to determine if the cell should be alive or dead in the next generation.</p>
+          <pre class="code-block"><code class="language-typescript">const updateGeneration = Fn(() => {
+  // Convert 1D thread index to 2D grid coordinates
+  const x = instanceIndex.mod(gridWidth);
+  const y = instanceIndex.div(gridWidth).toInt();
+
+  // Count living neighbors
+  const neighbors = int(0).toVar();
+  neighbors.addAssign(getCell(currentGeneration, x.sub(1), y.sub(1)));
+  neighbors.addAssign(getCell(currentGeneration, x.sub(1), y));
+  neighbors.addAssign(getCell(currentGeneration, x.sub(1), y.add(1)));
+  neighbors.addAssign(getCell(currentGeneration, x, y.sub(1)));
+  neighbors.addAssign(getCell(currentGeneration, x, y.add(1)));
+  neighbors.addAssign(getCell(currentGeneration, x.add(1), y.sub(1)));
+  neighbors.addAssign(getCell(currentGeneration, x.add(1), y));
+  neighbors.addAssign(getCell(currentGeneration, x.add(1), y.add(1)));
+
+  const currentCell = currentGeneration.element(instanceIndex);
+  const nextCell = nextGeneration.element(instanceIndex);
+
+  // Apply Conway's Game of Life rules
+  If(currentCell.equal(1), () => { // Current cell is alive
+    If(neighbors.lessThan(2).or(neighbors.greaterThan(3)), () => {
+      nextCell.assign(0); // Dies from under/overpopulation
+    }).Else(() => {
+      nextCell.assign(1); // Survives
+    });
+  }).Else(() => { // Current cell is dead
+    If(neighbors.equal(3), () => {
+      nextCell.assign(1); // Birth
+    }).Else(() => {
+      nextCell.assign(0); // Stays dead
+    });
+  });
+})();</code></pre>
+          
+          <h4>Step 5: Running the Simulation</h4>
+          <p>Finally, we orchestrate the simulation. We first run the <code>initializeGrid</code> shader once to set up the initial state. Then, we provide a button to run the simulation step-by-step. Each click will execute the <code>updateGeneration</code> shader to calculate the new state, followed by a <code>copyGeneration</code> shader to copy the results from <code>nextGeneration</code> back to <code>currentGeneration</code>, preparing it for the next iteration.</p>
+          <pre class="code-block"><code class="language-typescript">// Copy next generation to current generation for the next iteration
+const copyGeneration = Fn(() => {
+  currentGeneration.element(instanceIndex).assign(nextGeneration.element(instanceIndex));
+})();
+
+// Initialize the grid with a random pattern
+await renderer.computeAsync(initializeGrid.compute(totalCells));
+
+// Run simulation for multiple generations
+for (let step = 0; step &lt; 10; step++) {
+  // Calculate next generation and write to the second buffer
+  await renderer.computeAsync(updateGeneration.compute(totalCells));
+  // Copy the new state back to the first buffer for the next read
+  await renderer.computeAsync(copyGeneration.compute(totalCells));
+}</code></pre>
+
+          <h4>Live Simulation</h4>
+          <p>Here is the live simulation. Press the button to advance the Game of Life by one generation and see the simulation evolve.</p>
+          <div class="example-output">
+            <div id="game-of-life-output" class="output-box">
+              <div class="loading">Initializing Game of Life...</div>
+            </div>
+          </div>
+          <h4>Complete Code</h4>
+          <p>And here is the complete, self-contained function. The code below is what's actually running on this page.</p>
+          <pre class="code-block"><code class="language-typescript">import * as THREE from 'three/webgpu'
+import { Fn, instancedArray, instanceIndex, int, hash, If } from 'three/tsl'
+
+async function initGameOfLife() {
+  // Initialize WebGPU renderer
+  const renderer = new THREE.WebGPURenderer()
+  await renderer.init()
+  
+  // Grid dimensions - 64x64 = 4,096 cells total
+  const gridWidth = 64
+  const gridHeight = 64
+  const totalCells = gridWidth * gridHeight
+  
+  // Create buffers for current and next generation
+  const currentGeneration = instancedArray(totalCells, 'int')
+  const nextGeneration = instancedArray(totalCells, 'int')
+  
+  // Helper function to convert 2D coordinates to 1D index
+  const getIndex = Fn(([x, y]: any) => {
+    return y.mul(gridWidth).add(x)
+  })
+  
+  // Helper function to get cell state with boundary wrapping
+  const getCell = Fn(([buffer, x, y]: any) => {
+    // Wrap coordinates for toroidal topology (edges connect)
+    const wrappedX = x.add(gridWidth).mod(gridWidth)
+    const wrappedY = y.add(gridHeight).mod(gridHeight)
+    const index = getIndex(wrappedX, wrappedY)
+    return buffer.element(index)
+  })
+  
+  // Initialize grid with random pattern
+  const initializeGrid = Fn(() => {
+    const currentCell = currentGeneration.element(instanceIndex)
+    
+    // Use hash function for pseudo-random initialization
+    const randomValue = hash(instanceIndex.add(12345))
+    
+    // 30% chance for a cell to be alive initially
+    If(randomValue.lessThan(0.3), () => {
+      currentCell.assign(1) // Alive
+    }).Else(() => {
+      currentCell.assign(0) // Dead
+    })
+  })()
+  
+  // Game of Life update logic - the heart of the simulation
+  const updateGeneration = Fn(() => {
+    // Convert 1D thread index to 2D grid coordinates
+    const x = instanceIndex.mod(gridWidth)
+    const y = instanceIndex.div(gridWidth).toInt()
+    
+    // Count living neighbors (all 8 surrounding cells)
+    const neighbors = int(0).toVar()
+    
+    // Check all 8 neighboring cells manually
+    // (TSL doesn't support dynamic loops over arrays)
+    neighbors.addAssign(getCell(currentGeneration, x.sub(1), y.sub(1)))
+    neighbors.addAssign(getCell(currentGeneration, x.sub(1), y))
+    neighbors.addAssign(getCell(currentGeneration, x.sub(1), y.add(1)))
+    neighbors.addAssign(getCell(currentGeneration, x, y.sub(1)))
+    neighbors.addAssign(getCell(currentGeneration, x, y.add(1)))
+    neighbors.addAssign(getCell(currentGeneration, x.add(1), y.sub(1)))
+    neighbors.addAssign(getCell(currentGeneration, x.add(1), y))
+    neighbors.addAssign(getCell(currentGeneration, x.add(1), y.add(1)))
+    
+    // Get current cell state and prepare next state
+    const currentCell = currentGeneration.element(instanceIndex)
+    const nextCell = nextGeneration.element(instanceIndex)
+    
+    // Apply Conway's Game of Life rules
+    If(currentCell.equal(1), () => {
+      // Current cell is alive
+      If(neighbors.lessThan(2), () => {
+        nextCell.assign(0) // Dies from underpopulation
+      }).ElseIf(neighbors.greaterThan(3), () => {
+        nextCell.assign(0) // Dies from overpopulation
+      }).Else(() => {
+        nextCell.assign(1) // Survives (2 or 3 neighbors)
+      })
+    }).Else(() => {
+      // Current cell is dead
+      If(neighbors.equal(3), () => {
+        nextCell.assign(1) // Birth (exactly 3 neighbors)
+      }).Else(() => {
+        nextCell.assign(0); // Stays dead
+      })
+    })
+  })()
+  
+  // Copy next generation to current generation for next iteration
+  const copyGeneration = Fn(() => {
+    const current = currentGeneration.element(instanceIndex)
+    const next = nextGeneration.element(instanceIndex)
+    current.assign(next)
+  })()
+  
+  // Initialize the grid with random pattern
+  await renderer.computeAsync(initializeGrid.compute(totalCells))
+  
+  // Run simulation for multiple generations
+  for (let step = 0; step &lt; 10; step++) {
+    // Calculate next generation
+    await renderer.computeAsync(updateGeneration.compute(totalCells))
+    // Copy next generation to current
+    await renderer.computeAsync(copyGeneration.compute(totalCells))
+  }
+  
+  return {
+    renderer,
+    currentGeneration,
+    nextGeneration,
+    gridWidth,
+    gridHeight,
+    updateGeneration,
+    copyGeneration
+  }
+}</code></pre>
+        </section>
+
+        <!-- Visualization Section -->
+        <section id="visualization" class="section">
+          <p class="section-intro">We've run the entire Game of Life simulation on the GPU. Now, how do we see it? A key advantage of TSL is its seamless integration with the Three.js rendering pipeline. We can visualize our simulation results without ever needing to bring the data back to the CPU, allowing for high-performance, real-time graphics.</p>
+          
+          <h4>Step 1: From Buffers to Pixels with <code>InstancedMesh</code></h4>
+          <p>Our simulation involves 4,096 cells, and we need to draw a quad for each one. Creating and managing 4,096 separate objects would be very inefficient for the CPU. The solution is <code>THREE.InstancedMesh</code>, a special object that allows us to draw thousands of identical geometries in a single command, each with unique properties like position and color.</p>
+          <pre class="code-block"><code class="language-typescript">// Create scene and camera for a 2D orthographic view
+const scene = new THREE.Scene();
+const camera = new THREE.OrthographicCamera(-0.5, 0.5, 0.5, -0.5, 0.1, 10);
+camera.position.z = 1;
+
+// A single, small plane geometry will be used for all cells
+const geometry = new THREE.PlaneGeometry(1 / gridWidth, 1 / gridHeight);
+
+// Use an instanced mesh to draw all 4,096 cells in one efficient command
+const mesh = new THREE.InstancedMesh(geometry, undefined, totalCells);
+scene.add(mesh);</code></pre>
+          <div class="concept-item">
+            <h3>Core Concept: Instanced Rendering</h3>
+            <p>Instanced rendering is a GPU technique for drawing many copies of the same object at once. You provide one set of vertices (the <code>PlaneGeometry</code>) and then an array of per-instance data (like position and color). The GPU's parallel processors then render all the copies in a single "draw call," dramatically improving performance compared to telling the CPU to issue thousands of separate draw calls.</p>
+          </div>
+
+          <h4>Step 2: Positioning Each Cell with a TSL Vertex Shader</h4>
+          <p>Now that we have an <code>InstancedMesh</code>, we need to tell the GPU where to place each of the 4,096 plane instances. We do this with a TSL function assigned to the material's <code>positionNode</code>. This function is effectively a vertex shader that runs on the GPU. It uses the built-in <code>instanceIndex</code> to calculate a unique position for each instance, arranging them in a grid.</p>
+          <pre class="code-block"><code class="language-typescript">// A TSL-powered material
+const material = new THREE.MeshBasicNodeMaterial();
+mesh.material = material;
+
+// The positionNode is a TSL function that runs for every vertex of every instance.
+// It's a vertex shader written in TSL!
+material.positionNode = Fn(() => {
+  // Calculate 2D grid position (x, y) from the 1D instanceIndex
+  const x = instanceIndex.mod(gridWidth);
+  const y = instanceIndex.div(gridWidth).toInt();
+
+  // Normalize coordinates to the range [-0.5, 0.5] to fit our camera view
+  const uvX = x.toFloat().add(0.5).div(gridWidth).sub(0.5);
+  const uvY = y.toFloat().add(0.5).div(gridHeight).sub(0.5);
+
+  // Add this calculated per-instance offset to the geometry's local vertex position
+  const finalPosition = positionLocal.add(vec4(uvX, uvY, 0, 0));
+
+  return finalPosition;
+})();</code></pre>
+          <div class="concept-item">
+            <p><strong><code>positionNode</code></strong> is a property of TSL materials that lets you define the final position of each vertex using a TSL function. This function compiles into a vertex shader.</p>
+            <p><strong><code>positionLocal</code></strong> is a TSL variable representing the original position of a vertex from the geometry buffer (our small plane). We add our calculated offset to it to move the entire plane instance to its correct spot on the grid.</p>
+          </div>
+
+          <h4>Step 3: Coloring Each Cell with a Compute Shader</h4>
+          <p>This is the crucial step that connects our compute simulation to our visual rendering. We create a new compute shader whose sole job is to read the state of each cell from our <code>currentGeneration</code> buffer and write a corresponding color into a new <code>colorBuffer</code>. This <code>colorBuffer</code> is then fed directly into the material's <code>colorNode</code>, telling the rendering pipeline what color to make each instance.</p>
+          <pre class="code-block"><code class="language-typescript">// Step 3.1: Create a new buffer to hold per-instance color data
+const colorBuffer = instancedArray(totalCells, 'vec4');
+
+// Step 3.2: Create a compute shader to populate the color buffer
+const updateColors = Fn(() => {
+  const cellState = currentGeneration.element(instanceIndex);
+  const outputColor = colorBuffer.element(instanceIndex);
+
+  const aliveColor = vec4(0.0, 1.0, 0.0, 1.0); // Green
+  const deadColor = vec4(0.0, 0.0, 0.0, 1.0);  // Black
+
+  // If cell is alive (state == 1), output green. Otherwise, black.
+  outputColor.assign(deadColor);
+  If(cellState.equal(1), () => {
+    outputColor.assign(aliveColor);
+  });
+})();
+
+// Step 3.3: Pipe the color buffer directly into the material's color node
+material.colorNode = colorBuffer.toAttribute();</code></pre>
+           <div class="concept-item">
+            <h3>Core Concept: GPU Data Flow</h3>
+            <p>This demonstrates a powerful GPU-only data pipeline. The data flows from one GPU process to the next without any CPU intervention:
+            <br/>1. <strong>GOL State:</strong> The <code>currentGeneration</code> buffer is updated by the main simulation compute shader.
+            <br/>2. <strong>Coloring:</strong> The <code>updateColors</code> compute shader reads from <code>currentGeneration</code> and writes to <code>colorBuffer</code>.
+            <br/>3. <strong>Rendering:</strong> The material's <code>colorNode</code> reads from <code>colorBuffer</code> as a vertex attribute to color the final pixels.
+            <br/>This "zero-copy" approach is extremely efficient and is key to real-time graphics.</p>
+          </div>
+
+          <h4>Step 4: The Animation Loop: Tying It All Together</h4>
+          <p>The final piece is the animation loop, which orchestrates all our GPU tasks frame by frame. On each frame, we execute our compute shaders in sequence and then render the final scene. All of this happens on the GPU, coordinated by a few asynchronous commands from the CPU.</p>
+          <pre class="code-block"><code class="language-typescript">// The main animation loop, managed by the renderer
+renderer.setAnimationLoop(async () => {
+  // 1. Run one step of the Game of Life simulation
+  await runGameOfLifeStep(); // This runs updateGeneration and copyGeneration
+
+  // 2. Update the color buffer based on the new simulation state
+  await renderer.computeAsync(updateColors.compute(totalCells));
+
+  // 3. Render the scene. The GPU now has all the data it needs.
+  renderer.render(scene, camera);
+});</code></pre>
+          <div class="concept-item">
+            <h3>Core Concept: Defining vs. Dispatching a Shader</h3>
+            <p>You might be wondering about the syntax <code>updateColors.compute(totalCells)</code>. It's a key concept in TSL that separates the <em>definition</em> of a compute shader from its <em>execution</em>.</p>
+            <ul class="param-list">
+              <li><strong><code>updateColors</code></strong>: This variable holds the TSL function node we defined earlier using <code>Fn(() => { ... })</code>. It's the blueprint for our shader—it contains the logic, but it hasn't been run yet.</li>
+              <li><strong><code>.compute(totalCells)</code></strong>: This is a method on the TSL function node. It doesn't run the computation itself. Instead, it creates a "dispatch configuration" object. It packages our shader blueprint together with the number of times it should be executed (the workload size, in this case <code>totalCells</code>).</li>
+              <li><strong><code>renderer.computeAsync(...)</code></strong>: This function takes the dispatch configuration object created by <code>.compute()</code> and sends it to the GPU to be executed.</li>
+            </ul>
+            <p>Think of it like this: <code>updateColors</code> is the recipe for a cake. <code>.compute(4096)</code> is the instruction "prepare to bake 4,096 cakes." And <code>renderer.computeAsync()</code> is the final command to "start baking." This separation allows the same shader logic to be reused with different workload sizes if needed.</p>
+          </div>
+          <p>With this, we have a complete, high-performance, GPU-powered simulation and visualization of Conway's Game of Life. The interactive canvas you saw in the previous section is rendered using exactly these techniques.</p>
+        </section>
+
+        <!-- Langton's Ant Section -->
+        <section id="langton-ant" class="section">
+          <h2>3. Langton's Ant: Emergent Complexity</h2>
+          <p class="section-intro">Langton's Ant is a fascinating cellular automaton that demonstrates how simple rules can lead to complex emergent behavior. Despite having only two simple rules, the ant creates intricate patterns that transition from apparent randomness to structured "highways" after thousands of steps.</p>
+
+          <h4>The Rules</h4>
+          <p>The simulation follows just two simple rules:</p>
+          <ul class="boids-rules">
+            <li><strong>On a white cell:</strong> Turn right, flip the cell to black, then move forward</li>
+            <li><strong>On a black cell:</strong> Turn left, flip the cell to white, then move forward</li>
+          </ul>
+
+          <h4>Implementation</h4>
+          <p>Our implementation uses a 200×200 grid (40,000 cells) to provide enough space for the ant to develop complex patterns. The simulation runs entirely on the GPU using TSL compute shaders for maximum performance.</p>
+          
+          <div class="example-output">
+            <div id="langton-ant-output" class="output-box">
+              <div class="loading">Initializing Langton's Ant...</div>
+            </div>
+          </div>
+
+          <div class="simulation-controls">
+            <button id="langton-start-btn" class="control-button">Start</button>
+            <button id="langton-stop-btn" class="control-button">Stop</button>
+            <button id="langton-reset-btn" class="control-button">Reset</button>
+            <button id="langton-fast-btn" class="control-button">Run 1000 Steps</button>
+            <label for="langton-density-toggle" style="margin-left: 1rem;">
+              <input type="checkbox" id="langton-density-toggle" style="margin-right: 0.5rem;">
+              Multi-Ant Mode (1% density)
+            </label>
+            <label for="langton-rule-select" style="margin-left: 1rem;">Rule System:</label>
+            <select id="langton-rule-select" class="control-select">
+              <option value="chromaticEcosystem" selected>Chromatic Ecosystem</option>
+              <option value="simpleLangton">Simple Langton</option>
+              <option value="competitive">Competitive</option>
+              <option value="symbiotic">Symbiotic</option>
+            </select>
+            <span id="langton-step-info" style="margin-left: 1rem; color: var(--text-muted);">Steps: 0</span>
+          </div>
+
+          <div class="concept-item">
+            <h4>Rule System Variations</h4>
+            <p>The multi-ant mode supports different rule systems that create dramatically different behaviors:</p>
+            <ul class="boids-rules">
+              <li><strong>Chromatic Ecosystem:</strong> Complex color interactions where ants compete and cooperate based on color dominance. Creates rich, organic patterns with emergent color relationships.</li>
+              <li><strong>Simple Langton:</strong> Basic Langton's ant rules adapted for RGB channels. Each ant type (red, green, blue) adds/removes its color simply.</li>
+              <li><strong>Competitive:</strong> Ants aggressively fight for territory, with strong color dominance and territorial marking behaviors.</li>
+              <li><strong>Symbiotic:</strong> Ants cooperate to create complementary color patterns, building harmonious color relationships and preserving existing colors.</li>
+            </ul>
+          </div>
+
+          <div class="concept-item">
+            <h4>Multi-Ant Challenge: Race Conditions on the GPU</h4>
+            <p>
+                The "Multi-Ant Mode" introduces a classic parallel programming challenge: <strong>race conditions</strong>. On the GPU, thousands of threads execute simultaneously—one for each cell. If two ants calculate that their next move is to the *same* empty cell, they will "race" to write their new state to that cell's memory.
+            </p>
+            <p>Without a system to manage this conflict, one write would overwrite the other. The result: one ant would simply vanish from the simulation, and the grid's state would become corrupt and non-deterministic.
+            </p>
+        
+            <h4>The Solution: A Multi-Phase, Atomic "Claim" System</h4>
+            <p>To solve this, the simulation breaks each ant's turn into three distinct compute shaders that run in sequence. The key is the second phase, which uses an <strong>atomic operation</strong> to let ants "claim" a cell in a safe, ordered way.</p>
+            
+            <div class="concept-item">
+                <h3>Core Concept: Atomic Operations</h3>
+                <p>An atomic operation is an instruction that the GPU guarantees will execute as a single, indivisible step. When a thread performs an atomic operation on a piece of memory (like a cell's state), no other thread can interfere until it's complete. It's like a "talking stick" for memory—only one thread can hold it at a time.</p>
+            </div>
+        
+            <p>The simulation uses a three-phase approach:</p>
+            <ol class="detailed-steps" style="list-style-type: decimal; padding-left: 20px; margin-top: 1em;">
+                <li><strong>Phase 1: Decide & Prepare.</strong> Each thread checks if its cell contains an ant. If so, it calculates the ant's next move but <strong>does not move yet</strong>. It simply updates its current cell's color and marks the ant as "ready to move" by setting its state to 2.</li>
+                <li><strong>Phase 2: The Atomic Claim.</strong> This is where the race is won or lost. An ant's thread calculates its target cell and uses <code>atomicAdd</code> to attempt to claim it.
+                <pre class="code-block" style="margin-top: 1em;"><code class="language-typescript">// A simplified view of the claim logic from src/langton-ant.ts
+const claimValue = 2;
+const originalValue = atomicAdd(newTargetHasAnt, claimValue);
+
+If(originalValue.equal(0), () => {
+  // SUCCESS: We were the first to claim this empty cell.
+  // Move the ant's data to the new location.
+  // ...
+  atomicStore(hasAnt, 0); // Clear the old cell.
+}).Else(() => {
+  // COLLISION: Another ant claimed it first.
+  // Revert our claim and the ant stays put this turn.
+  atomicSub(newTargetHasAnt, claimValue);
+  atomicStore(hasAnt, 1); // Reset state to active.
+});</code></pre>
+                <p style="margin-top: 1em;">The <code>atomicAdd</code> function is crucial: it adds a value and returns the value that was in memory *before* the addition, all in one step. The first ant to arrive at an empty cell (value 0) will get 0 back, succeeding its claim. Any other ant arriving nanoseconds later will get a non-zero value back, failing the claim and staying put. This provides a deterministic and provably correct way to resolve conflicts.</p>
+                </li>
+                <li><strong>Phase 3: Finalize & Cleanup.</strong> A final compute pass runs to change the state of all ants that successfully moved from "ready to move" (state 2) back to "active" (state 1), preparing them for the next full simulation cycle.</li>
+            </ol>
+            <p>By combining a multi-phase algorithm with the indivisible nature of atomic operations, the simulation can correctly handle thousands of concurrent agents without data corruption, unlocking the massive parallelism of the GPU.</p>
+        </div>
+        </section>
+
+        <!-- Boids Simulation Section -->
+        <section id="boids-simulation" class="section">
+          <h2>4. Boids: Agent-Based Simulation</h2>
+          <p class="section-intro">Next, we'll explore a more complex, dynamic simulation: Boids. Developed by Craig Reynolds, this is an artificial life program that simulates the flocking behavior of birds. Each "boid" follows a set of simple rules, and the combination of these rules leads to complex, emergent flocking behavior. It's a classic example of how simple local interactions can create complex global patterns, making it a perfect candidate for GPU acceleration.</p>
+
+          <p>The emergent flocking behavior is governed by three simple rules that each boid follows based on its perception of its local neighbors. These rules, illustrated below, are applied concurrently to every boid in the simulation.</p>
+
+          <div style="text-align: center; margin: 2rem 0;">
+            <img src="./assets/boids-Blzlusq-.svg" alt="Diagram illustrating the three boids rules: separation, alignment, and cohesion" style="max-width: 500px; height: auto;">
+          </div>
+          
+          <p>The simulation uses three simple rules to generate complex flocking behavior:</p>
+
+          <ul class="boids-rules">
+            <li><strong>Separation:</strong> Steer to avoid crowding local flockmates. This prevents boids from clumping together and colliding.</li>
+            <li><strong>Alignment:</strong> Steer towards the average heading (direction of travel) of local flockmates. This helps the flock move as a cohesive group.</li>
+            <li><strong>Cohesion:</strong> Steer to move toward the average position (center of mass) of local flockmates. This keeps the flock together.</li>
+          </ul>
+
+          <p>The fascinating aspect of Boids is that these simple, local rules, when applied to hundreds or thousands of agents, produce complex and life-like global flocking behavior. None of the boids have a concept of the entire flock, only their immediate surroundings. This makes the algorithm highly parallelizable and a perfect fit for a GPU compute shader, where we can calculate the behavior for every boid simultaneously.</p>
+          
+          <h4>Step 1: Configuration and State Storage</h4>
+          <p>Like before, we start by defining the state of our simulation. For boids, each agent has a position and a velocity in 3D space. We also have several parameters that control their behavior.</p>
+          <pre class="code-block"><code class="language-typescript">// boids.ts
+// Configuration for the simulation
+export interface BoidsConfig {
+  count: number; // Number of boids
+  speedLimit: number;
+  bounds: number;
+  separation: number; // Radius for separation rule
+  alignment: number;  // Radius for alignment rule
+  cohesion: number;   // Radius for cohesion rule
+  freedom: number;
+}
+</code></pre>
+          <div class="concept-item">
+            <h3>Core Simulation Parameters</h3>
+            <p>These configuration values are the knobs and dials for tuning the flock's behavior. They are passed to the GPU as "uniforms"—global variables that are the same for all threads in a shader execution.</p>
+            <ul class="param-list">
+              <li><strong><code>count</code>:</strong> The total number of boids to simulate. More boids create a more impressive flock, but require more GPU power.</li>
+              <li><strong><code>speedLimit</code>:</strong> The maximum speed any boid can reach. This prevents the simulation from becoming unstable.</li>
+              <li><strong><code>bounds</code>:</strong> Defines the size of the cubic area the boids fly within. When a boid hits a boundary, it is gently steered back towards the center.</li>
+              <li><strong><code>separation</code>:</strong> The distance (or radius) for the separation rule. If a neighbor is within this radius, the boid will steer strongly away from it to avoid collision.</li>
+              <li><strong><code>alignment</code>:</strong> The radius for the alignment rule. The boid will try to match the average heading of all neighbors within this distance.</li>
+              <li><strong><code>cohesion</code>:</strong> The radius for the cohesion rule. The boid will steer towards the average position (center of mass) of all neighbors within this radius, keeping the flock together.</li>
+            </ul>
+          </div>
+          <div class="concept-item">
+            <h3>Other Key Uniforms</h3>
+            <p>Besides the main behavioral parameters, a few other uniforms are essential for making the simulation dynamic and interactive.</p>
+            <ul class="param-list">
+              <li><strong><code>deltaTime</code>:</strong> A crucial uniform in any animation or simulation. It holds the time elapsed since the previous frame. By multiplying all velocity and position changes by <code>deltaTime</code>, we ensure the simulation runs at the same speed regardless of the user's screen refresh rate (framerate-independent movement).</li>
+              <li><strong><code>rayOrigin</code> and <code>rayDirection</code>:</strong> These two <code>vec3</code> uniforms define a ray in 3D space. The shader code uses this ray to create a repulsive force, pushing boids away from it. This allows for user interaction, like using the mouse to "herd" the flock.</li>
+            </ul>
+          </div>
+          <p>With the parameters defined, we create buffers on the GPU to store the state for each boid:</p>
+          <pre class="code-block"><code class="language-typescript">// ... inside BoidsSimulation class ...
+
+// Buffers to store boid state on the GPU
+const positionArray = new Float32Array(count * 3);
+const velocityArray = new Float32Array(count * 3);
+const phaseArray = new Float32Array(count); // For animation
+
+// ... initialize arrays with random data ...
+
+// Create GPU buffers
+const positionStorage = attributeArray(positionArray, 'vec3');
+const velocityStorage = attributeArray(velocityArray, 'vec3');
+const phaseStorage = attributeArray(phaseArray, 'float');
+</code></pre>
+          <div class="concept-item">
+            <h3>Core Concept: Data Representation for Agents</h3>
+            <p>Unlike the Game of Life's grid, a boids simulation consists of many independent agents. Each agent has its own properties (position, velocity). We store these properties in parallel arrays. For example, <code>positionStorage</code> is a single large buffer, where the position for boid with <code>instanceIndex</code> is at index <code>instanceIndex</code>. Since we are in 3D, we use the <code>'vec3'</code> type, which holds three floats (x, y, z) for each element.</p>
+          </div>
+
+          <h4>Step 2: The Rules of Flocking in a Compute Shader</h4>
+          <p>The magic of boids comes from a set of simple steering behaviors that each boid follows based on its local neighborhood. We implement this entire logic in a single, large compute shader: <code>computeVelocity</code>. This shader calculates a new velocity for each boid based on several factors: the boid's desire to stay with the flock, avoid collisions, stay within the boundaries, and flee from predators. Let's break down how it works, part by part.</p>
+
+          <div class="concept-item">
+            <h3>Part 1: Interaction Zones and Thresholds</h3>
+            <p>Instead of making separate distance checks for the three main flocking rules, this implementation uses an efficient, unified approach. It defines a single, large <code>zoneRadius</code> which is the sum of the separation, alignment, and cohesion distances. The shader first checks if another boid is within this large zone. Only if it is does it proceed to figure out which specific behavior applies based on how close the other boid is. This avoids redundant distance calculations.</p>
+            <pre class="code-block"><code class="language-typescript">// Combine all rule distances into a single zone of influence
+const zoneRadius = separation.add(alignment).add(cohesion).toConst();
+// Calculate squared distance for cheaper comparisons
+const zoneRadiusSq = zoneRadius.mul(zoneRadius).toConst();
+
+// Pre-calculate normalized thresholds for switching between behaviors
+const separationThresh = separation.div(zoneRadius).toConst();
+const alignmentThresh = (separation.add(alignment)).div(zoneRadius).toConst();
+</code></pre>
+            <p>Here, <code>separationThresh</code> and <code>alignmentThresh</code> are values between 0 and 1 that mark the boundaries between the different behavior zones within the total <code>zoneRadius</code>.</p>
+          </div>
+
+          <div class="concept-item">
+            <h3>Part 2: External Forces - Boundaries and Predators</h3>
+            <p>Before checking interactions with other boids, two external forces are applied to each boid's velocity to keep the simulation contained and interactive.</p>
+            
+            <h5>Containment (Centering Force)</h5>
+            <p>A gentle force steers the boids back towards the center of the simulation space if they stray too far. This prevents the flock from flying away indefinitely. The force is weighted more heavily on the Y-axis to encourage a flatter, more horizontal flocking pattern.</p>
+            <pre class="code-block"><code class="language-typescript">// A vector pointing from the boid towards the world origin
+const dirToCenter = position.toVar();
+// Encourage horizontal flocking by weighting the y-axis
+dirToCenter.y.mulAssign(2.5); 
+// Apply a gentle force towards the center
+velocity.subAssign(normalize(dirToCenter).mul(deltaTime).mul(5.0));
+</code></pre>
+
+            <h5>Predator/Ray Avoidance</h5>
+            <p>To make the simulation interactive, we introduce a "predator" represented by a 3D ray (which can be controlled by the mouse). If a boid gets too close to this ray, a strong repulsive force is applied, causing it to flee. The closer the boid, the stronger the force. The boid's speed limit is also temporarily increased to help it escape faster.</p>
+            <pre class="code-block"><code class="language-typescript">// Calculate the boid's squared distance to the ray
+const directionToRay = rayOrigin.sub(position).toConst();
+const projectionLength = dot(directionToRay, rayDirection).toConst();
+const closestPoint = rayOrigin.sub(rayDirection.mul(projectionLength)).toConst();
+const directionToClosestPoint = closestPoint.sub(position).toConst();
+const distanceToClosestPoint = length(directionToClosestPoint).toConst();
+const distanceToClosestPointSq = distanceToClosestPoint.mul(distanceToClosestPoint).toConst();
+
+// If within the ray's radius, apply a repulsive force
+const rayRadiusSq = float(150.0).mul(150.0).toConst();
+If(distanceToClosestPointSq.lessThan(rayRadiusSq), () => {
+  const velocityAdjust = (distanceToClosestPointSq.div(rayRadiusSq).sub(1.0)).mul(deltaTime).mul(100.0);
+  velocity.addAssign(normalize(directionToClosestPoint).mul(velocityAdjust));
+  limit.addAssign(5.0); // Temporarily increase speed limit to escape
+});
+</code></pre>
+          </div>
+
+          <div class="concept-item">
+            <h3>Part 3: The Core Flocking Logic Loop</h3>
+            <p>This is the heart of the boids algorithm. The shader enters a loop that iterates through every other boid in the simulation to calculate the three core flocking forces. After checking that a neighbor is within the overall <code>zoneRadius</code>, it calculates <code>percent</code>, which represents how deep the neighbor is within the zone (0.0 being at the exact same position, 1.0 being at the very edge).</p>
+            <pre class="code-block"><code class="language-typescript">// Loop through all other boids
+Loop({ start: uint(0), end: uint(count), type: 'uint', condition: '&lt;' }, ({ i }) => {
+  // ... (skip self, get neighbor data) ...
+  
+  const dirToBird = birdPosition.sub(position);
+  const distToBird = length(dirToBird);
+  // ... (skip if distance is zero) ...
+  const distToBirdSq = distToBird.mul(distToBird);
+
+  // Is the neighbor within our zone of influence?
+  If(distToBirdSq.greaterThan(zoneRadiusSq), () => {
+    Continue(); // Skip boid, it's too far away
+  });
+
+  // 'percent' determines which rule to apply
+  const percent = distToBirdSq.div(zoneRadiusSq);
+
+  // ... apply rules based on 'percent' ...
+});
+</code></pre>
+
+            <h5>Rule 1: Separation (Avoid Crowding)</h5>
+            <p>If <code>percent</code> is less than <code>separationThresh</code>, the neighbor is in the "personal space" zone. The boid steers strongly away from it to avoid a collision. The repulsive force, calculated as <code>(separationThresh.div(percent).sub(1.0))</code>, grows exponentially as the neighbor gets closer.</p>
+            <pre class="code-block"><code class="language-typescript">// RULE 1: SEPARATION
+If(percent.lessThan(separationThresh), () => {
+  const velocityAdjust = (separationThresh.div(percent).sub(1.0)).mul(deltaTime);
+  velocity.subAssign(normalize(dirToBird).mul(velocityAdjust));
+});
+</code></pre>
+
+            <h5>Rule 2: Alignment (Match Heading)</h5>
+            <p>If the neighbor is in the alignment zone, the boid tries to match its velocity. It steers towards the neighbor's direction of travel. The force is blended smoothly so that it is strongest in the middle of the alignment zone. Let's look at the full calculation.</p>
+            <pre class="code-block"><code class="language-typescript">// RULE 2: ALIGNMENT
+}).ElseIf(percent.lessThan(alignmentThresh), () => {
+  // 1. Find how far into the alignment zone the neighbor is (0.0 to 1.0)
+  const threshDelta = alignmentThresh.sub(separationThresh);
+  const adjustedPercent = (percent.sub(separationThresh)).div(threshDelta);
+
+  // 2. Get the neighbor's velocity
+  const birdVelocity = velocityStorage.element(i);
+
+  // 3. Calculate a smooth weight based on the position in the zone.
+  const cosRange = cos(adjustedPercent.mul(PI_2));
+  const cosRangeAdjust = float(1.0).sub(cosRange.mul(0.5)); // Full formula: 1.0 - cos(percent * 2PI) * 0.5
+  
+  // 4. Apply the alignment force, scaled by the weight
+  const velocityAdjust = cosRangeAdjust.mul(deltaTime);
+  velocity.addAssign(normalize(birdVelocity).mul(velocityAdjust));
+});
+</code></pre>
+            <div class="concept-item">
+              <h3>Dissecting the Alignment Weight</h3>
+              <p>The smooth blending is achieved with a clever use of the cosine function. Here's a breakdown of how the <code>cosRangeAdjust</code> weight is calculated:</p>
+              <ul class="param-list">
+                <li><strong><code>const adjustedPercent = ...</code></strong>: First, the boid's relative position within the alignment zone is calculated and normalized to a range of [0, 1]. A value of 0 means it's at the inner edge (bordering separation), and 1 means it's at the outer edge (bordering cohesion).</li>
+                <li><strong><code>const cosRange = cos(adjustedPercent.mul(PI_2))</code></strong>: This maps the [0, 1] position to a full cosine wave (from <code>cos(0)</code> to <code>cos(2&pi;)</code>). The result is a value that swings from 1 down to -1 and back to 1.</li>
+                <li><strong><code>const cosRangeAdjust = float(1.0).sub(cosRange.mul(0.5))</code></strong>: This is the key transformation. It takes the cosine wave (from -1 to 1) and maps it to a new range. Let's see how:
+                  <ul>
+                    <li>When <code>adjustedPercent</code> is 0 (at the inner edge), <code>cos</code> is 1. The formula becomes <code>1.0 - (1 * 0.5) = 0.5</code>.</li>
+                    <li>When <code>adjustedPercent</code> is 0.5 (in the middle), <code>cos</code> is -1. The formula becomes <code>1.0 - (-1 * 0.5) = 1.5</code>.</li>
+                    <li>When <code>adjustedPercent</code> is 1 (at the outer edge), <code>cos</code> is 1. The formula becomes <code>1.0 - (1 * 0.5) = 0.5</code>.</li>
+                  </ul>
+                  The result is a weighting factor that smoothly oscillates between 0.5 and 1.5. This means the alignment force is always active within its zone, but its strength is modulated to be 3x stronger in the middle of the zone than at the edges, leading to more organic flocking behavior.
+                </li>
+              </ul>
+            </div>
+
+            <h5>Rule 3: Cohesion (Move Toward Center)</h5>
+            <p>If the neighbor is in the outermost zone (the cohesion zone), the boid steers towards its position. This is the "glue" that holds the flock together, attracting boids towards the average position (or center of mass) of their local flockmates. The calculation is very similar to alignment, using the same weighting function to create a smooth, natural-looking force.</p>
+            <pre class="code-block"><code class="language-typescript">// RULE 3: COHESION
+}).Else(() => {
+  // 1. Find how far into the cohesion zone the neighbor is (0.0 to 1.0)
+  const threshDelta = alignmentThresh.oneMinus();
+  const adjustedPercent = threshDelta.equal(0.0).select(1.0, (percent.sub(alignmentThresh)).div(threshDelta));
+
+  // 2. Calculate the same smooth weight as used in alignment.
+  // This makes the cohesive force strongest in the middle of the zone.
+  const cosRange = cos(adjustedPercent.mul(PI_2));
+  const cosRangeAdjust = float(1.0).sub(cosRange.mul(0.5));
+  
+  // 3. Apply the cohesion force, steering towards the neighbor's position.
+  const velocityAdjust = cosRangeAdjust.mul(deltaTime);
+  velocity.addAssign(normalize(dirToBird).mul(velocityAdjust));
+});
+</code></pre>
+            <div class="concept-item">
+              <h3>The "Bump" for Cohesion</h3>
+              <p>Using the same <code>1.0 - cos(x) * 0.5</code> formula for cohesion creates a force that is weakest at the boundaries (0.5x strength) and strongest in the middle of the zone (1.5x strength). This behavior is desirable for cohesion because:</p>
+              <ul class="param-list">
+                <li>Boids just entering the cohesion zone (near the alignment boundary) are only gently pulled, preventing abrupt changes in direction.</li>
+                <li>Boids that are very far apart, near the edge of the total interaction radius, are also gently pulled, preventing them from "snapping" back into the flock too aggressively.</li>
+                <li>The strongest pull occurs when boids are comfortably in the middle of the cohesion zone, effectively maintaining the flock's overall structure.</li>
+              </ul>
+            </div>
+          </div>
+          <div class="concept-item">
+            <h3>Part 4: Finalizing the Velocity</h3>
+            <p>After all forces have been accumulated, two final steps are performed.</p>
+
+            <h5>Velocity Limiting</h5>
+            <p>To prevent the simulation from becoming unstable, the boid's final calculated velocity is clamped to the <code>speedLimit</code>. This ensures no boid can accelerate to an infinitely high speed.</p>
+            <pre class="code-block"><code class="language-typescript">If(length(velocity).greaterThan(limit), () => {
+  velocity.assign(normalize(velocity).mul(limit));
+});
+</code></pre>
+            
+            <h5>Storing the Result</h5>
+            <p>Finally, the new, calculated velocity is written back into the <code>velocityStorage</code> buffer, ready to be used by the <code>computePosition</code> shader in the next stage of the pipeline.</p>
+            <pre class="code-block"><code class="language-typescript">velocityStorage.element(birdIndex).assign(velocity);
+</code></pre>
+          </div>
+
+          <h4>Step 3: Updating Position</h4>
+          <p>After all the velocity adjustments have been calculated, a second, much simpler compute shader called <code>computePosition</code> runs. It performs a basic physics update: the new position is the old position plus the new velocity, scaled by time.</p>
+          <pre class="code-block"><code class="language-typescript">// boids.ts -> computePosition
+const computePosition = Fn(() => {
+  // Standard physics update: position += velocity * deltaTime
+  positionStorage.element(instanceIndex).addAssign(
+    velocityStorage.element(instanceIndex).mul(deltaTime)
+  );
+
+  // ... (phase update logic for animation) ...
+})();
+</code></pre>
+
+          <h4>Step 4: Running the Simulation</h4>
+          <p>Finally, we orchestrate the simulation. In our main application loop, we call the two compute shaders in sequence. Although we don't have a visualization yet, we can run a test to verify the simulation is working. The test runs the simulation for a few frames and measures the average distance the boids have moved to confirm they are not static.</p>
+          <pre class="code-block"><code class="language-typescript">// In the main application loop...
+boids.update(deltaTime); // Update uniforms like time
+boids.compute(renderer); // This executes computeVelocity then computePosition
+</code></pre>
+
+          <div id="boids-container" style="width: 100%; height: 600px; position: relative; background: #111; border-radius: 8px; overflow: hidden; cursor: crosshair;">
+            <!-- Renderer canvas will be appended here -->
+          </div>
+
+          <div class="simulation-controls">
+            <label for="species-count-input">Number of Species:</label>
+            <input type="number" id="species-count-input" class="control-select" value="4" min="1" max="10" style="width: 70px;"/>
+            <span id="boid-count-display" style="margin-left: 1rem; color: var(--text-muted);">(4096 Boids)</span>
+            <button id="increase-boids-btn" class="control-button" title="Double boid count">+</button>
+            <button id="decrease-boids-btn" class="control-button" title="Halve boid count">-</button>
+            <label for="boid-behavior-select" style="margin-left: 1rem;">Interspecies Behavior:</label>
+            <select id="boid-behavior-select" class="control-select">
+              <option value="density-based" selected>Repulsion (Density-Based)</option>
+              <option value="rock-paper-scissors">Rock-Paper-Scissors</option>
+              <option value="density-preference">Density & Preference</option>
+            </select>
+          </div>
+          
+          <h4>Step 1: Core Configuration and Initialization</h4>
+          <p>We start by defining the configuration for our simulation. This includes the number of boids, the simulation boundaries, and the behavioral parameters for each species, such as separation, alignment, and cohesion. In TSL, these parameters are passed to the compute shader as `uniforms`.</p>
+
+          <h4>Interspecies Dynamics: A Game of Rock-Paper-Scissors</h4>
+          <p>To make the simulation more visually interesting, this version of Boids introduces three distinct species of boids, each with slightly different flocking parameters. More importantly, they interact with each other in a "Rock-Paper-Scissors" dynamic:</p>
+          <ul class="boids-rules">
+            <li><strong>Species 0</strong> hunts <strong>Species 1</strong>.</li>
+            <li><strong>Species 1</strong> hunts <strong>Species 2</strong>.</li>
+            <li><strong>Species 2</strong> hunts <strong>Species 0</strong>.</li>
+          </ul>
+          <p>When a boid encounters a member of a species it preys upon, it will exhibit hunting behavior (a strong cohesion force towards the prey). Conversely, when it encounters a predator, it will exhibit fleeing behavior (a strong separation force away from the predator). This creates a constantly shifting dynamic where different groups will chase and flee from each other, adding another layer of emergent complexity to the simulation.</p>
+          
+          <h4>Complete Code</h4>
+          <p>And here is the complete code for the <code>BoidsSimulation</code> class. This contains all the setup, compute shader definitions, and update logic discussed above.</p>
+          <pre class="code-block"><code class="language-typescript">import * as THREE from 'three/webgpu';
+import { 
+  uniform, 
+  attributeArray, 
+  float, 
+  uint, 
+  Fn, 
+  If, 
+  Loop, 
+  Continue, 
+  normalize, 
+  instanceIndex, 
+  length, 
+  dot, 
+  cos, 
+  max, 
+  property,
+} from 'three/tsl';
+
+export interface BoidsConfig {
+  count: number;
+  speedLimit: number;
+  bounds: number;
+  separation: number;
+  alignment: number;
+  cohesion: number;
+  freedom: number;
+}
+
+export class BoidsSimulation {
+  // ... constructor and initialization ...
+  
+  private initializeCompute(): void {
+    const { count, speedLimit } = this.config;
+    const { positionStorage, velocityStorage, phaseStorage } = this.storage;
+
+    const computeVelocity = Fn(() => {
+      const PI = float(3.141592653589793);
+      const PI_2 = PI.mul(2.0);
+      const limit = property('float', 'limit').assign(speedLimit);
+
+      const { alignment, separation, cohesion, deltaTime, rayOrigin, rayDirection } = this.uniforms;
+
+      const zoneRadius = separation.add(alignment).add(cohesion).toConst();
+      const separationThresh = separation.div(zoneRadius).toConst();
+      const alignmentThresh = (separation.add(alignment)).div(zoneRadius).toConst();
+      const zoneRadiusSq = zoneRadius.mul(zoneRadius).toConst();
+
+      const birdIndex = instanceIndex.toConst('birdIndex');
+      const position = positionStorage.element(birdIndex).toVar();
+      const velocity = velocityStorage.element(birdIndex).toVar();
+
+      const directionToRay = rayOrigin.sub(position).toConst();
+      const projectionLength = dot(directionToRay, rayDirection).toConst();
+      const closestPoint = rayOrigin.sub(rayDirection.mul(projectionLength)).toConst();
+      const directionToClosestPoint = closestPoint.sub(position).toConst();
+      const distanceToClosestPoint = length(directionToClosestPoint).toConst();
+      const distanceToClosestPointSq = distanceToClosestPoint.mul(distanceToClosestPoint).toConst();
+
+      const rayRadiusSq = float(150.0).mul(150.0).toConst();
+      If(distanceToClosestPointSq.lessThan(rayRadiusSq), () => {
+        const velocityAdjust = (distanceToClosestPointSq.div(rayRadiusSq).sub(1.0)).mul(deltaTime).mul(100.0);
+        velocity.addAssign(normalize(directionToClosestPoint).mul(velocityAdjust));
+        limit.addAssign(5.0);
+      });
+
+      const dirToCenter = position.toVar();
+      dirToCenter.y.mulAssign(2.5);
+      velocity.subAssign(normalize(dirToCenter).mul(deltaTime).mul(5.0));
+
+      Loop({ start: uint(0), end: uint(count), type: 'uint', condition: '&lt;' }, ({ i }) => {
+        
+        If(i.equal(birdIndex), () => {
+          Continue();
+        });
+
+        const birdPosition = positionStorage.element(i);
+        const dirToBird = birdPosition.sub(position);
+        const distToBird = length(dirToBird);
+
+        If(distToBird.lessThan(0.0001), () => {
+          Continue();
+        });
+
+        const distToBirdSq = distToBird.mul(distToBird);
+
+        If(distToBirdSq.greaterThan(zoneRadiusSq), () => {
+          Continue();
+        });
+
+        const percent = distToBirdSq.div(zoneRadiusSq);
+
+        If(percent.lessThan(separationThresh), () => {
+          const velocityAdjust = (separationThresh.div(percent).sub(1.0)).mul(deltaTime);
+          velocity.subAssign(normalize(dirToBird).mul(velocityAdjust));
+        }).ElseIf(percent.lessThan(alignmentThresh), () => {
+          const threshDelta = alignmentThresh.sub(separationThresh);
+          const adjustedPercent = (percent.sub(separationThresh)).div(threshDelta);
+          const birdVelocity = velocityStorage.element(i);
+
+          const cosRange = cos(adjustedPercent.mul(PI_2));
+          const cosRangeAdjust = float(1.0).sub(cosRange.mul(0.5));
+          const velocityAdjust = cosRangeAdjust.mul(deltaTime);
+          velocity.addAssign(normalize(birdVelocity).mul(velocityAdjust));
+        }).Else(() => {
+          const threshDelta = alignmentThresh.oneMinus();
+          const adjustedPercent = threshDelta.equal(0.0).select(1.0, (percent.sub(alignmentThresh)).div(threshDelta));
+
+          const cosRange = cos(adjustedPercent.mul(PI_2));
+          const adj1 = cosRange.mul(-0.5);
+          const adj2 = adj1.add(0.5);
+          const adj3 = float(0.5).sub(adj2);
+
+          const velocityAdjust = adj3.mul(deltaTime);
+          velocity.addAssign(normalize(dirToBird).mul(velocityAdjust));
+        });
+      });
+
+      If(length(velocity).greaterThan(limit), () => {
+        velocity.assign(normalize(velocity).mul(limit));
+      });
+
+      velocityStorage.element(birdIndex).assign(velocity);
+    })().compute(count);
+
+    const computePosition = Fn(() => {
+      const { deltaTime } = this.uniforms;
+      positionStorage.element(instanceIndex).addAssign(velocityStorage.element(instanceIndex).mul(deltaTime).mul(15.0));
+
+      const velocity = velocityStorage.element(instanceIndex);
+      const phase = phaseStorage.element(instanceIndex);
+
+      const modValue = phase.add(deltaTime).add(length(velocity.xz).mul(deltaTime).mul(3.0)).add(max(velocity.y, 0.0).mul(deltaTime).mul(6.0));
+      phaseStorage.element(instanceIndex).assign(modValue.mod(62.83));
+    })().compute(count);
+    
+    // ...
+  }
+}
+</code></pre>
+
+          
+          <h4>Step 5: Visualizing the Flock</h4>
+          <p>The simulation logic is complete, but how do we see the result? Visualizing thousands of dynamic agents efficiently is a challenge perfectly suited for the GPU. This section breaks down how the boids are rendered using a seamless, high-performance pipeline that connects the compute simulation directly to the graphics display without ever needing to bring data back to the CPU.</p>
+
+          <div class="concept-item">
+            <h3>Core Principle: Instanced Rendering with <code>InstancedMesh</code></h3>
+            <p>Instead of creating thousands of individual <code>THREE.Mesh</code> objects for each boid (which would be extremely slow for the CPU to manage), the visualization uses a single <code>THREE.InstancedMesh</code>.</p>
+            <ul class="param-list">
+              <li><strong>What it is:</strong> An <code>InstancedMesh</code> allows you to render a huge number of copies (instances) of a single base geometry in one command to the GPU (a "draw call").</li>
+              <li><strong>How it works:</strong> You provide one base geometry (in this case, a simple triangle) and tell the <code>InstancedMesh</code> how many copies to draw. The work of placing, rotating, and coloring each individual instance is then offloaded entirely to custom vertex and fragment shaders running on the GPU.</li>
+            </ul>
+          </div>
+
+          <div class="concept-item">
+            <h3>The TSL Shaders: <code>vertexNode</code> and <code>colorNode</code></h3>
+            <p>The core of the visualization is a custom <code>THREE.NodeMaterial</code> whose behavior is defined using two TSL functions. These functions compile into shader programs that run on the GPU.</p>
+            <ol>
+              <li><strong><code>vertexNode</code> (The Vertex Shader):</strong> Its job is to calculate the final 2D screen position of each vertex for every single boid instance.</li>
+              <li><strong><code>colorNode</code> (The Fragment Shader):</strong> Its job is to calculate the final color of each pixel for every boid instance.</li>
+            </ol>
+            <p>A crucial point is that these shaders read directly from the same GPU storage buffers (<code>positionStorage</code> and <code>velocityStorage</code>) that the boids compute shader writes to. This creates a "zero-copy" data flow entirely on the GPU, which is key to its performance.</p>
+          </div>
+
+          <h4>In-Depth: The Vertex Shader (<code>boidVertexShader</code>)</h4>
+          <p>This is where most of the magic happens. The vertex shader runs for every vertex of the base triangle, for every boid instance. Its goal is to apply the correct position and orientation to each boid. Let's break down its execution step-by-step for a single vertex of a single boid:</p>
+          <pre class="code-block"><code class="language-typescript">// boids-visualization.ts
+const boidVertexShader = Fn(() => {
+  // Get the current instance index (which boid we're rendering)
+  const boidIndex = instanceIndex;
+  
+  // Get position and velocity from compute storage
+  const boidPosition = this.storage.positionStorage.element(boidIndex);
+  const boidVelocity = this.storage.velocityStorage.element(boidIndex);
+  
+  // Transform local vertex position
+  const localPos = positionLocal.toVar();
+  localPos.mulAssign(this.config.particleSize);
+  
+  // Create a rotation matrix to align the boid with its velocity
+  const velocity = normalize(boidVelocity.add(vec3(0.001, 0.001, 0.001))); // Add epsilon to avoid zero velocity
+
+  const forward = velocity.toVar('forward');
+  const up = vec3(0.0, 1.0, 0.0).toVar('up');
+  const right = normalize(cross(up, forward)).toVar('right');
+  const newUp = normalize(cross(forward, right)).toVar('newUp');
+  
+  const rotationMatrix = mat3(
+    right.x, forward.x, newUp.x,
+    right.y, forward.y, newUp.y,
+    right.z, forward.z, newUp.z
+  ).toVar();
+  
+  const rotatedPos = rotationMatrix.mul(localPos);
+  
+  // Translate to boid position
+  const worldPos = rotatedPos.add(boidPosition);
+  
+  // Transform to clip space
+  return cameraProjectionMatrix.mul(cameraViewMatrix).mul(vec4(worldPos, 1.0));
+});</code></pre>
+          <ol class="detailed-steps" style="list-style-type: decimal; padding-left: 20px; margin-top: 1em;">
+              <li><strong>Identify the Boid:</strong> The shader gets the special <code>instanceIndex</code> variable, a unique ID from 0 to <code>count-1</code> that tells it which boid instance it's currently processing.</li>
+              <li><strong>Fetch State from GPU Storage:</strong> It uses the <code>boidIndex</code> to read that specific boid's position and velocity directly from the <code>positionStorage</code> and <code>velocityStorage</code> buffers. For example, <code>this.storage.positionStorage.element(boidIndex)</code> is the TSL code that translates to a GPU memory read at the correct offset in the buffer.</li>
+              <li><strong>Orient the Boid (Vector Math):</strong> To make the boid triangle "point" in the direction it's flying, the shader constructs a 3D rotation matrix on-the-fly.
+                <ul style="list-style-type: disc; padding-left: 20px; margin-top: 0.5em;">
+                  <li>The boid's normalized <code>velocity</code> vector serves as the "forward" direction.</li>
+                  <li>It calculates the "right" direction by taking the cross product of a world "up" vector `(0,1,0)` and the `forward` vector. The cross product of two vectors yields a third vector that is perpendicular to both.</li>
+                  <li>To ensure the basis is perfectly orthogonal, it recalculates a `newUp` vector by taking the cross product of the `forward` and `right` vectors.</li>
+                  <li>These three vectors (`right`, `newUp`, and `forward`) form the columns of a `mat3` rotation matrix.</li>
+                </ul>
+              </li>
+              <li><strong>Apply Rotation and Position:</strong> The original vertex position of the base triangle (<code>positionLocal</code>) is first scaled, then multiplied by the <code>rotationMatrix</code>. This orients the triangle in 3D space. The result is then added to the boid's unique world position fetched from the storage buffer.</li>
+              <li><strong>Project to Screen:</strong> The final <code>worldPos</code> is multiplied by the camera's view and projection matrices. This is the standard 3D graphics transformation that converts the 3D world coordinate into the 2D coordinate that will be displayed on the screen.</li>
+          </ol>
+
+          <h4>In-Depth: The Fragment Shader (<code>boidFragmentShader</code>)</h4>
+          <p>After the vertex shader has positioned the triangle on the screen, the fragment (or pixel) shader runs for every pixel inside that triangle. Its job is to determine the pixel's color.</p>
+          <pre class="code-block"><code class="language-typescript">// boids-visualization.ts
+const boidFragmentShader = Fn(() => {
+  const boidIndex = instanceIndex;
+  const velocity = this.storage.velocityStorage.element(boidIndex);
+  const speed = length(velocity);
+  
+  // Normalize speed for color mixing (assuming max speed around 10)
+  const normalizedSpeed = speed.div(10.0).saturate();
+  
+  // Mix between two colors based on speed
+  const color = mix(
+    vec3(this.config.colorA.r, this.config.colorA.g, this.config.colorA.b),
+    vec3(this.config.colorB.r, this.config.colorB.g, this.config.colorB.b),
+    normalizedSpeed
+  );
+  
+  return vec4(color, 1.0);
+});</code></pre>
+          <ol class="detailed-steps" style="list-style-type: decimal; padding-left: 20px; margin-top: 1em;">
+            <li><strong>Identify the Boid:</strong> Just like the vertex shader, it uses <code>instanceIndex</code> to know which boid it's coloring.</li>
+            <li><strong>Fetch Velocity:</strong> It reads the <code>velocity</code> for that specific boid from the <code>velocityStorage</code> buffer.</li>
+            <li><strong>Calculate Speed:</strong> It calculates the magnitude (or <code>length</code>) of the <code>velocity</code> vector to get the boid's scalar speed.</li>
+            <li><strong>Normalize and Interpolate:</strong> The <code>speed</code> is normalized to a range of 0.0 to 1.0 (the <code>.saturate()</code> call clamps the value). This <code>normalizedSpeed</code> is then used as the mixing factor in TSL's <code>mix()</code> function. This function performs a linear interpolation between two colors. A boid with a speed of 0 will be one color, a boid at maximum speed will be the other, and boids in between will be a blended color.</li>
+            <li><strong>Output Color:</strong> The final calculated color is returned as a <code>vec4</code> (with an alpha value of 1.0 for full opacity).</li>
+          </ol>
+
+          <h4>Summary of the Data Flow per Frame</h4>
+          <p>The entire process is a highly optimized loop that happens on every frame:</p>
+          <ol class="detailed-steps" style="list-style-type: decimal; padding-left: 20px; margin-top: 1em;">
+            <li>The CPU tells the GPU to run the boids simulation compute shaders.</li>
+            <li>The compute shaders run, updating the positions and velocities within the GPU's storage buffers.</li>
+            <li>The CPU tells the GPU to render the <code>InstancedMesh</code>.</li>
+            <li>The GPU executes the <strong>vertex shader</strong> for each boid, reading the *newly updated* positions and velocities to calculate where each boid should be drawn and how it should be oriented.</li>
+            <li>The GPU then executes the <strong>fragment shader</strong> for each pixel of each boid, reading the velocities to determine the correct color.</li>
+          </ol>
+          <p>This entire process minimizes CPU involvement and avoids costly data transfers between the CPU and GPU, enabling a smooth, real-time visualization of thousands of agents.</p>
+
+          <h4>Complete Boids Visualization Code</h4>
+          <p>Here is the complete code for the <code>BoidsVisualization</code> class, which handles all aspects of rendering the boids flock using Three.js and TSL shaders.</p>
+          <pre class="code-block"><code class="language-typescript">import * as THREE from 'three/webgpu';
+import { 
+  Fn, 
+  normalize, 
+  length, 
+  mix,
+  vec3,
+  vec4,
+  instanceIndex,
+  positionLocal,
+  cameraProjectionMatrix,
+  cameraViewMatrix,
+  mat3,
+  cross
+} from 'three/tsl';
+import { BoidsSimulation } from './boids';
+
+export interface BoidsVisualizationConfig {
+  particleSize: number;
+  colorA: THREE.Color;
+  colorB: THREE.Color;
+  useTriangles: boolean; // true for triangles, false for quads
+}
+
+export class BoidsVisualization {
+  private scene: THREE.Scene;
+  private camera!: THREE.PerspectiveCamera;
+  private mesh!: THREE.InstancedMesh;
+  private material!: THREE.NodeMaterial;
+  private config: BoidsVisualizationConfig;
+  private storage: any; // Use any type to avoid import issues
+  private count: number;
+
+  constructor(
+    simulation: BoidsSimulation,
+    config: Partial&lt;BoidsVisualizationConfig&gt; = {}
+  ) {
+    this.config = {
+      particleSize: 1.0,
+      colorA: new THREE.Color(0x00ff00),
+      colorB: new THREE.Color(0xff0000),
+      useTriangles: true,
+      ...config
+    };
+
+    this.storage = simulation.getStorage();
+    this.count = simulation.getConfig().count;
+
+    this.scene = new THREE.Scene();
+    this.setupCamera();
+    this.setupGeometry();
+    this.setupMaterial();
+    this.setupMesh();
+  }
+
+  private setupCamera(): void {
+    this.camera = new THREE.PerspectiveCamera(
+      50, 
+      window.innerWidth / window.innerHeight, 
+      1, 
+      10000
+    );
+    this.camera.position.set(0, 0, 1600);
+  }
+
+  private setupGeometry(): THREE.BufferGeometry {
+    if (this.config.useTriangles) {
+      // Simple triangle pointing upward (in local space)
+      const geometry = new THREE.BufferGeometry();
+      const vertices = new Float32Array([
+        0.0,  0.5, 0.0,  // top vertex
+       -0.1, -0.5, 0.0,  // bottom left
+        0.1, -0.5, 0.0   // bottom right
+      ]);
+      geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+      return geometry;
+    } else {
+      // Simple quad as fallback
+      return new THREE.PlaneGeometry(0.6, 0.6);
+    }
+  }
+
+  private setupMaterial(): void {
+    this.material = new THREE.NodeMaterial();
+    
+    // Create vertex shader that positions and orients each boid
+    const boidVertexShader = Fn(() => {
+      // Get the current instance index (which boid we're rendering)
+      const boidIndex = instanceIndex;
+      
+      // Get position and velocity from compute storage
+      const boidPosition = this.storage.positionStorage.element(boidIndex);
+      const boidVelocity = this.storage.velocityStorage.element(boidIndex);
+      
+      // Transform local vertex position
+      const localPos = positionLocal.toVar();
+      localPos.mulAssign(this.config.particleSize);
+      
+      // Create a rotation matrix to align the boid with its velocity
+      const velocity = normalize(boidVelocity.add(vec3(0.001, 0.001, 0.001))); // Add epsilon to avoid zero velocity
+
+      const forward = velocity.toVar('forward');
+      const up = vec3(0.0, 1.0, 0.0).toVar('up');
+      const right = normalize(cross(up, forward)).toVar('right');
+      const newUp = normalize(cross(forward, right)).toVar('newUp');
+      
+      const rotationMatrix = mat3(
+        right.x, forward.x, newUp.x,
+        right.y, forward.y, newUp.y,
+        right.z, forward.z, newUp.z
+      ).toVar();
+      
+      const rotatedPos = rotationMatrix.mul(localPos);
+      
+      // Translate to boid position
+      const worldPos = rotatedPos.add(boidPosition);
+      
+      // Transform to clip space
+      return cameraProjectionMatrix.mul(cameraViewMatrix).mul(vec4(worldPos, 1.0));
+    });
+
+    // Create fragment shader for coloring based on speed
+    const boidFragmentShader = Fn(() => {
+      const boidIndex = instanceIndex;
+      const velocity = this.storage.velocityStorage.element(boidIndex);
+      const speed = length(velocity);
+      
+      // Normalize speed for color mixing (assuming max speed around 10)
+      const normalizedSpeed = speed.div(10.0).saturate();
+      
+      // Mix between two colors based on speed
+      const color = mix(
+        vec3(this.config.colorA.r, this.config.colorA.g, this.config.colorA.b),
+        vec3(this.config.colorB.r, this.config.colorB.g, this.config.colorB.b),
+        normalizedSpeed
+      );
+      
+      return vec4(color, 1.0);
+    });
+
+    // Assign shaders to material
+    this.material.vertexNode = boidVertexShader();
+    this.material.colorNode = boidFragmentShader();
+    this.material.side = THREE.DoubleSide;
+    this.material.transparent = true;
+  }
+
+  private setupMesh(): void {
+    const geometry = this.setupGeometry();
+    this.mesh = new THREE.InstancedMesh(geometry, this.material, this.count);
+    this.mesh.frustumCulled = false; // Disable frustum culling for performance
+    this.scene.add(this.mesh);
+  }
+
+  public render(renderer: THREE.WebGPURenderer): void {
+    renderer.render(this.scene, this.camera);
+  }
+
+  public getScene(): THREE.Scene {
+    return this.scene;
+  }
+
+  public getCamera(): THREE.PerspectiveCamera {
+    return this.camera;
+  }
+
+  public updateConfig(config: Partial&lt;BoidsVisualizationConfig&gt;): void {
+    Object.assign(this.config, config);
+    
+    // Recreate material if colors changed
+    if (config.colorA || config.colorB) {
+      this.setupMaterial();
+      this.mesh.material = this.material;
+    }
+    
+    // Recreate geometry if triangle/quad setting changed
+    if (config.useTriangles !== undefined) {
+      const newGeometry = this.setupGeometry();
+      this.mesh.geometry.dispose();
+      this.mesh.geometry = newGeometry;
+    }
+  }
+
+  public onWindowResize(width: number, height: number): void {
+    this.camera.aspect = width / height;
+    this.camera.updateProjectionMatrix();
+  }
+
+  public dispose(): void {
+    this.mesh.geometry.dispose();
+    this.material.dispose();
+    this.scene.clear();
+  }
+}
+        </section>
+
+
+    </main>
+
+    <footer class="footer">
+      <div class="container">
+        <p>&copy; 2025 CraftLife TSL Compute Shaders Guide. Built with Three.js and TSL.</p>
+        <div class="footer-links">
+          <a href="https://github.com/mrdoob/three.js/wiki/Three.js-Shading-Language" target="_blank">TSL Documentation</a>
+          <a href="https://threejs.org/examples/" target="_blank">Three.js Examples</a>
+          <a href="https://www.w3.org/TR/webgpu/#compute-shaders" target="_blank">WebGPU Spec</a>
+        </div>
+      </div>
+    </footer>
+
+  </body>
+</html>

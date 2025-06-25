@@ -24,18 +24,30 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Install dependencies
+      # Install root dependencies (Astro + everything else)
+      - name: Install root dependencies
         run: bun install
+
+      # Build the TSL guide and copy it into Astro's public directory
+      - name: Build TSL guide
+        run: |
+          bun install
+          bun run build
         working-directory: ./tsl
 
-      - name: Build project
+      - name: Copy TSL guide into public folder
+        run: |
+          rm -rf public/tsl-guide
+          cp -r tsl/dist public/tsl-guide
+
+      # Build the main Astro site (outputs to ./dist)
+      - name: Build Astro site
         run: bun run build
-        working-directory: ./tsl
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./tsl/dist
+          path: ./dist
 
   deploy:
     needs: build
