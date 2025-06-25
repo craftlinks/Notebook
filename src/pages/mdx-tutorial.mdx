@@ -1,0 +1,53 @@
+---
+layout: ../layouts/Layout.astro
+title: "Astro & MDX Tutorial"
+description: "Learn how to combine Markdown with embedded components using .mdx files in Astro."
+---
+
+# Astro + MDX Quick Tutorial
+
+MDX lets you write Markdown sprinkled with JSX/HTML and even interactive components.
+
+## 1. Basics
+
+You can write normal Markdown like **bold text**, lists, and code blocks:
+
+```md
+- This
+- is
+- markdown!
+```
+
+## 2. Adding JavaScript expressions
+
+Define a variable and inject it right into the page:
+
+```mdx
+export const name = "CraftLife";
+
+Hello, {name}! 👋
+```
+
+export const name = "CraftLife";
+
+Hello, {name}! 👋
+
+## 3. Importing and using components
+
+Any supported component (`.astro`, `.jsx`, `.svelte`, `.vue`, etc.) can be imported and used just like in JSX:
+
+```mdx
+import Example from '../example.astro';
+
+<Example />
+```
+
+*(Try creating your own component and importing it here!)*
+
+## 4. Frontmatter props
+
+The frontmatter at the top of this file passes `title` and `description` directly to the shared layout.
+
+---
+
+That's it — you now have a living MDX page inside your Astro site! Return to <a href={import.meta.env.BASE_URL}>CraftLife's Notebook</a>. 
