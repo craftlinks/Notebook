@@ -30,8 +30,7 @@ jobs:
                max_tokens:  64,
                messages: [
                  { role: "system",
-                   content: "You are an assistant that assigns GitHub issue labels. \
-                             Only return a JSON array of existing label names for this repository." },
+                   content: "You are an assistant that assigns GitHub issue labels. Only return a JSON array of existing label names for this repository." },
                  { role: "user",
                    content: "Issue title:\n\($title)\n\nIssue body:\n\($body)" }
                ]
