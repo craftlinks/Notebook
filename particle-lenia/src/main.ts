@@ -18,24 +18,32 @@ interface Params {
   mu_g: number;
   sigma_g: number;
   c_rep: number;
-  dt: number;
   kernel_k_type: KernelType;
   kernel_g_type: KernelType;
 }
 
-// Interaction parameters for species-to-species interactions
-interface InteractionParams {
-  mu_k: number;
-  sigma_k: number;
-  w_k: number;
-  c_rep: number;
-  mu_g: number;    // How this species responds to the other species
-  sigma_g: number; // Width of response to the other species
-  kernel_k_type: KernelType;
-  kernel_g_type: KernelType;
+// Shared parameter generation function
+function createRandomParams(customParams?: Partial<Params>): Params {
+  const kernelTypes = Object.values(KernelType);
+  const randomKernelK = kernelTypes[Math.floor(Math.random() * kernelTypes.length)];
+  const randomKernelG = kernelTypes[Math.floor(Math.random() * kernelTypes.length)];
+
+  const defaultParams = {
+    mu_k: 1.5 + Math.random() * 8.0,        // 1.5-9.5 range
+    sigma_k: 0.2 + Math.random() * 3.0,     // 0.2-3.2 range
+    w_k: 0.005 + Math.random() * 0.12,      // 0.005-0.125 range
+    mu_g: 0.1 + Math.random() * 0.8,        // 0.1-0.9 range
+    sigma_g: 0.025 + Math.random() * 0.35,  // 0.025-0.375 range
+    c_rep: 0.3 + Math.random() * 2.4,       // 0.3-2.7 range
+    kernel_k_type: randomKernelK,
+    kernel_g_type: randomKernelG
+  };
+
+  return {
+    ...defaultParams,
+    ...customParams
+  };
 }
-
-
 
 interface Fields {
   R_val: Float32Array;
@@ -77,23 +85,7 @@ class SpeciesFactory {
     const color = this.colorPalette[colorIndex];
     this.nextColorIndex++;
 
-    // Random kernel selection
-    const kernelTypes = Object.values(KernelType);
-    const randomKernelK = kernelTypes[Math.floor(Math.random() * kernelTypes.length)];
-    const randomKernelG = kernelTypes[Math.floor(Math.random() * kernelTypes.length)];
-
-    const params = {
-      mu_k: 2.0 + Math.random() * 8.0,        // 2-10 range
-      sigma_k: 0.5 + Math.random() * 3.0,     // 0.5-3.5 range
-      w_k: 0.01 + Math.random() * 0.12,       // 0.01-0.13 range
-      mu_g: 0.2 + Math.random() * 0.8,        // 0.2-1.0 range
-      sigma_g: 0.05 + Math.random() * 0.35,   // 0.05-0.4 range
-      c_rep: 0.6 + Math.random() * 2.4,       // 0.6-3.0 range
-      dt: 0.05,
-      kernel_k_type: randomKernelK,
-      kernel_g_type: randomKernelG,
-      ...customParams
-    };
+    const params = createRandomParams(customParams);
 
     return {
       id,
@@ -127,22 +119,27 @@ class ParticleSystem {
   private frameCount = 0;
   
   // Species-to-species interaction parameters
-  // Map<speciesA_id, Map<speciesB_id, InteractionParams>>
-  private interactionParams: Map<string, Map<string, InteractionParams>> = new Map();
+  // Map<speciesA_id, Map<speciesB_id, Params>>
+  private interactionParams: Map<string, Map<string, Params>> = new Map();
+
+  // Global simulation parameters
+  private dt: number = 0.025; // Global time step
 
   // Constants
   private readonly WORLD_WIDTH = 55.0;
   private readonly WORLD_HEIGHT = 41.25; // 55 * (1200/1600) to match canvas aspect ratio
   private readonly STEPS_PER_FRAME = 10;
 
-  constructor(initialSpeciesCount: number = 2) {
+  constructor(initialSpeciesCount: number = 1) {
     SpeciesFactory.resetCounters();
     this.initializeSpecies(initialSpeciesCount);
   }
 
   private initializeSpecies(count: number): void {
     for (let i = 0; i < count; i++) {
-      this.addSpecies(125);
+      // Use 200 particles for single species, 125 for multiple species
+      const particleCount = count === 1 ? 200 : 125;
+      this.addSpecies(particleCount);
     }
   }
 
@@ -416,12 +413,10 @@ class ParticleSystem {
     }
   }
 
-
-
   // Simulation step for a single species
   private stepSpecies(species: Species): number {
     const { R_val, U_val, R_grad, U_grad, U_val_interactions, U_grad_interactions } = species.fields;
-    const { mu_g, sigma_g, dt } = species.params;
+    const { mu_g, sigma_g } = species.params;
     const { points, pointCount } = species;
 
     let total_E = 0.0;
@@ -494,7 +489,7 @@ class ParticleSystem {
         vy += boundaryStrength * distance * distance;
       }
       
-      this.add_xy(points, i, vx, vy, dt);
+      this.add_xy(points, i, vx, vy, this.dt);
       
       // Failsafe: Hard clamp if particles somehow get beyond boundaries
       if (points[i * 2] > halfWorldX) {
@@ -599,40 +594,24 @@ class ParticleSystem {
     }
   }
 
-  // Create random interaction parameters
-  private createRandomInteractionParams(): InteractionParams {
-    const kernelTypes = Object.values(KernelType);
-    const randomKernelK = kernelTypes[Math.floor(Math.random() * kernelTypes.length)];
-    const randomKernelG = kernelTypes[Math.floor(Math.random() * kernelTypes.length)];
-    
-    return {
-      mu_k: 2.0 + Math.random() * 8.0,        // 2-10 range
-      sigma_k: 0.5 + Math.random() * 3.0,     // 0.5-3.5 range
-      w_k: 0.01 + Math.random() * 0.12,       // 0.01-0.13 range
-      c_rep: 0.6 + Math.random() * 2.4,       // 0.6-3.0 range
-      mu_g: 0.2 + Math.random() * 0.8,        // 0.2-1.0 range
-      sigma_g: 0.05 + Math.random() * 0.35,   // 0.05-0.4 range
-      kernel_k_type: randomKernelK,
-      kernel_g_type: randomKernelG
-    };
-  }
+
 
   // Update interaction parameters when a new species is added
   private updateInteractionParams(newSpeciesId: string): void {
     const allSpeciesIds = Array.from(this.species.keys());
     
     // Create interaction parameters for the new species
-    const newSpeciesInteractions = new Map<string, InteractionParams>();
+    const newSpeciesInteractions = new Map<string, Params>();
     
     for (const existingId of allSpeciesIds) {
       if (existingId !== newSpeciesId) {
         // Create unique interaction parameters for new species -> existing species
-        newSpeciesInteractions.set(existingId, this.createRandomInteractionParams());
+        newSpeciesInteractions.set(existingId, createRandomParams());
         
         // Create unique interaction parameters for existing species -> new species
         const existingInteractions = this.interactionParams.get(existingId);
         if (existingInteractions) {
-          existingInteractions.set(newSpeciesId, this.createRandomInteractionParams());
+          existingInteractions.set(newSpeciesId, createRandomParams());
         }
       }
     }
@@ -650,13 +629,10 @@ class ParticleSystem {
 
   // Add a new species to the simulation
   public addSpecies(pointCount: number = 150, customParams?: Partial<Params>): string {
-    // Get current dt to ensure new species matches existing ones
-    const currentDt = this.species.size > 0 ? this.getDt() : 0.05;
-    
     const species = SpeciesFactory.createSpecies(pointCount, customParams);
-    // Set dt to match current system dt
-    species.params.dt = currentDt;
     
+    // Add the new species to the simulation's species Map, using the species ID as the key
+    // This allows us to track and manage all species in the simulation
     this.species.set(species.id, species);
     this.initSpeciesPoints(species);
     this.updateInteractionParams(species.id);
@@ -678,9 +654,6 @@ class ParticleSystem {
   // Reset simulation
   public reset(speciesCount?: number): void {
     this.frameCount = 0;
-    
-    // Get current dt to preserve it
-    const currentDt = this.species.size > 0 ? this.getDt() : 0.05;
     
     if (speciesCount !== undefined) {
       // Reset with new species count
@@ -706,8 +679,6 @@ class ParticleSystem {
       }
     }
     
-    // Restore the current dt value to all species
-    this.setDt(currentDt);
     this.updateInfo();
   }
 
@@ -722,12 +693,12 @@ class ParticleSystem {
   }
 
   // Get interaction parameters between two species
-  public getInteractionParams(speciesAId: string, speciesBId: string): InteractionParams | undefined {
+  public getInteractionParams(speciesAId: string, speciesBId: string): Params | undefined {
     return this.interactionParams.get(speciesAId)?.get(speciesBId);
   }
 
   // Set interaction parameters between two species
-  public setInteractionParams(speciesAId: string, speciesBId: string, params: InteractionParams): boolean {
+  public setInteractionParams(speciesAId: string, speciesBId: string, params: Params): boolean {
     if (!this.species.has(speciesAId) || !this.species.has(speciesBId)) {
       return false;
     }
@@ -752,22 +723,14 @@ class ParticleSystem {
     });
   }
 
-  // Get all interaction parameters for debugging/inspection
-  public getAllInteractionParams(): Map<string, Map<string, InteractionParams>> {
-    return this.interactionParams;
-  }
-
-  // Update dt for all species
+  // Update global dt
   public setDt(newDt: number): void {
-    for (const species of this.species.values()) {
-      species.params.dt = newDt;
-    }
+    this.dt = newDt;
   }
 
-  // Get current dt (from first species, assuming all have same dt)
+  // Get current global dt
   public getDt(): number {
-    const firstSpecies = this.species.values().next().value;
-    return firstSpecies ? firstSpecies.params.dt : 0.05;
+    return this.dt;
   }
 
   // Export simulation state to JSON
@@ -836,7 +799,7 @@ class ParticleSystem {
       
       // Restore interaction parameters
       for (const interactionData of data.interactions) {
-        const interactions = new Map<string, InteractionParams>();
+        const interactions = new Map<string, Params>();
         for (const interaction of interactionData.interactions) {
           interactions.set(interaction.speciesBId, interaction.params);
         }
@@ -963,6 +926,20 @@ function initialize(): void {
         const success = await particleSystem.loadSimulationFile(files[0]);
         if (success) {
           console.log('Simulation loaded successfully');
+          
+          // Update species slider and display to match loaded simulation
+          const currentSpeciesCount = particleSystem.getSpeciesCount();
+          if (speciesSlider && speciesCountDisplay) {
+            speciesSlider.value = currentSpeciesCount.toString();
+            speciesCountDisplay.textContent = currentSpeciesCount.toString();
+          }
+          
+          // Update dt slider and display to match loaded simulation
+          const currentDt = particleSystem.getDt();
+          if (dtSlider && dtValueDisplay) {
+            dtSlider.value = currentDt.toString();
+            dtValueDisplay.textContent = currentDt.toFixed(3);
+          }
         } else {
           console.error('Failed to load simulation');
           alert('Failed to load simulation file. Please check the file format.');
