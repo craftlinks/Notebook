@@ -12,6 +12,32 @@
       <canvas id="canvas" width="1600" height="1200"></canvas>
       <div id="controls">
         <button id="reset">Reset</button>
+        <div class="slider-container">
+          <label for="species-slider">Species Count: </label>
+          <div class="slider-wrapper">
+            <input type="range" id="species-slider" min="2" max="5" value="2" step="1" list="species-marks">
+            <datalist id="species-marks">
+              <option value="2" label="2"></option>
+              <option value="3" label="3"></option>
+              <option value="4" label="4"></option>
+              <option value="5" label="5"></option>
+            </datalist>
+          </div>
+          <span id="species-count">2</span>
+        </div>
+        <div class="slider-container">
+          <label for="dt-slider">Time Step (dt): </label>
+          <div class="slider-wrapper">
+            <input type="range" id="dt-slider" min="0.01" max="0.15" value="0.05" step="0.01" list="dt-marks">
+            <datalist id="dt-marks">
+              <option value="0.01" label="0.01"></option>
+              <option value="0.05" label="0.05"></option>
+              <option value="0.10" label="0.10"></option>
+              <option value="0.15" label="0.15"></option>
+            </datalist>
+          </div>
+          <span id="dt-value">0.05</span>
+        </div>
         <div id="info"></div>
       </div>
     </div>
