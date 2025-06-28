@@ -10,14 +10,27 @@ import {
   Continue, Break
 } from 'three/tsl';
 
-// Kernel type enums (same as original)
+// Kernel type enums (matching CPU implementation)
 enum KernelType {
-  GAUSSIAN = 0,
-  EXPONENTIAL = 1, 
-  POLYNOMIAL = 2,
-  MEXICAN_HAT = 3,
-  SIGMOID = 4,
-  SINC = 5
+  GAUSSIAN = 'gaussian',
+  EXPONENTIAL = 'exponential', 
+  POLYNOMIAL = 'polynomial',
+  MEXICAN_HAT = 'mexican_hat',
+  SIGMOID = 'sigmoid',
+  SINC = 'sinc'
+}
+
+// Convert string enum to number for GPU
+function kernelTypeToNumber(kernelType: KernelType): number {
+  switch (kernelType) {
+    case KernelType.GAUSSIAN: return 0;
+    case KernelType.EXPONENTIAL: return 1;
+    case KernelType.POLYNOMIAL: return 2;
+    case KernelType.MEXICAN_HAT: return 3;
+    case KernelType.SIGMOID: return 4;
+    case KernelType.SINC: return 5;
+    default: return 0;
+  }
 }
 
 // Type definitions (same as original)
@@ -32,20 +45,43 @@ interface Params {
   kernel_g_type: KernelType;
 }
 
+// Shared parameter generation function (same as CPU version)
+function createRandomParams(customParams?: Partial<Params>): Params {
+  const kernelTypes = Object.values(KernelType);
+  const randomKernelK = kernelTypes[Math.floor(Math.random() * kernelTypes.length)];
+  const randomKernelG = kernelTypes[Math.floor(Math.random() * kernelTypes.length)];
+
+  const defaultParams = {
+    mu_k: 1.5 + Math.random() * 8.0,        // 1.5-9.5 range
+    sigma_k: 0.2 + Math.random() * 3.0,     // 0.2-3.2 range
+    w_k: 0.005 + Math.random() * 0.12,      // 0.005-0.125 range
+    mu_g: 0.1 + Math.random() * 0.8,        // 0.1-0.9 range
+    sigma_g: 0.025 + Math.random() * 0.35,  // 0.025-0.375 range
+    c_rep: 0.3 + Math.random() * 2.4,       // 0.3-2.7 range
+    kernel_k_type: randomKernelK,
+    kernel_g_type: randomKernelG
+  };
+
+  return {
+    ...defaultParams,
+    ...customParams
+  };
+}
+
 // GPU-compatible species data structure
 interface GPUSpecies {
   id: string;
   name: string;
   pointCount: number;
   // GPU buffers for positions and forces using TSL instancedArray
-  positionBuffer: any; // TSL instancedArray - particle positions [x,y,x,y,...]
-  velocityBuffer: any; // TSL instancedArray - particle velocities [vx,vy,vx,vy,...]
-  forceBuffer: any; // TSL instancedArray - accumulated forces [fx,fy,fx,fy,...]
+  positionBuffer: any; // TSL instancedArray - particle positions [x,y,z]
+  velocityBuffer: any; // TSL instancedArray - particle velocities [vx,vy]
+  forceBuffer: any; // TSL instancedArray - accumulated forces [fx,fy]
   // Field buffers for force calculations
   R_val: any; // TSL instancedArray - repulsion values per particle
   U_val: any; // TSL instancedArray - attraction values per particle  
-  R_grad: any; // TSL instancedArray - repulsion gradients [fx,fy,fx,fy,...]
-  U_grad: any; // TSL instancedArray - attraction gradients [fx,fy,fx,fy,...]
+  R_grad: any; // TSL instancedArray - repulsion gradients [fx,fy]
+  U_grad: any; // TSL instancedArray - attraction gradients [fx,fy]
   // Rendering
   mesh: THREE.InstancedMesh; // Visual representation (instanced quads as sprites)
   material: THREE.SpriteNodeMaterial; // Shader material
@@ -61,6 +97,43 @@ interface GPUSpecies {
     kernel_g_type: THREE.Uniform;
   };
   color: string;
+  renderStyle: {
+    strokeStyle: string;
+    fillStyle?: string;
+  };
+}
+
+// Species factory (same as CPU version)
+class SpeciesFactory {
+  private static colorPalette = [
+    '#00ff88', '#4488ff', '#ff4488', '#ff8844', '#8844ff',
+    '#44ff88', '#ff4400', '#8800ff', '#00ff44', '#4400ff',
+    '#ffaa00', '#00aaff', '#aa00ff', '#ff00aa', '#aaff00'
+  ];
+  
+  private static nextColorIndex = 0;
+  private static speciesCounter = 0;
+
+  static createSpeciesParams(pointCount: number = 200, customParams?: Partial<Params>): { id: string; name: string; color: string; params: Params } {
+    const id = `species_${this.speciesCounter++}`;
+    const colorIndex = this.nextColorIndex % this.colorPalette.length;
+    const color = this.colorPalette[colorIndex];
+    this.nextColorIndex++;
+
+    const params = createRandomParams(customParams);
+
+    return {
+      id,
+      name: `Species ${this.speciesCounter}`,
+      color,
+      params
+    };
+  }
+
+  static resetCounters(): void {
+    this.nextColorIndex = 0;
+    this.speciesCounter = 0;
+  }
 }
 
 // =============================================================================
@@ -205,17 +278,17 @@ const sinc_kernel = /*@__PURE__*/ Fn(([x, mu, sigma, w]) => {
 const kernel_f = /*@__PURE__*/ Fn(([x, mu, sigma, w, kernelType]) => {
   const result = vec2(0.0, 0.0).toVar();
   
-  If(kernelType.equal(KernelType.GAUSSIAN), () => {
+  If(kernelType.equal(0), () => {
     result.assign(gaussian_kernel(x, mu, sigma, w));
-  }).ElseIf(kernelType.equal(KernelType.EXPONENTIAL), () => {
+  }).ElseIf(kernelType.equal(1), () => {
     result.assign(exponential_kernel(x, mu, sigma, w));
-  }).ElseIf(kernelType.equal(KernelType.POLYNOMIAL), () => {
+  }).ElseIf(kernelType.equal(2), () => {
     result.assign(polynomial_kernel(x, mu, sigma, w));
-  }).ElseIf(kernelType.equal(KernelType.MEXICAN_HAT), () => {
+  }).ElseIf(kernelType.equal(3), () => {
     result.assign(mexican_hat_kernel(x, mu, sigma, w));
-  }).ElseIf(kernelType.equal(KernelType.SIGMOID), () => {
+  }).ElseIf(kernelType.equal(4), () => {
     result.assign(sigmoid_kernel(x, mu, sigma, w));
-  }).ElseIf(kernelType.equal(KernelType.SINC), () => {
+  }).ElseIf(kernelType.equal(5), () => {
     result.assign(sinc_kernel(x, mu, sigma, w));
   }).Else(() => {
     // Default to Gaussian
@@ -237,6 +310,8 @@ class GPUParticleLenia {
   private worldHeight: number;
   private species: Map<string, GPUSpecies> = new Map();
   private animationId: number | null = null;
+  private dt: number = 0.033; // Default time step (30 FPS)
+  private deltaTimeUniform: THREE.Uniform = uniform(0.033);
   
   constructor() {
     // Initialize scene and camera first (synchronous)
@@ -262,7 +337,7 @@ class GPUParticleLenia {
   private async initializeWebGPU() {
     // Initialize WebGPU renderer
     this.renderer = new THREE.WebGPURenderer({ antialias: false });
-    this.renderer.setSize(800, 600); // Smaller initial size for testing
+    this.renderer.setSize(1600, 1200);
     this.renderer.setPixelRatio(1);
     this.renderer.setClearColor(0x000000, 1); // Black background
     
@@ -272,7 +347,7 @@ class GPUParticleLenia {
     console.log('GPU Particle-Lenia system initialized');
     // @ts-ignore
     console.log('WebGPU support:', this.renderer.backend.isWebGPUBackend);
-    console.log(`Viewport: ${worldWidth.toFixed(1)} x ${worldHeight.toFixed(1)} world units`);
+    console.log(`Viewport: ${this.worldWidth.toFixed(1)} x ${this.worldHeight.toFixed(1)} world units`);
   }
   
   /**
@@ -745,7 +820,7 @@ class GPUParticleLenia {
     const { pointCount, positionBuffer, velocityBuffer, forceBuffer } = species;
     
     // Simulation parameters - increased for more visible movement
-    const deltaTime = uniform(1.0 / 30.0); // Larger time step for faster movement
+    const deltaTime = this.deltaTimeUniform;
     const damping = uniform(0.95); // Less damping for more dynamic movement
     const maxSpeed = uniform(15.0); // Higher maximum velocity
     
@@ -978,6 +1053,148 @@ class GPUParticleLenia {
       this.animationId = null;
       console.log('GPU particle animation stopped');
     }
+  }
+  
+  /**
+   * Export simulation state to JSON string
+   */
+  exportSimulation(): string {
+    const simulationData = {
+      timestamp: new Date().toISOString(),
+      worldDimensions: {
+        width: this.worldWidth,
+        height: this.worldHeight
+      },
+      species: Array.from(this.species.entries()).map(([id, species]) => ({
+        id,
+        name: species.name,
+        pointCount: species.pointCount,
+        params: {
+          mu_k: species.params.mu_k.value,
+          sigma_k: species.params.sigma_k.value,
+          w_k: species.params.w_k.value,
+          mu_g: species.params.mu_g.value,
+          sigma_g: species.params.sigma_g.value,
+          c_rep: species.params.c_rep.value,
+          kernel_k_type: species.params.kernel_k_type.value,
+          kernel_g_type: species.params.kernel_g_type.value
+        },
+        color: species.color
+      }))
+    };
+    
+    return JSON.stringify(simulationData, null, 2);
+  }
+
+  /**
+   * Import simulation state from JSON string
+   */
+  async importSimulation(jsonData: string): Promise<boolean> {
+    try {
+      const data = JSON.parse(jsonData);
+      
+      // Stop current animation
+      this.stopAnimation();
+      
+      // Clear current species
+      for (const species of this.species.values()) {
+        this.scene.remove(species.mesh);
+        species.mesh.geometry.dispose();
+        species.material.dispose();
+      }
+      this.species.clear();
+      
+      // Restore species
+      for (const speciesData of data.species) {
+        const params: Params = {
+          mu_k: speciesData.params.mu_k,
+          sigma_k: speciesData.params.sigma_k,
+          w_k: speciesData.params.w_k,
+          mu_g: speciesData.params.mu_g,
+          sigma_g: speciesData.params.sigma_g,
+          c_rep: speciesData.params.c_rep,
+          kernel_k_type: speciesData.params.kernel_k_type,
+          kernel_g_type: speciesData.params.kernel_g_type
+        };
+        
+        this.createSpecies(speciesData.pointCount, params);
+      }
+      
+      // Initialize positions for all species
+      for (const species of this.species.values()) {
+        const initCompute = this.createInitPositionsCompute(species);
+        await this.renderer!.computeAsync(initCompute);
+      }
+      
+      // Restart animation
+      this.startAnimation();
+      
+      return true;
+      
+    } catch (error) {
+      console.error('Failed to import GPU simulation:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Save simulation to file
+   */
+  saveSimulation(filename?: string): void {
+    const data = this.exportSimulation();
+    const blob = new Blob([data], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename || `gpu-particle-lenia-${Date.now()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  /**
+   * Load simulation from file
+   */
+  async loadSimulationFile(file: File): Promise<boolean> {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const result = e.target?.result;
+        if (typeof result === 'string') {
+          const success = await this.importSimulation(result);
+          resolve(success);
+        } else {
+          resolve(false);
+        }
+      };
+      reader.onerror = () => resolve(false);
+      reader.readAsText(file);
+    });
+  }
+
+  /**
+   * Get species count
+   */
+  getSpeciesCount(): number {
+    return this.species.size;
+  }
+  
+  /**
+   * Set time step (dt) for simulation
+   */
+  setDt(newDt: number): void {
+    // Store dt for use in compute shaders
+    this.dt = newDt;
+    this.deltaTimeUniform.value = newDt;
+  }
+
+  /**
+   * Get current time step (dt)
+   */
+  getDt(): number {
+    return this.dt;
   }
   
   /**
