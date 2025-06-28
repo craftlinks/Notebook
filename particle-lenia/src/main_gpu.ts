@@ -118,7 +118,7 @@ class SpeciesFactory {
   private static nextColorIndex = 0;
   private static speciesCounter = 0;
 
-  static createSpeciesParams(pointCount: number = 200, customParams?: Partial<Params>): { id: string; name: string; color: string; params: Params } {
+  static createSpeciesParams(customParams?: Partial<Params>): { id: string; name: string; color: string; params: Params } {
     const id = `species_${this.speciesCounter++}`;
     const colorIndex = this.nextColorIndex % this.colorPalette.length;
     const color = this.colorPalette[colorIndex];
