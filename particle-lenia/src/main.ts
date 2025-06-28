@@ -64,10 +64,10 @@ class SpeciesFactory {
     this.nextColorIndex++;
 
     const params = {
-      mu_k: 2.0 + (Math.random() - 0.5) * 14.0,
+      mu_k: 10.0 + (Math.random() - 0.5) * 14.0,
       sigma_k: 0.5 + (Math.random() - 0.5) * 6.0,
       w_k: 0.01 + (Math.random() - 0.5) * 0.16,
-      mu_g: 0.3 + (Math.random() - 0.5) * 1.4,
+      mu_g: 0.2 + (Math.random() - 0.5) * 1.4,
       sigma_g: 0.05 + (Math.random() - 0.5) * 0.4,
       c_rep: 0.5 + Math.random() * 2.0,
       dt: 0.05,
@@ -111,7 +111,8 @@ class ParticleSystem {
 
   // Constants
   private readonly WORLD_WIDTH = 55.0;
-  private readonly STEPS_PER_FRAME = 5;
+  private readonly WORLD_HEIGHT = 41.25; // 55 * (1200/1600) to match canvas aspect ratio
+  private readonly STEPS_PER_FRAME = 10;
 
   constructor(initialSpeciesCount: number = 2) {
     SpeciesFactory.resetCounters();
@@ -120,16 +121,18 @@ class ParticleSystem {
 
   private initializeSpecies(count: number): void {
     for (let i = 0; i < count; i++) {
-      this.addSpecies(100);
+      this.addSpecies(125);
     }
   }
 
   private initSpeciesPoints(species: Species): void {
     for (let i = 0; i < species.pointCount; ++i) {
-      // Slightly different initial positioning for different species
-      // const offset = species.id === 'green' ? 0 : 20;
-      species.points[i * 2] = (Math.random() - 0.5) * 7.0;
-      species.points[i * 2 + 1] = (Math.random() - 0.5) * 7.0;
+      // Spawn particles within safe bounds, accounting for rectangular world
+      const spawnRangeX = Math.min(5.0, this.WORLD_WIDTH * 0.9); // 60% of world width
+      const spawnRangeY = Math.min(5.0, this.WORLD_HEIGHT * 0.9); // 60% of world height
+      
+      species.points[i * 2] = (Math.random() - 0.5) * spawnRangeX;
+      species.points[i * 2 + 1] = (Math.random() - 0.5) * spawnRangeY;
     }
   }
 
@@ -342,9 +345,51 @@ class ParticleSystem {
       }
 
       // [vx, vy] = -∇E = G'(U)∇U - ∇R
-      const vx = total_vx - R_grad[i * 2];
-      const vy = total_vy - R_grad[i * 2 + 1];
+      let vx = total_vx - R_grad[i * 2];
+      let vy = total_vy - R_grad[i * 2 + 1];
+      
+      // Apply boundary forces to keep particles within visible world
+      const halfWorldX = this.WORLD_WIDTH / 2;
+      const halfWorldY = this.WORLD_HEIGHT / 2;
+      const boundaryStrength = 5.0; // Strength of boundary repulsion
+      const boundaryMargin = 2.0;   // Distance from edge where force starts
+      
+      const currentX = points[i * 2];
+      const currentY = points[i * 2 + 1];
+      
+      // Apply boundary forces for X direction
+      if (currentX > halfWorldX - boundaryMargin) {
+        const distance = currentX - (halfWorldX - boundaryMargin);
+        vx -= boundaryStrength * distance * distance;
+      } else if (currentX < -halfWorldX + boundaryMargin) {
+        const distance = (-halfWorldX + boundaryMargin) - currentX;
+        vx += boundaryStrength * distance * distance;
+      }
+      
+      // Apply boundary forces for Y direction
+      if (currentY > halfWorldY - boundaryMargin) {
+        const distance = currentY - (halfWorldY - boundaryMargin);
+        vy -= boundaryStrength * distance * distance;
+      } else if (currentY < -halfWorldY + boundaryMargin) {
+        const distance = (-halfWorldY + boundaryMargin) - currentY;
+        vy += boundaryStrength * distance * distance;
+      }
+      
       this.add_xy(points, i, vx, vy, dt);
+      
+      // Failsafe: Hard clamp if particles somehow get beyond boundaries
+      if (points[i * 2] > halfWorldX) {
+        points[i * 2] = halfWorldX;
+      } else if (points[i * 2] < -halfWorldX) {
+        points[i * 2] = -halfWorldX;
+      }
+      
+      if (points[i * 2 + 1] > halfWorldY) {
+        points[i * 2 + 1] = halfWorldY;
+      } else if (points[i * 2 + 1] < -halfWorldY) {
+        points[i * 2 + 1] = -halfWorldY;
+      }
+      
       total_E += R_val[i] - total_G;
     }
     return total_E / pointCount;

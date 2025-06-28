@@ -28,7 +28,7 @@ h1 {
 }
 
 #app {
-  max-width: 900px;
+  max-width: 1700px;
   margin: 0 auto;
   padding: 2rem;
   text-align: center;
@@ -54,6 +54,9 @@ h1 {
   color: #888;
   font-family: monospace;
   font-size: 0.9em;
+  width: 300px;
+  text-align: left;
+  flex-shrink: 0;
 }
 
 /* Make slider more controllable */
