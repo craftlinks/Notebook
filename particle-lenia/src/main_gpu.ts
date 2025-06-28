@@ -105,6 +105,13 @@ interface GPUSpecies {
   };
   // Cached compute pass (includes force accumulation + integration)
   forceCompute?: THREE.ComputeNode;
+  /**
+   * Cached compute nodes that apply inter-species forces coming *from* the map key
+   * into this species.  For each other species with id `X`, the stored compute
+   * node updates the velocity/position of the *current* species based on the
+   * particles of species `X`.
+   */
+  interSpeciesForces: Map<string, THREE.ComputeNode>;
 }
 
 // Species factory (same as CPU version)
@@ -443,7 +450,8 @@ class GPUParticleLenia {
       mesh,
       material,
       params: paramUniforms,
-      color: speciesColor
+      color: speciesColor,
+      interSpeciesForces: new Map<string, THREE.ComputeNode>()
     };
     
     // ---------------------------------------------------------------
@@ -454,6 +462,25 @@ class GPUParticleLenia {
     // its compute stages (velocity + position only).
     // ---------------------------------------------------------------
     species.forceCompute    = this.createForceCalculationCompute(species);
+    
+    // ---------------------------------------------------------------
+    // Build inter-species force passes with *existing* species so that
+    // cross-species interactions are taken into account every frame.
+    // One directional pass is stored on each species for forces it
+    // *receives* from the other species.
+    // ---------------------------------------------------------------
+
+    for (const [otherId, otherSpecies] of this.species.entries()) {
+      if (otherId === id) continue; // skip self
+
+      // Forces on *new* species due to *other* species
+      const fromOther = this.createInterSpeciesForceCompute(species, otherSpecies);
+      species.interSpeciesForces.set(otherId, fromOther);
+
+      // Forces on *other* species due to *new* species
+      const toOther = this.createInterSpeciesForceCompute(otherSpecies, species);
+      otherSpecies.interSpeciesForces.set(id, toOther);
+    }
     
     this.species.set(id, species);
     console.log(`Created GPU species ${id} with ${pointCount} particles`);
