@@ -1,5 +1,15 @@
 import './style.css'
 
+// Kernel type enums
+enum KernelType {
+  GAUSSIAN = 'gaussian',
+  EXPONENTIAL = 'exponential', 
+  POLYNOMIAL = 'polynomial',
+  MEXICAN_HAT = 'mexican_hat',
+  SIGMOID = 'sigmoid',
+  SINC = 'sinc'
+}
+
 // Type definitions
 interface Params {
   mu_k: number;
@@ -9,6 +19,8 @@ interface Params {
   sigma_g: number;
   c_rep: number;
   dt: number;
+  kernel_k_type: KernelType;
+  kernel_g_type: KernelType;
 }
 
 // Interaction parameters for species-to-species interactions
@@ -19,6 +31,8 @@ interface InteractionParams {
   c_rep: number;
   mu_g: number;    // How this species responds to the other species
   sigma_g: number; // Width of response to the other species
+  kernel_k_type: KernelType;
+  kernel_g_type: KernelType;
 }
 
 
@@ -63,14 +77,21 @@ class SpeciesFactory {
     const color = this.colorPalette[colorIndex];
     this.nextColorIndex++;
 
+    // Random kernel selection
+    const kernelTypes = Object.values(KernelType);
+    const randomKernelK = kernelTypes[Math.floor(Math.random() * kernelTypes.length)];
+    const randomKernelG = kernelTypes[Math.floor(Math.random() * kernelTypes.length)];
+
     const params = {
-      mu_k: 10.0 + (Math.random() - 0.5) * 14.0,
-      sigma_k: 0.5 + (Math.random() - 0.5) * 6.0,
-      w_k: 0.01 + (Math.random() - 0.5) * 0.16,
-      mu_g: 0.2 + (Math.random() - 0.5) * 1.4,
-      sigma_g: 0.05 + (Math.random() - 0.5) * 0.4,
-      c_rep: 0.5 + Math.random() * 2.0,
+      mu_k: 2.0 + Math.random() * 8.0,        // 2-10 range
+      sigma_k: 0.5 + Math.random() * 3.0,     // 0.5-3.5 range
+      w_k: 0.01 + Math.random() * 0.12,       // 0.01-0.13 range
+      mu_g: 0.2 + Math.random() * 0.8,        // 0.2-1.0 range
+      sigma_g: 0.05 + Math.random() * 0.35,   // 0.05-0.4 range
+      c_rep: 0.6 + Math.random() * 2.4,       // 0.6-3.0 range
       dt: 0.05,
+      kernel_k_type: randomKernelK,
+      kernel_g_type: randomKernelG,
       ...customParams
     };
 
@@ -155,11 +176,101 @@ class ParticleSystem {
     return [0.5 * c_rep * t * t, -c_rep * t];
   }
 
-  // Peak function (Gaussian-like) and its derivative
-  private peak_f(x: number, mu: number, sigma: number, w: number = 1.0): [number, number] {
+  // Kernel function factory - returns [value, derivative]
+  private kernel_f(x: number, mu: number, sigma: number, w: number, kernelType: KernelType): [number, number] {
+    switch (kernelType) {
+      case KernelType.GAUSSIAN:
+        return this.gaussian_kernel(x, mu, sigma, w);
+      
+      case KernelType.EXPONENTIAL:
+        return this.exponential_kernel(x, mu, sigma, w);
+      
+      case KernelType.POLYNOMIAL:
+        return this.polynomial_kernel(x, mu, sigma, w);
+      
+      case KernelType.MEXICAN_HAT:
+        return this.mexican_hat_kernel(x, mu, sigma, w);
+      
+      case KernelType.SIGMOID:
+        return this.sigmoid_kernel(x, mu, sigma, w);
+      
+      case KernelType.SINC:
+        return this.sinc_kernel(x, mu, sigma, w);
+      
+      default:
+        return this.gaussian_kernel(x, mu, sigma, w);
+    }
+  }
+
+  // Original Gaussian kernel
+  private gaussian_kernel(x: number, mu: number, sigma: number, w: number): [number, number] {
     const t = (x - mu) / sigma;
     const y = w / this.fast_exp(t * t);
     return [y, -2.0 * t * y / sigma];
+  }
+
+  // Exponential decay kernel - asymmetric, longer tail
+  private exponential_kernel(x: number, mu: number, sigma: number, w: number): [number, number] {
+    const t = Math.abs(x - mu) / sigma;
+    const exp_t = Math.exp(-t);
+    const y = w * exp_t * 0.6; // Moderate dampening
+    const sign = x >= mu ? 1 : -1;
+    const dy = -sign * y / sigma;
+    return [y, dy];
+  }
+
+  // Polynomial kernel - creates sharper peaks
+  private polynomial_kernel(x: number, mu: number, sigma: number, w: number): [number, number] {
+    const t = Math.abs(x - mu) / sigma;
+    if (t > 1.0) return [0, 0];
+    
+    const poly = (1 - t * t) * (1 - t * t); // (1-t²)²
+    const y = w * poly * 0.8; // Less dampening
+    const sign = x >= mu ? 1 : -1;
+    const dy = -3.2 * sign * t * (1 - t * t) * w / (sigma * sigma); // Stronger gradient
+    return [y, dy];
+  }
+
+  // Mexican hat (Ricker) wavelet - creates inhibition zones
+  private mexican_hat_kernel(x: number, mu: number, sigma: number, w: number): [number, number] {
+    const t = (x - mu) / sigma;
+    const t2 = t * t;
+    const exp_term = Math.exp(-t2 / 2);
+    const y = w * (1 - t2) * exp_term * 0.7; // Less dampening
+    const dy = -w * t * (3 - t2) * exp_term * 0.7 / sigma;
+    return [y, dy];
+  }
+
+  // Sigmoid kernel - creates step-like transitions
+  private sigmoid_kernel(x: number, mu: number, sigma: number, w: number): [number, number] {
+    const t = (x - mu) / (sigma * 1.5); // Sharper transitions
+    const exp_t = Math.exp(-t);
+    const sigmoid = 1 / (1 + exp_t);
+    const y = w * sigmoid * 0.6; // Moderate dampening
+    const dy = w * sigmoid * (1 - sigmoid) * 0.6 / (sigma * 1.5);
+    return [y, dy];
+  }
+
+  // Sinc kernel - creates oscillatory patterns
+  private sinc_kernel(x: number, mu: number, sigma: number, w: number): [number, number] {
+    const t = (x - mu) / sigma;
+    if (Math.abs(t) < 1e-6) {
+      return [w * 0.5, 0]; // Less dampening
+    }
+    
+    // Allow more oscillations for interesting patterns
+    if (Math.abs(t) > 4) return [0, 0];
+    
+    const pi_t = Math.PI * t;
+    const sinc_val = Math.sin(pi_t) / pi_t;
+    const y = w * sinc_val * 0.5; // Less dampening
+    const dy = w * Math.PI * (Math.cos(pi_t) * pi_t - Math.sin(pi_t)) * 0.5 / (pi_t * pi_t * sigma);
+    return [y, dy];
+  }
+
+  // Legacy function for backward compatibility
+  private peak_f(x: number, mu: number, sigma: number, w: number = 1.0): [number, number] {
+    return this.gaussian_kernel(x, mu, sigma, w);
   }
 
   // Compute all species interactions
@@ -244,7 +355,7 @@ class ParticleSystem {
 
         // Attraction - Species A uses its interaction parameters with B
         if (paramsAB && U_val_A_from_B && U_grad_A_from_B) {
-          const [K_A, dK_A] = this.peak_f(r, paramsAB.mu_k, paramsAB.sigma_k, paramsAB.w_k);
+          const [K_A, dK_A] = this.kernel_f(r, paramsAB.mu_k, paramsAB.sigma_k, paramsAB.w_k, paramsAB.kernel_k_type);
           // Store in species-specific interaction arrays
           this.add_xy(U_grad_A_from_B, i, rx, ry, dK_A);
           U_val_A_from_B[i] += K_A;
@@ -255,7 +366,7 @@ class ParticleSystem {
         
         // Attraction - Species B uses its interaction parameters with A
         if (paramsBA && U_val_B_from_A && U_grad_B_from_A) {
-          const [K_B, dK_B] = this.peak_f(r, paramsBA.mu_k, paramsBA.sigma_k, paramsBA.w_k);
+          const [K_B, dK_B] = this.kernel_f(r, paramsBA.mu_k, paramsBA.sigma_k, paramsBA.w_k, paramsBA.kernel_k_type);
           // Store in species-specific interaction arrays
           this.add_xy(U_grad_B_from_A, j, rx, ry, -dK_B);
           U_val_B_from_A[j] += K_B;
@@ -292,7 +403,7 @@ class ParticleSystem {
         }
 
         // ∇K = K'(r) ∇r (attraction within species) - store in self-interaction arrays
-        const [K, dK] = this.peak_f(r, mu_k, sigma_k, w_k);
+        const [K, dK] = this.kernel_f(r, mu_k, sigma_k, w_k, species.params.kernel_k_type);
         this.add_xy(U_grad_self, i, rx, ry, dK);
         this.add_xy(U_grad_self, j, rx, ry, -dK);
         U_val_self[i] += K; U_val_self[j] += K;
@@ -337,8 +448,16 @@ class ParticleSystem {
           }
         }
 
-        // Apply species-specific response function
-        const [G, dG] = this.peak_f(U_val_from_source[i], response_mu_g, response_sigma_g);
+        // Apply species-specific response function using appropriate kernel type
+        let kernelType = species.params.kernel_g_type;
+        if (sourceSpeciesId !== 'self') {
+          const interactionParams = this.interactionParams.get(species.id)?.get(sourceSpeciesId);
+          if (interactionParams) {
+            kernelType = interactionParams.kernel_g_type;
+          }
+        }
+        
+        const [G, dG] = this.kernel_f(U_val_from_source[i], response_mu_g, response_sigma_g, 1.0, kernelType);
         total_vx += dG * U_grad_from_source[i * 2];
         total_vy += dG * U_grad_from_source[i * 2 + 1];
         total_G += G;
@@ -459,26 +578,42 @@ class ParticleSystem {
         .reduce((sum, species) => sum + species.pointCount, 0);
       
       const speciesInfo = Array.from(this.species.values())
-        .map(species => `${species.name}: ${species.pointCount}`)
-        .join(', ');
+        .map(species => {
+          const kType = species.params.kernel_k_type.replace('_', ' ');
+          const gType = species.params.kernel_g_type.replace('_', ' ');
+          return `<div style="color: ${species.color}">
+            ${species.name}: ${species.pointCount} particles
+            <br>&nbsp;&nbsp;K: ${kType}, G: ${gType}
+          </div>`;
+        })
+        .join('');
       
       info.innerHTML = `
         <div>Frame: ${this.frameCount}</div>
         <div>Total Particles: ${totalParticles}</div>
-        <div>${speciesInfo}</div>
+        <div style="margin-top: 10px;">
+          <strong>Species Kernels:</strong>
+          ${speciesInfo}
+        </div>
       `;
     }
   }
 
   // Create random interaction parameters
   private createRandomInteractionParams(): InteractionParams {
+    const kernelTypes = Object.values(KernelType);
+    const randomKernelK = kernelTypes[Math.floor(Math.random() * kernelTypes.length)];
+    const randomKernelG = kernelTypes[Math.floor(Math.random() * kernelTypes.length)];
+    
     return {
-      mu_k: 2.0 + (Math.random() - 0.5) * 14.0,
-      sigma_k: 0.5 + (Math.random() - 0.5) * 6.0,
-      w_k: 0.01 + (Math.random() - 0.5) * 0.16,
-      c_rep: 0.5 + Math.random() * 2.0,
-      mu_g: 0.3 + (Math.random() - 0.5) * 1.4,
-      sigma_g: 0.05 + (Math.random() - 0.5) * 0.4
+      mu_k: 2.0 + Math.random() * 8.0,        // 2-10 range
+      sigma_k: 0.5 + Math.random() * 3.0,     // 0.5-3.5 range
+      w_k: 0.01 + Math.random() * 0.12,       // 0.01-0.13 range
+      c_rep: 0.6 + Math.random() * 2.4,       // 0.6-3.0 range
+      mu_g: 0.2 + Math.random() * 0.8,        // 0.2-1.0 range
+      sigma_g: 0.05 + Math.random() * 0.35,   // 0.05-0.4 range
+      kernel_k_type: randomKernelK,
+      kernel_g_type: randomKernelG
     };
   }
 
