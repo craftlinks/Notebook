@@ -101,9 +101,8 @@ interface GPUSpecies {
     strokeStyle: string;
     fillStyle?: string;
   };
-  // Cached compute passes to avoid rebuilding every frame
+  // Cached compute pass (includes force accumulation + integration)
   forceCompute?: THREE.ComputeNode;
-  positionCompute?: THREE.ComputeNode;
 }
 
 // Species factory (same as CPU version)
@@ -435,7 +434,6 @@ class GPUParticleLenia {
     // its compute stages (velocity + position only).
     // ---------------------------------------------------------------
     species.forceCompute    = this.createForceCalculationCompute(species);
-    species.positionCompute = this.createPositionUpdateCompute(species);
     
     this.species.set(id, species);
     console.log(`Created GPU species ${id} with ${pointCount} particles`);
@@ -661,18 +659,18 @@ class GPUParticleLenia {
         If(r_squared.lessThan(1.0), () => {
           // Simplified repulsion without function call
           const t = max(float(1.0).sub(r), float(0.0));
-          const R_force = float(0.5).mul(float(params.c_rep.value)).mul(t).mul(t);
-          const dR_force = float(params.c_rep.value).mul(t).negate();
+          const R_force = float(0.5).mul(params.c_rep).mul(t).mul(t);
+          const dR_force = params.c_rep.mul(t).negate();
           
           R_acc.addAssign(R_force);
           R_grad_acc.addAssign(dr_norm.mul(dR_force));
         });
         
         // Simple Gaussian attraction calculation without function dispatcher
-        const t = r.sub(float(params.mu_k.value)).div(float(params.sigma_k.value));
+        const t = r.sub(params.mu_k).div(params.sigma_k);
         const exp_t = fast_exp(t.mul(t));
-        const K_force = float(params.w_k.value).div(exp_t);
-        const dK_force = float(-2.0).mul(t).mul(K_force).div(float(params.sigma_k.value));
+        const K_force = params.w_k.div(exp_t);
+        const dK_force = float(-2.0).mul(t).mul(K_force).div(params.sigma_k);
         
         U_acc.addAssign(K_force);
         U_grad_acc.addAssign(dr_norm.mul(dK_force));
@@ -737,18 +735,18 @@ class GPUParticleLenia {
         If(r_squared.lessThan(1.0), () => {
           // Simplified repulsion without function call
           const t = max(float(1.0).sub(r), float(0.0));
-          const R_force = float(0.5).mul(float(paramsA.c_rep.value)).mul(t).mul(t);
-          const dR_force = float(paramsA.c_rep.value).mul(t).negate();
+          const R_force = float(0.5).mul(paramsA.c_rep).mul(t).mul(t);
+          const dR_force = paramsA.c_rep.mul(t).negate();
           
           R_acc_A.addAssign(R_force);
           R_grad_acc_A.addAssign(dr_norm.mul(dR_force));
         });
         
         // Simple Gaussian attraction A->B
-        const t = r.sub(float(paramsA.mu_k.value)).div(float(paramsA.sigma_k.value));
+        const t = r.sub(paramsA.mu_k).div(paramsA.sigma_k);
         const exp_t = fast_exp(t.mul(t));
-        const K_force = float(paramsA.w_k.value).div(exp_t);
-        const dK_force = float(-2.0).mul(t).mul(K_force).div(float(paramsA.sigma_k.value));
+        const K_force = paramsA.w_k.div(exp_t);
+        const dK_force = float(-2.0).mul(t).mul(K_force).div(paramsA.sigma_k);
         
         U_acc_A.addAssign(K_force);
         U_grad_acc_A.addAssign(dr_norm.mul(dK_force));
@@ -827,76 +825,15 @@ class GPUParticleLenia {
   }
   
   /**
-   * Create position update compute shader - integrates velocity to position
-   */
-  createPositionUpdateCompute(species: GPUSpecies) {
-    const { pointCount, positionBuffer, velocityBuffer, forceBuffer } = species;
-    
-    // Simulation parameters - increased for more visible movement
-    const deltaTime = this.deltaTimeUniform;
-    const damping = uniform(0.95); // Less damping for more dynamic movement
-    const maxSpeed = uniform(15.0); // Higher maximum velocity
-    
-    return Fn(() => {
-      const i = instanceIndex;
-      
-      // Skip if beyond particle count
-      If(i.greaterThanEqual(uint(pointCount)), () => {
-        return;
-      });
-      
-      // Get current state
-      const position = positionBuffer.element(i).toVar();
-      const velocity = velocityBuffer.element(i).toVar();
-      const force = forceBuffer.element(i).toVar();
-      
-      // Apply forces to velocity (F = ma, assuming m = 1)
-      velocity.addAssign(force.mul(deltaTime));
-      
-      // Apply damping
-      velocity.mulAssign(damping);
-      
-      // Limit maximum speed
-      const speed = length(velocity);
-      If(speed.greaterThan(maxSpeed), () => {
-        velocity.assign(velocity.normalize().mul(maxSpeed));
-      });
-      
-      // Update position
-      position.addAssign(vec3(velocity.mul(deltaTime), 0.0));
-      
-      // Apply boundary conditions (wrap around)
-      const halfWidth = float(this.worldWidth * 0.5);
-      const halfHeight = float(this.worldHeight * 0.5);
-      
-      // Wrap X coordinate
-      If(position.x.greaterThan(halfWidth), () => {
-        position.x.assign(position.x.sub(this.worldWidth));
-      });
-      If(position.x.lessThan(halfWidth.negate()), () => {
-        position.x.assign(position.x.add(this.worldWidth));
-      });
-      
-      // Wrap Y coordinate  
-      If(position.y.greaterThan(halfHeight), () => {
-        position.y.assign(position.y.sub(this.worldHeight));
-      });
-      If(position.y.lessThan(halfHeight.negate()), () => {
-        position.y.assign(position.y.add(this.worldHeight));
-      });
-      
-      // Write back updated values
-      positionBuffer.element(i).assign(position);
-      velocityBuffer.element(i).assign(velocity);
-      
-    })().compute(pointCount);
-  }
-  
-  /**
    * Create force calculation compute shader - calculates particle-lenia interactions
    */
   createForceCalculationCompute(species: GPUSpecies) {
-    const { pointCount, positionBuffer, forceBuffer, R_val, U_val, R_grad, U_grad, params } = species;
+    const { pointCount, positionBuffer, velocityBuffer, forceBuffer, R_val, U_val, R_grad, U_grad, params } = species;
+    
+    // Shared uniforms
+    const deltaTime = this.deltaTimeUniform;
+    const damping   = uniform(0.95);
+    const maxSpeed  = uniform(15.0);
     
     return Fn(() => {
       const i = instanceIndex;
@@ -908,6 +845,7 @@ class GPUParticleLenia {
       
       // Get particle i position
       const pos_i = positionBuffer.element(i).toVar();
+      const velocity = velocityBuffer.element(i).toVar();
       
       // Initialize accumulators for this particle
       const R_acc = float(0).toVar();
@@ -943,18 +881,18 @@ class GPUParticleLenia {
         If(r.lessThan(1.0), () => {
           // Simplified repulsion without function call
           const t = max(float(1.0).sub(r), float(0.0));
-          const R_force = float(0.5).mul(float(params.c_rep.value)).mul(t).mul(t);
-          const dR_force = float(params.c_rep.value).mul(t).negate();
+          const R_force = float(0.5).mul(params.c_rep).mul(t).mul(t);
+          const dR_force = params.c_rep.mul(t).negate();
           
           R_acc.addAssign(R_force);
           R_grad_acc.addAssign(dr_norm.mul(dR_force));
         });
         
         // Simple Gaussian attraction calculation
-        const t = r.sub(float(params.mu_k.value)).div(float(params.sigma_k.value));
+        const t = r.sub(params.mu_k).div(params.sigma_k);
         const exp_t = fast_exp(t.mul(t));
-        const K_force = float(params.w_k.value).div(exp_t);
-        const dK_force = float(-2.0).mul(t).mul(K_force).div(float(params.sigma_k.value));
+        const K_force = params.w_k.div(exp_t);
+        const dK_force = float(-2.0).mul(t).mul(K_force).div(params.sigma_k);
         
         U_acc.addAssign(K_force);
         U_grad_acc.addAssign(dr_norm.mul(dK_force));
@@ -972,11 +910,52 @@ class GPUParticleLenia {
       
       // Apply growth function scaling with amplification
       const growth_magnitude = length(growth_force);
-      const growth_response = growth_magnitude.mul(float(params.mu_g.value)).mul(10.0).toVar(); // 10x amplification
+      const growth_response = growth_magnitude.mul(params.mu_g).mul(10.0).toVar(); // 10x amplification
       
       // Store final force with additional scaling for visibility
-      forceBuffer.element(i).assign(growth_force.mul(growth_response).mul(2.0));
+      const appliedForce = growth_force.mul(growth_response).mul(2.0).toVar();
+      forceBuffer.element(i).assign(appliedForce);
       
+      // ------------------------------------------------------------------
+      // Integrate velocity & position (was separate pass previously)
+      // ------------------------------------------------------------------
+      // Apply forces to velocity (F = ma, m=1)
+      velocity.addAssign(appliedForce.mul(deltaTime));
+
+      // Damping
+      velocity.mulAssign(damping);
+
+      // Limit maximum speed
+      const speed = length(velocity);
+      If(speed.greaterThan(maxSpeed), () => {
+        velocity.assign(velocity.normalize().mul(maxSpeed));
+      });
+
+      // Update position (z stays 0)
+      pos_i.addAssign(vec3(velocity.mul(deltaTime), 0.0));
+
+      // Boundary wrap-around
+      const halfWidth  = float(this.worldWidth * 0.5);
+      const halfHeight = float(this.worldHeight * 0.5);
+
+      If(pos_i.x.greaterThan(halfWidth), () => {
+        pos_i.x.assign(pos_i.x.sub(this.worldWidth));
+      });
+      If(pos_i.x.lessThan(halfWidth.negate()), () => {
+        pos_i.x.assign(pos_i.x.add(this.worldWidth));
+      });
+
+      If(pos_i.y.greaterThan(halfHeight), () => {
+        pos_i.y.assign(pos_i.y.sub(this.worldHeight));
+      });
+      If(pos_i.y.lessThan(halfHeight.negate()), () => {
+        pos_i.y.assign(pos_i.y.add(this.worldHeight));
+      });
+
+      // Write back updated state
+      positionBuffer.element(i).assign(pos_i);
+      velocityBuffer.element(i).assign(velocity);
+
     })().compute(pointCount);
   }
   
@@ -1037,12 +1016,9 @@ class GPUParticleLenia {
       
       // Run complete particle-lenia simulation step for all species
       for (const species of this.species.values()) {
-        if (species.forceCompute && species.positionCompute) {
-          // Step 1: accumulate forces (includes internal clearing)
+        if (species.forceCompute) {
+          // Single physics pass does everything (force + integration)
           this.renderer!.compute(species.forceCompute);
-
-          // Step 2: integrate velocity & position
-          this.renderer!.compute(species.positionCompute);
         }
       }
       
@@ -1306,6 +1282,26 @@ class GPUParticleLenia {
       console.log('- TSL positionNode connection problems'); 
       console.log('- WebGPU rendering pipeline issues');
     }
+  }
+
+  /**
+   * Update uniform parameters for a given species at runtime.
+   * Only the keys provided in newParams are changed; others remain.
+   */
+  updateSpeciesParams(speciesId: string, newParams: Partial<Params>): boolean {
+    const species = this.species.get(speciesId);
+    if (!species) return false;
+
+    if (newParams.mu_k !== undefined)      species.params.mu_k.value      = newParams.mu_k;
+    if (newParams.sigma_k !== undefined)   species.params.sigma_k.value   = newParams.sigma_k;
+    if (newParams.w_k !== undefined)       species.params.w_k.value       = newParams.w_k;
+    if (newParams.mu_g !== undefined)      species.params.mu_g.value      = newParams.mu_g;
+    if (newParams.sigma_g !== undefined)   species.params.sigma_g.value   = newParams.sigma_g;
+    if (newParams.c_rep !== undefined)     species.params.c_rep.value     = newParams.c_rep;
+    if (newParams.kernel_k_type !== undefined) species.params.kernel_k_type.value = newParams.kernel_k_type;
+    if (newParams.kernel_g_type !== undefined) species.params.kernel_g_type.value = newParams.kernel_g_type;
+
+    return true;
   }
 }
 
