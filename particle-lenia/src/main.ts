@@ -53,6 +53,9 @@ interface Fields {
   // Interaction-specific U fields for species-specific responses
   U_val_interactions: Map<string, Float32Array>;  // Map<otherSpeciesId, U_val>
   U_grad_interactions: Map<string, Float32Array>; // Map<otherSpeciesId, U_grad>
+  // Pooled arrays to avoid repeated allocations
+  U_val_pool: Map<string, Float32Array>;
+  U_grad_pool: Map<string, Float32Array>;
 }
 
 interface Species {
@@ -99,6 +102,8 @@ class SpeciesFactory {
         U_grad: new Float32Array(pointCount * 2),
         U_val_interactions: new Map<string, Float32Array>(),
         U_grad_interactions: new Map<string, Float32Array>(),
+        U_val_pool: new Map<string, Float32Array>(),
+        U_grad_pool: new Map<string, Float32Array>(),
       },
       params,
       color,
@@ -274,7 +279,7 @@ class ParticleSystem {
   private computeAllSpeciesFields(): void {
     // Reset all fields and initialize interaction-specific arrays
     for (const species of this.species.values()) {
-      const { R_val, U_val, R_grad, U_grad, U_val_interactions, U_grad_interactions } = species.fields;
+      const { R_val, U_val, R_grad, U_grad, U_val_interactions, U_grad_interactions, U_val_pool, U_grad_pool } = species.fields;
       const { c_rep, mu_k, sigma_k, w_k } = species.params;
       
       // Account for the own field of each particle
@@ -283,18 +288,53 @@ class ParticleSystem {
       R_grad.fill(0);
       U_grad.fill(0);
       
-      // Initialize interaction-specific arrays for each other species
+      // Clear interaction arrays but reuse existing ones
       U_val_interactions.clear();
       U_grad_interactions.clear();
       for (const otherSpecies of this.species.values()) {
         if (otherSpecies.id !== species.id) {
-          U_val_interactions.set(otherSpecies.id, new Float32Array(species.pointCount));
-          U_grad_interactions.set(otherSpecies.id, new Float32Array(species.pointCount * 2));
+          // Get or create pooled arrays
+          let U_val_array = U_val_pool.get(otherSpecies.id);
+          let U_grad_array = U_grad_pool.get(otherSpecies.id);
+          
+          if (!U_val_array || U_val_array.length !== species.pointCount) {
+            U_val_array = new Float32Array(species.pointCount);
+            U_val_pool.set(otherSpecies.id, U_val_array);
+          } else {
+            U_val_array.fill(0);
+          }
+          
+          if (!U_grad_array || U_grad_array.length !== species.pointCount * 2) {
+            U_grad_array = new Float32Array(species.pointCount * 2);
+            U_grad_pool.set(otherSpecies.id, U_grad_array);
+          } else {
+            U_grad_array.fill(0);
+          }
+          
+          U_val_interactions.set(otherSpecies.id, U_val_array);
+          U_grad_interactions.set(otherSpecies.id, U_grad_array);
         }
       }
       // Self-interaction array
-      U_val_interactions.set('self', new Float32Array(species.pointCount));
-      U_grad_interactions.set('self', new Float32Array(species.pointCount * 2));
+      let U_val_self = U_val_pool.get('self');
+      let U_grad_self = U_grad_pool.get('self');
+      
+      if (!U_val_self || U_val_self.length !== species.pointCount) {
+        U_val_self = new Float32Array(species.pointCount);
+        U_val_pool.set('self', U_val_self);
+      } else {
+        U_val_self.fill(0);
+      }
+      
+      if (!U_grad_self || U_grad_self.length !== species.pointCount * 2) {
+        U_grad_self = new Float32Array(species.pointCount * 2);
+        U_grad_pool.set('self', U_grad_self);
+      } else {
+        U_grad_self.fill(0);
+      }
+      
+      U_val_interactions.set('self', U_val_self);
+      U_grad_interactions.set('self', U_grad_self);
     }
 
     // Compute interactions between all species pairs
@@ -786,6 +826,8 @@ class ParticleSystem {
             U_grad: new Float32Array(speciesData.pointCount * 2),
             U_val_interactions: new Map<string, Float32Array>(),
             U_grad_interactions: new Map<string, Float32Array>(),
+            U_val_pool: new Map<string, Float32Array>(),
+            U_grad_pool: new Map<string, Float32Array>(),
           },
           params: speciesData.params,
           color: speciesData.color,
