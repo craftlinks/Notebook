@@ -102,7 +102,6 @@ interface GPUSpecies {
     fillStyle?: string;
   };
   // Cached compute passes to avoid rebuilding every frame
-  clearCompute?: THREE.ComputeNode;
   forceCompute?: THREE.ComputeNode;
   positionCompute?: THREE.ComputeNode;
 }
@@ -430,10 +429,11 @@ class GPUParticleLenia {
     
     // ---------------------------------------------------------------
     // Build compute passes once and cache them on the species object.
-    // These can be reused each frame, dramatically reducing the cost
-    // of transpiling WGSL / creating bind groups on every tick.
+    // We skip the dedicated "clear" pass because the force pass
+    // overwrites the buffers each frame, so a separate pass is
+    // unnecessary.  This mimics the way the bird demo organises
+    // its compute stages (velocity + position only).
     // ---------------------------------------------------------------
-    species.clearCompute    = this.createClearFieldsCompute(species);
     species.forceCompute    = this.createForceCalculationCompute(species);
     species.positionCompute = this.createPositionUpdateCompute(species);
     
@@ -1037,10 +1037,11 @@ class GPUParticleLenia {
       
       // Run complete particle-lenia simulation step for all species
       for (const species of this.species.values()) {
-        // Step 1–3: Re-use cached compute passes (built once per species)
-        if (species.clearCompute && species.forceCompute && species.positionCompute) {
-          this.renderer!.compute(species.clearCompute);
+        if (species.forceCompute && species.positionCompute) {
+          // Step 1: accumulate forces (includes internal clearing)
           this.renderer!.compute(species.forceCompute);
+
+          // Step 2: integrate velocity & position
           this.renderer!.compute(species.positionCompute);
         }
       }
