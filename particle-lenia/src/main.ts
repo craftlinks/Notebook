@@ -770,6 +770,127 @@ class ParticleSystem {
     return firstSpecies ? firstSpecies.params.dt : 0.05;
   }
 
+  // Export simulation state to JSON
+  public exportSimulation(): string {
+    const simulationData = {
+      timestamp: new Date().toISOString(),
+      worldDimensions: {
+        width: this.WORLD_WIDTH,
+        height: this.WORLD_HEIGHT
+      },
+      stepsPerFrame: this.STEPS_PER_FRAME,
+      species: Array.from(this.species.entries()).map(([id, species]) => ({
+        id,
+        name: species.name,
+        pointCount: species.pointCount,
+        params: species.params,
+        color: species.color,
+        renderStyle: species.renderStyle
+      })),
+      interactions: Array.from(this.interactionParams.entries()).map(([speciesAId, interactions]) => ({
+        speciesAId,
+        interactions: Array.from(interactions.entries()).map(([speciesBId, params]) => ({
+          speciesBId,
+          params
+        }))
+      }))
+    };
+    
+    return JSON.stringify(simulationData, null, 2);
+  }
+
+  // Import simulation state from JSON
+  public importSimulation(jsonData: string): boolean {
+    try {
+      const data = JSON.parse(jsonData);
+      
+      // Clear current simulation
+      this.species.clear();
+      this.interactionParams.clear();
+      SpeciesFactory.resetCounters();
+      
+      // Restore species
+      for (const speciesData of data.species) {
+        const species: Species = {
+          id: speciesData.id,
+          name: speciesData.name,
+          pointCount: speciesData.pointCount,
+          points: new Float32Array(speciesData.pointCount * 2), // Initialize empty points array
+          fields: {
+            R_val: new Float32Array(speciesData.pointCount),
+            U_val: new Float32Array(speciesData.pointCount),
+            R_grad: new Float32Array(speciesData.pointCount * 2),
+            U_grad: new Float32Array(speciesData.pointCount * 2),
+            U_val_interactions: new Map<string, Float32Array>(),
+            U_grad_interactions: new Map<string, Float32Array>(),
+          },
+          params: speciesData.params,
+          color: speciesData.color,
+          renderStyle: speciesData.renderStyle
+        };
+        
+        this.species.set(species.id, species);
+        // Initialize particle positions randomly
+        this.initSpeciesPoints(species);
+      }
+      
+      // Restore interaction parameters
+      for (const interactionData of data.interactions) {
+        const interactions = new Map<string, InteractionParams>();
+        for (const interaction of interactionData.interactions) {
+          interactions.set(interaction.speciesBId, interaction.params);
+        }
+        this.interactionParams.set(interactionData.speciesAId, interactions);
+      }
+      
+      // Update species counter to avoid ID conflicts
+      const maxSpeciesNum = Math.max(...Array.from(this.species.keys())
+        .map(id => parseInt(id.replace('species_', '')) || 0));
+      SpeciesFactory['speciesCounter'] = maxSpeciesNum + 1;
+      
+      this.frameCount = 0;
+      this.updateInfo();
+      return true;
+      
+    } catch (error) {
+      console.error('Failed to import simulation:', error);
+      return false;
+    }
+  }
+
+  // Save simulation to file
+  public saveSimulation(filename?: string): void {
+    const data = this.exportSimulation();
+    const blob = new Blob([data], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename || `particle-lenia-${Date.now()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  // Load simulation from file
+  public loadSimulationFile(file: File): Promise<boolean> {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const result = e.target?.result;
+        if (typeof result === 'string') {
+          const success = this.importSimulation(result);
+          resolve(success);
+        } else {
+          resolve(false);
+        }
+      };
+      reader.onerror = () => resolve(false);
+      reader.readAsText(file);
+    });
+  }
+
 }
 
 // Global particle system instance
@@ -821,6 +942,42 @@ function initialize(): void {
       dtValueDisplay.textContent = dtValue.toFixed(3);
       particleSystem.setDt(dtValue);
       console.log(`Set dt to ${dtValue}`);
+    });
+  }
+
+  // Save simulation button
+  const saveButton = document.querySelector<HTMLButtonElement>('#save-button');
+  if (saveButton) {
+    saveButton.addEventListener('click', () => {
+      particleSystem.saveSimulation();
+      console.log('Simulation saved');
+    });
+  }
+
+  // Load simulation file input
+  const loadInput = document.querySelector<HTMLInputElement>('#load-input');
+  if (loadInput) {
+    loadInput.addEventListener('change', async (event) => {
+      const files = (event.target as HTMLInputElement).files;
+      if (files && files.length > 0) {
+        const success = await particleSystem.loadSimulationFile(files[0]);
+        if (success) {
+          console.log('Simulation loaded successfully');
+        } else {
+          console.error('Failed to load simulation');
+          alert('Failed to load simulation file. Please check the file format.');
+        }
+        // Reset the input so the same file can be loaded again
+        loadInput.value = '';
+      }
+    });
+  }
+
+  // Load simulation button (triggers file input)
+  const loadButton = document.querySelector<HTMLButtonElement>('#load-button');
+  if (loadButton && loadInput) {
+    loadButton.addEventListener('click', () => {
+      loadInput.click();
     });
   }
 
