@@ -101,6 +101,10 @@ interface GPUSpecies {
     strokeStyle: string;
     fillStyle?: string;
   };
+  // Cached compute passes to avoid rebuilding every frame
+  clearCompute?: THREE.ComputeNode;
+  forceCompute?: THREE.ComputeNode;
+  positionCompute?: THREE.ComputeNode;
 }
 
 // Species factory (same as CPU version)
@@ -392,7 +396,7 @@ class GPUParticleLenia {
     material.positionNode = positionBuffer.toAttribute();
     
     // Give each sprite a constant scale so particles are visible
-    material.scaleNode = float(0.5);
+    material.scaleNode = float(0.2);
     
     // Create instanced mesh (one quad per particle)
     const mesh = new THREE.InstancedMesh(geometry, material, pointCount);
@@ -423,6 +427,15 @@ class GPUParticleLenia {
       },
       color: speciesColor
     };
+    
+    // ---------------------------------------------------------------
+    // Build compute passes once and cache them on the species object.
+    // These can be reused each frame, dramatically reducing the cost
+    // of transpiling WGSL / creating bind groups on every tick.
+    // ---------------------------------------------------------------
+    species.clearCompute    = this.createClearFieldsCompute(species);
+    species.forceCompute    = this.createForceCalculationCompute(species);
+    species.positionCompute = this.createPositionUpdateCompute(species);
     
     this.species.set(id, species);
     console.log(`Created GPU species ${id} with ${pointCount} particles`);
@@ -1024,17 +1037,12 @@ class GPUParticleLenia {
       
       // Run complete particle-lenia simulation step for all species
       for (const species of this.species.values()) {
-        // Step 1: Clear force accumulation fields
-        const clearCompute = this.createClearFieldsCompute(species);
-        this.renderer!.compute(clearCompute);
-        
-        // Step 2: Calculate particle interactions and forces
-        const forceCompute = this.createForceCalculationCompute(species);
-        this.renderer!.compute(forceCompute);
-        
-        // Step 3: Update positions and velocities based on forces
-        const positionCompute = this.createPositionUpdateCompute(species);
-        this.renderer!.compute(positionCompute);
+        // Step 1–3: Re-use cached compute passes (built once per species)
+        if (species.clearCompute && species.forceCompute && species.positionCompute) {
+          this.renderer!.compute(species.clearCompute);
+          this.renderer!.compute(species.forceCompute);
+          this.renderer!.compute(species.positionCompute);
+        }
       }
       
       // Render the scene
