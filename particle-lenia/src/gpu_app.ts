@@ -57,6 +57,21 @@ async function createSimulation(speciesCount: number) {
     gpuSim.createSpecies(pointCount, params)
   }
 
+  // ------------------------------------------------------------------
+  // Sync the simulation's dt with the slider's current value right away
+  // This avoids one extra frame at the default dt that may be too large
+  // for high-density particle runs.
+  // ------------------------------------------------------------------
+  const dtSlider = document.getElementById('dt-slider') as HTMLInputElement | null
+  if (dtSlider) {
+    const currentDt = parseFloat(dtSlider.value)
+    if (!Number.isNaN(currentDt)) {
+      gpuSim.setDt(currentDt)
+      const dtValueDisplay = document.getElementById('dt-value')
+      if (dtValueDisplay) dtValueDisplay.textContent = currentDt.toFixed(3)
+    }
+  }
+
   // initialise positions for each species
   for (const species of gpuSim['species'].values()) {
     const initCompute = gpuSim.createInitPositionsCompute(species as any)

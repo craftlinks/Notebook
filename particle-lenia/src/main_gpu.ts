@@ -330,7 +330,9 @@ class GPUParticleLenia {
       worldHeight / 2, -worldHeight / 2, // top, bottom  
       0.1, 1000                          // near, far
     );
-    this.camera.position.z = 100;
+    this.camera.position.z = 10;
+    this.camera.zoom = 2;   // 2× magnification
+    this.camera.updateProjectionMatrix();
     
     // Initialize WebGPU asynchronously
     this.initializeWebGPU();
