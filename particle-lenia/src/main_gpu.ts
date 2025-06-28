@@ -46,6 +46,9 @@ interface GPUSpecies {
   U_val: any; // TSL instancedArray - attraction values per particle  
   R_grad: any; // TSL instancedArray - repulsion gradients [fx,fy,fx,fy,...]
   U_grad: any; // TSL instancedArray - attraction gradients [fx,fy,fx,fy,...]
+  // Rendering
+  mesh: THREE.InstancedMesh; // Visual representation (instanced quads as sprites)
+  material: THREE.SpriteNodeMaterial; // Shader material
   // Uniform parameters
   params: {
     mu_k: THREE.Uniform;
@@ -228,18 +231,40 @@ const kernel_f = /*@__PURE__*/ Fn(([x, mu, sigma, w, kernelType]) => {
 
 class GPUParticleLenia {
   private renderer: THREE.WebGPURenderer | undefined;
+  private scene: THREE.Scene;
+  private camera: THREE.OrthographicCamera;
+  private worldWidth: number;
+  private worldHeight: number;
   private species: Map<string, GPUSpecies> = new Map();
-  private computeShader: any; // Will be defined later
+  private animationId: number | null = null;
   
   constructor() {
+    // Initialize scene and camera first (synchronous)
+    this.scene = new THREE.Scene();
+    
+    // Set up orthographic camera to match simulation world bounds (55 x 41.25)
+    const aspect = 800 / 600;
+    const worldHeight = 41.25;
+    const worldWidth = worldHeight * aspect;
+    this.worldWidth = worldWidth;
+    this.worldHeight = worldHeight;
+    this.camera = new THREE.OrthographicCamera(
+      -worldWidth / 2, worldWidth / 2,   // left, right
+      worldHeight / 2, -worldHeight / 2, // top, bottom  
+      0.1, 1000                          // near, far
+    );
+    this.camera.position.z = 100;
+    
+    // Initialize WebGPU asynchronously
     this.initializeWebGPU();
   }
   
   private async initializeWebGPU() {
     // Initialize WebGPU renderer
     this.renderer = new THREE.WebGPURenderer({ antialias: false });
-    this.renderer.setSize(1600, 1200);
+    this.renderer.setSize(800, 600); // Smaller initial size for testing
     this.renderer.setPixelRatio(1);
+    this.renderer.setClearColor(0x000000, 1); // Black background
     
     // Wait for WebGPU to be ready
     await this.renderer.init();
@@ -247,18 +272,23 @@ class GPUParticleLenia {
     console.log('GPU Particle-Lenia system initialized');
     // @ts-ignore
     console.log('WebGPU support:', this.renderer.backend.isWebGPUBackend);
+    console.log(`Viewport: ${worldWidth.toFixed(1)} x ${worldHeight.toFixed(1)} world units`);
   }
   
   /**
    * Create a new species with GPU buffers
    */
   createSpecies(pointCount: number, params: Params): string {
+    if (!this.renderer) {
+      throw new Error('WebGPU renderer not initialized. Wait for initialization to complete.');
+    }
+    
     const id = `gpu_species_${this.species.size}`;
     
     // GPU buffers will be initialized via compute shaders
     
     // Create GPU buffers using TSL instancedArray (initialization will be done via compute shader)
-    const positionBuffer = instancedArray(pointCount, 'vec2');
+    const positionBuffer = instancedArray(pointCount, 'vec3');
     const velocityBuffer = instancedArray(pointCount, 'vec2');
     const forceBuffer = instancedArray(pointCount, 'vec2');
     
@@ -267,6 +297,31 @@ class GPUParticleLenia {
     const U_val = instancedArray(pointCount, 'float');     // Attraction values
     const R_grad = instancedArray(pointCount, 'vec2');     // Repulsion gradients
     const U_grad = instancedArray(pointCount, 'vec2');     // Attraction gradients
+    
+    // Create geometry – a simple quad that will be billboard-rendered by SpriteNodeMaterial.
+    // Using instancing ensures the instanceIndex varies, so each particle gets its unique position.
+    const geometry = new THREE.PlaneGeometry(1, 1);
+
+    // Create material for particles (billboard sprites with additive blending).
+    const material = new THREE.SpriteNodeMaterial({
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    
+    // Set particle color
+    const colors = ['#00ff88', '#4488ff', '#ff4488', '#ff8844', '#8844ff'];
+    const speciesColor = colors[this.species.size % colors.length];
+    material.colorNode = color(speciesColor);
+    
+    // Connect GPU position buffer (per-instance) to rendering positions
+    material.positionNode = positionBuffer.toAttribute();
+    
+    // Give each sprite a constant scale so particles are visible
+    material.scaleNode = float(0.5);
+    
+    // Create instanced mesh (one quad per particle)
+    const mesh = new THREE.InstancedMesh(geometry, material, pointCount);
+    this.scene.add(mesh);
     
     const species: GPUSpecies = {
       id,
@@ -279,6 +334,8 @@ class GPUParticleLenia {
       U_val,
       R_grad,
       U_grad,
+      mesh,
+      material,
       params: {
         mu_k: uniform(params.mu_k),
         sigma_k: uniform(params.sigma_k),
@@ -289,7 +346,7 @@ class GPUParticleLenia {
         kernel_k_type: uniform(params.kernel_k_type),
         kernel_g_type: uniform(params.kernel_g_type)
       },
-      color: '#00ff88'
+      color: speciesColor
     };
     
     this.species.set(id, species);
@@ -625,6 +682,10 @@ class GPUParticleLenia {
   createInitPositionsCompute(species: GPUSpecies) {
     const { pointCount, positionBuffer, velocityBuffer } = species;
     
+    // Precalculate world bounds for scattering
+    const halfWidth = this.worldWidth * 0.5;
+    const halfHeight = this.worldHeight * 0.5;
+    
     return Fn(() => {
       const i = instanceIndex;
       
@@ -633,16 +694,23 @@ class GPUParticleLenia {
         return;
       });
       
-      // Generate random position within world bounds
-      // Using hash function for deterministic randomness based on particle index
-      const randX = hash(i.add(uint(12345))).mul(55.0).sub(27.5); // -27.5 to 27.5
-      const randY = hash(i.add(uint(67890))).mul(41.25).sub(20.625); // -20.625 to 20.625
+      // Cluster particles in a much smaller area for stronger interactions
+      // Use more robust hash seeding to avoid undefined issues
+      const randX = hash(instanceIndex.add(uint(42))).mul(2.0).sub(1.0); // -1 to 1
+      const randY = hash(instanceIndex.add(uint(123))).mul(2.0).sub(1.0); // -1 to 1
       
-      // Set initial position
-      positionBuffer.element(i).assign(vec2(randX, randY));
+      // Scale to small cluster area (10x10 units instead of full world)
+      const clusterSize = 5.0; // Particles clustered in 10x10 area
+      const posX = randX.mul(clusterSize);
+      const posY = randY.mul(clusterSize);
       
-      // Set initial velocity to zero
-      velocityBuffer.element(i).assign(vec2(0.0, 0.0));
+      // Set initial position (now vec3)
+      positionBuffer.element(i).assign(vec3(posX, posY, 0.0));
+      
+      // Set initial velocity with small random component for movement
+      const velX = hash(instanceIndex.add(uint(999))).mul(2.0).sub(1.0).mul(0.5); // -0.5 to 0.5
+      const velY = hash(instanceIndex.add(uint(1337))).mul(2.0).sub(1.0).mul(0.5); // -0.5 to 0.5
+      velocityBuffer.element(i).assign(vec2(velX, velY));
       
     })().compute(pointCount);
   }
@@ -669,6 +737,350 @@ class GPUParticleLenia {
       
     })().compute(pointCount);
   }
+  
+  /**
+   * Create position update compute shader - integrates velocity to position
+   */
+  createPositionUpdateCompute(species: GPUSpecies) {
+    const { pointCount, positionBuffer, velocityBuffer, forceBuffer } = species;
+    
+    // Simulation parameters - increased for more visible movement
+    const deltaTime = uniform(1.0 / 30.0); // Larger time step for faster movement
+    const damping = uniform(0.95); // Less damping for more dynamic movement
+    const maxSpeed = uniform(15.0); // Higher maximum velocity
+    
+    return Fn(() => {
+      const i = instanceIndex;
+      
+      // Skip if beyond particle count
+      If(i.greaterThanEqual(uint(pointCount)), () => {
+        return;
+      });
+      
+      // Get current state
+      const position = positionBuffer.element(i).toVar();
+      const velocity = velocityBuffer.element(i).toVar();
+      const force = forceBuffer.element(i).toVar();
+      
+      // Apply forces to velocity (F = ma, assuming m = 1)
+      velocity.addAssign(force.mul(deltaTime));
+      
+      // Apply damping
+      velocity.mulAssign(damping);
+      
+      // Limit maximum speed
+      const speed = length(velocity);
+      If(speed.greaterThan(maxSpeed), () => {
+        velocity.assign(velocity.normalize().mul(maxSpeed));
+      });
+      
+      // Update position
+      position.addAssign(vec3(velocity.mul(deltaTime), 0.0));
+      
+      // Apply boundary conditions (wrap around)
+      const halfWidth = float(this.worldWidth * 0.5);
+      const halfHeight = float(this.worldHeight * 0.5);
+      
+      // Wrap X coordinate
+      If(position.x.greaterThan(halfWidth), () => {
+        position.x.assign(position.x.sub(this.worldWidth));
+      });
+      If(position.x.lessThan(halfWidth.negate()), () => {
+        position.x.assign(position.x.add(this.worldWidth));
+      });
+      
+      // Wrap Y coordinate  
+      If(position.y.greaterThan(halfHeight), () => {
+        position.y.assign(position.y.sub(this.worldHeight));
+      });
+      If(position.y.lessThan(halfHeight.negate()), () => {
+        position.y.assign(position.y.add(this.worldHeight));
+      });
+      
+      // Write back updated values
+      positionBuffer.element(i).assign(position);
+      velocityBuffer.element(i).assign(velocity);
+      
+    })().compute(pointCount);
+  }
+  
+  /**
+   * Create force calculation compute shader - calculates particle-lenia interactions
+   */
+  createForceCalculationCompute(species: GPUSpecies) {
+    const { pointCount, positionBuffer, forceBuffer, R_val, U_val, R_grad, U_grad, params } = species;
+    
+    return Fn(() => {
+      const i = instanceIndex;
+      
+      // Skip if beyond particle count
+      If(i.greaterThanEqual(uint(pointCount)), () => {
+        return;
+      });
+      
+      // Get particle i position
+      const pos_i = positionBuffer.element(i).toVar();
+      
+      // Initialize accumulators for this particle
+      const R_acc = float(0).toVar();
+      const U_acc = float(0).toVar();
+      const R_grad_acc = vec2(0, 0).toVar();
+      const U_grad_acc = vec2(0, 0).toVar();
+      
+      // Loop over all other particles j
+      Loop(uint(pointCount), ({ i: j }) => {
+        
+        // Skip self-interaction
+        If(j.equal(i), () => {
+          Continue();
+        });
+        
+        // Get particle j position
+        const pos_j = positionBuffer.element(j);
+        
+        // Calculate distance vector and magnitude (2D interaction)
+        const dr = pos_i.xy.sub(pos_j.xy).toVar();
+        const r_squared = dr.dot(dr).toVar();
+        
+        // Early exit for very distant particles (r > 15.0)
+        If(r_squared.greaterThan(225.0), () => {
+          Continue();
+        });
+        
+        // Calculate distance and normalized direction
+        const r = sqrt(r_squared.add(1e-20)).toVar();
+        const dr_norm = dr.div(r).toVar();
+        
+        // Simple repulsion calculation (only for close particles, r < 1.0)
+        If(r.lessThan(1.0), () => {
+          // Simplified repulsion without function call
+          const t = max(float(1.0).sub(r), float(0.0));
+          const R_force = float(0.5).mul(float(params.c_rep.value)).mul(t).mul(t);
+          const dR_force = float(params.c_rep.value).mul(t).negate();
+          
+          R_acc.addAssign(R_force);
+          R_grad_acc.addAssign(dr_norm.mul(dR_force));
+        });
+        
+        // Simple Gaussian attraction calculation
+        const t = r.sub(float(params.mu_k.value)).div(float(params.sigma_k.value));
+        const exp_t = fast_exp(t.mul(t));
+        const K_force = float(params.w_k.value).div(exp_t);
+        const dK_force = float(-2.0).mul(t).mul(K_force).div(float(params.sigma_k.value));
+        
+        U_acc.addAssign(K_force);
+        U_grad_acc.addAssign(dr_norm.mul(dK_force));
+        
+      });
+      
+      // Store accumulated results
+      R_val.element(i).assign(R_acc);
+      U_val.element(i).assign(U_acc);
+      R_grad.element(i).assign(R_grad_acc);
+      U_grad.element(i).assign(U_grad_acc);
+      
+      // Calculate net force from gradients (Growth function - simplified)
+      const growth_force = U_grad_acc.sub(R_grad_acc).toVar();
+      
+      // Apply growth function scaling with amplification
+      const growth_magnitude = length(growth_force);
+      const growth_response = growth_magnitude.mul(float(params.mu_g.value)).mul(10.0).toVar(); // 10x amplification
+      
+      // Store final force with additional scaling for visibility
+      forceBuffer.element(i).assign(growth_force.mul(growth_response).mul(2.0));
+      
+    })().compute(pointCount);
+  }
+  
+  /**
+   * Add canvas to DOM for rendering
+   */
+  attachToDom(container?: HTMLElement) {
+    if (!this.renderer) {
+      console.error('Renderer not initialized');
+      return;
+    }
+    
+    const canvas = this.renderer.domElement;
+    
+    // Style the canvas for visibility
+    canvas.style.border = '2px solid #00ff88';
+    canvas.style.marginTop = '20px';
+    canvas.style.display = 'block';
+    canvas.style.backgroundColor = '#000';
+    
+    // Create a canvas container div
+    const canvasContainer = document.createElement('div');
+    canvasContainer.style.textAlign = 'center';
+    canvasContainer.style.marginTop = '20px';
+    
+    const title = document.createElement('h3');
+    title.textContent = '🎮 GPU Particle Visualization';
+    title.style.color = '#00ff88';
+    title.style.margin = '10px 0';
+    
+    canvasContainer.appendChild(title);
+    canvasContainer.appendChild(canvas);
+    
+    const targetContainer = container || document.body;
+    targetContainer.appendChild(canvasContainer);
+    
+    console.log('GPU renderer canvas attached to DOM with styling');
+  }
+  
+  /**
+   * Start animation loop for real-time rendering
+   */
+  startAnimation() {
+    if (!this.renderer) {
+      console.error('Cannot start animation - renderer not initialized');
+      return;
+    }
+    
+    if (this.animationId !== null) {
+      console.log('Animation already running');
+      return;
+    }
+    
+    console.log('Starting GPU particle animation loop');
+    
+    const animate = () => {
+      this.animationId = requestAnimationFrame(animate);
+      
+      // Run complete particle-lenia simulation step for all species
+      for (const species of this.species.values()) {
+        // Step 1: Clear force accumulation fields
+        const clearCompute = this.createClearFieldsCompute(species);
+        this.renderer!.compute(clearCompute);
+        
+        // Step 2: Calculate particle interactions and forces
+        const forceCompute = this.createForceCalculationCompute(species);
+        this.renderer!.compute(forceCompute);
+        
+        // Step 3: Update positions and velocities based on forces
+        const positionCompute = this.createPositionUpdateCompute(species);
+        this.renderer!.compute(positionCompute);
+      }
+      
+      // Render the scene
+      this.renderer!.render(this.scene, this.camera);
+    };
+    
+    animate();
+  }
+  
+  /**
+   * Stop animation loop
+   */
+  stopAnimation() {
+    if (this.animationId !== null) {
+      cancelAnimationFrame(this.animationId);
+      this.animationId = null;
+      console.log('GPU particle animation stopped');
+    }
+  }
+  
+  /**
+   * Basic rendering test - initialize particles and start rendering
+   */
+  async testBasicRendering() {
+    if (!this.renderer) {
+      console.error('WebGPU renderer not initialized');
+      return;
+    }
+
+    console.log('\n🎨 Testing Basic GPU Particle Rendering...');
+    console.log('='.repeat(50));
+    
+    try {
+      // Create test species with different parameters
+      const species1Params: Params = {
+        mu_k: 3.0,
+        sigma_k: 0.8,
+        w_k: 0.08,
+        mu_g: 0.4,
+        sigma_g: 0.15,
+        c_rep: 1.2,
+        kernel_k_type: KernelType.GAUSSIAN,
+        kernel_g_type: KernelType.GAUSSIAN
+      };
+      
+      const species2Params: Params = {
+        mu_k: 2.5,
+        sigma_k: 0.6,
+        w_k: 0.06,
+        mu_g: 0.3,
+        sigma_g: 0.12,
+        c_rep: 0.9,
+        kernel_k_type: KernelType.EXPONENTIAL,
+        kernel_g_type: KernelType.POLYNOMIAL
+      };
+      
+      // Create species
+      const speciesId1 = this.createSpecies(80, species1Params);
+      const speciesId2 = this.createSpecies(60, species2Params);
+      
+      const species1 = this.species.get(speciesId1)!;
+      const species2 = this.species.get(speciesId2)!;
+      
+      console.log(`✓ Created Species 1: ${species1.pointCount} particles (${species1.color})`);
+      console.log(`✓ Created Species 2: ${species2.pointCount} particles (${species2.color})`);
+      
+      // Initialize positions
+      console.log('🎲 Initializing particle positions...');
+      const initCompute1 = this.createInitPositionsCompute(species1);
+      const initCompute2 = this.createInitPositionsCompute(species2);
+      
+      await this.renderer.computeAsync(initCompute1);
+      await this.renderer.computeAsync(initCompute2);
+      console.log('✓ Particle positions initialized on GPU');
+      
+      // Test rendering setup
+      console.log('🎮 Setting up rendering...');
+      console.log(`   - Viewport: 800x600 pixels`);
+      console.log(`   - World bounds: 55.0 x 41.25 units`);
+      console.log(`   - Camera: OrthographicCamera with black background`);
+      console.log(`   - Materials: PointsNodeMaterial with GPU position buffers`);
+      
+      // Attach to DOM for visualization
+      this.attachToDom();
+      
+      console.log('✓ GPU particle rendering setup complete');
+      console.log('\n🎉 Ready for real-time particle visualization!');
+      console.log('📊 Rendering Summary:');
+      console.log(`   - Total particles: ${species1.pointCount + species2.pointCount}`);
+      console.log(`   - GPU compute shaders: ${this.species.size * 2} (clear + interaction per species)`);
+      console.log(`   - Rendering method: GPU-direct position buffers`);
+      
+      // Start animation automatically  
+      console.log('🎬 Starting animation loop...');
+      this.startAnimation();
+      
+      // Debug: Log camera and scene info
+      console.log('📷 Camera info:');
+      console.log(`   - Position: (${this.camera.position.x}, ${this.camera.position.y}, ${this.camera.position.z})`);
+      console.log(`   - Left/Right: ${this.camera.left} to ${this.camera.right}`);
+      console.log(`   - Top/Bottom: ${this.camera.top} to ${this.camera.bottom}`);
+      console.log(`   - Scene children: ${this.scene.children.length}`);
+      
+      // Debug: Check mesh details
+      for (const [id, species] of this.species.entries()) {
+        console.log(`🔍 Species ${id}:`);
+        console.log(`   - Particle count: ${species.pointCount}`);
+        console.log(`   - Mesh geometry vertices: ${species.mesh.geometry.attributes.position.count}`);
+        console.log(`   - Draw range: ${species.mesh.geometry.drawRange.start} to ${species.mesh.geometry.drawRange.count}`);
+        console.log(`   - Material: ${species.material.constructor.name}`);
+        console.log(`   - Color: ${species.color}`);
+      }
+      
+    } catch (error) {
+      console.error('Basic rendering test failed:', error);
+      console.log('This could indicate:');
+      console.log('- GPU buffer allocation issues');
+      console.log('- TSL positionNode connection problems'); 
+      console.log('- WebGPU rendering pipeline issues');
+    }
+  }
 }
 
 // Initialize GPU simulation for testing
@@ -677,8 +1089,8 @@ async function initGPUSimulation() {
     console.log('Initializing GPU Particle-Lenia system...');
     const gpuSim = new GPUParticleLenia();
     
-    // Wait a moment for WebGPU to initialize
-    await new Promise(resolve => setTimeout(resolve, 100));
+    // Wait longer for WebGPU to fully initialize and avoid race conditions
+    await new Promise(resolve => setTimeout(resolve, 300));
     
     // Test the kernel functions with actual GPU compute
     await gpuSim.testKernelFunctions();
@@ -686,7 +1098,22 @@ async function initGPUSimulation() {
     // Test particle interaction compute shaders
     await gpuSim.testParticleInteractions();
     
-    console.log('\n🎉 GPU initialization and particle interaction testing complete!');
+    // Test basic rendering system
+    await gpuSim.testBasicRendering();
+    
+    console.log('\n🎉 GPU initialization, particle interactions, and rendering complete!');
+    console.log('💡 Next steps:');
+    console.log('   - Call gpuSim.startAnimation() to begin real-time simulation');
+    console.log('   - Add inter-species interactions between all species');
+    console.log('   - Scale up particle counts for performance testing');
+    
+    // Store reference globally for manual control
+    if (typeof window !== 'undefined') {
+      (window as any).gpuSim = gpuSim;
+      console.log('📌 gpuSim instance available globally as window.gpuSim');
+    }
+    
+    return gpuSim;
     
   } catch (error) {
     console.error('Failed to initialize GPU simulation:', error);
@@ -694,6 +1121,7 @@ async function initGPUSimulation() {
     console.log('- WebGPU not supported in this browser');
     console.log('- GPU drivers not compatible');
     console.log('- Three.js version compatibility');
+    return null;
   }
 }
 
