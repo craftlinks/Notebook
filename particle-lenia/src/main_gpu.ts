@@ -390,11 +390,31 @@ class GPUParticleLenia {
     const speciesColor = colors[this.species.size % colors.length];
     material.colorNode = color(speciesColor);
     
+    // ---------------------------------------------------------------
+    // Create uniform nodes for all species parameters once so they can
+    // be referenced both by rendering nodes and compute shaders.
+    // ---------------------------------------------------------------
+    const paramUniforms = {
+      mu_k: uniform(params.mu_k),
+      sigma_k: uniform(params.sigma_k),
+      w_k: uniform(params.w_k),
+      mu_g: uniform(params.mu_g),
+      sigma_g: uniform(params.sigma_g),
+      c_rep: uniform(params.c_rep),
+      kernel_k_type: uniform(params.kernel_k_type),
+      kernel_g_type: uniform(params.kernel_g_type)
+    } as const;
+    
     // Connect GPU position buffer (per-instance) to rendering positions
     material.positionNode = positionBuffer.toAttribute();
     
-    // Give each sprite a constant scale so particles are visible
-    material.scaleNode = float(0.2);
+    // Dynamic scale: CPU version draws radius = c_rep / (R_val * 5)
+    const rAttr = R_val.toAttribute();
+    const safeDenom = max(rAttr.mul(5.0), float(0.001));
+    const rawScale  = paramUniforms.c_rep.div(safeDenom);
+    const compressed = sqrt(rawScale).mul(0.3); // overall shrink factor
+    const dynamicScale = clamp(compressed, float(0.02), float(0.2));
+    material.scaleNode = dynamicScale;
     
     // Create instanced mesh (one quad per particle)
     const mesh = new THREE.InstancedMesh(geometry, material, pointCount);
@@ -413,16 +433,7 @@ class GPUParticleLenia {
       U_grad,
       mesh,
       material,
-      params: {
-        mu_k: uniform(params.mu_k),
-        sigma_k: uniform(params.sigma_k),
-        w_k: uniform(params.w_k),
-        mu_g: uniform(params.mu_g),
-        sigma_g: uniform(params.sigma_g),
-        c_rep: uniform(params.c_rep),
-        kernel_k_type: uniform(params.kernel_k_type),
-        kernel_g_type: uniform(params.kernel_g_type)
-      },
+      params: paramUniforms,
       color: speciesColor
     };
     

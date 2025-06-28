@@ -53,7 +53,7 @@ async function createSimulation(speciesCount: number) {
   // Create requested species
   for (let i = 0; i < speciesCount; i++) {
     const params = createRandomParams()
-    const pointCount = speciesCount === 1 ? 1000 : 500
+    const pointCount = speciesCount === 1 ? 10_000 : 5_000
     gpuSim.createSpecies(pointCount, params)
   }
 
