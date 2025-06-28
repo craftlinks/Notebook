@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GPU Particle Lenia - Kernel Testing</title>
+    <style>
+      body {
+        font-family: monospace;
+        background: #000;
+        color: #0f0;
+        padding: 20px;
+        margin: 0;
+      }
+      
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+      }
+      
+      h1 {
+        color: #00ff88;
+        text-align: center;
+        margin-bottom: 30px;
+      }
+      
+      .status {
+        background: #111;
+        border: 1px solid #333;
+        padding: 15px;
+        margin-bottom: 20px;
+        border-radius: 5px;
+      }
+      
+      .console-output {
+        background: #111;
+        border: 1px solid #333;
+        padding: 15px;
+        height: 400px;
+        overflow-y: auto;
+        font-family: 'Courier New', monospace;
+        font-size: 12px;
+        white-space: pre-wrap;
+        border-radius: 5px;
+      }
+      
+      .success { color: #0f0; }
+      .error { color: #f00; }
+      .info { color: #0ff; }
+      .warning { color: #ff0; }
+      
+      button {
+        background: #222;
+        color: #0f0;
+        border: 1px solid #0f0;
+        padding: 10px 20px;
+        margin: 10px;
+        cursor: pointer;
+        border-radius: 3px;
+        font-family: monospace;
+      }
+      
+      button:hover {
+        background: #0f0;
+        color: #000;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>🚀 GPU Particle Lenia - Kernel Testing</h1>
+      
+      <div class="status">
+        <h3>WebGPU Status:</h3>
+        <div id="webgpu-status">Checking WebGPU support...</div>
+      </div>
+      
+      <div class="status">
+        <h3>Test Controls:</h3>
+        <button id="test-kernels">Test Kernel Functions</button>
+        <button id="clear-console">Clear Console</button>
+      </div>
+      
+      <div class="status">
+        <h3>Console Output:</h3>
+        <div id="console-output" class="console-output">
+Initializing GPU Particle-Lenia kernel testing system...
+Open browser DevTools Console for detailed output.
+
+</div>
+      </div>
+    </div>
+
+    <script type="module">
+      // Custom console logging to display on page
+      const consoleOutput = document.getElementById('console-output');
+      const webgpuStatus = document.getElementById('webgpu-status');
+      
+      function logToPage(message, type = 'info') {
+        const timestamp = new Date().toLocaleTimeString();
+        const className = type === 'error' ? 'error' : 
+                         type === 'success' ? 'success' : 
+                         type === 'warning' ? 'warning' : 'info';
+        
+        consoleOutput.innerHTML += `<span class="${className}">[${timestamp}] ${message}</span>\n`;
+        consoleOutput.scrollTop = consoleOutput.scrollHeight;
+      }
+      
+      // Override console methods
+      const originalLog = console.log;
+      const originalError = console.error;
+      const originalWarn = console.warn;
+      
+      console.log = function(...args) {
+        originalLog.apply(console, args);
+        logToPage(args.join(' '), 'info');
+      };
+      
+      console.error = function(...args) {
+        originalError.apply(console, args);
+        logToPage(args.join(' '), 'error');
+      };
+      
+      console.warn = function(...args) {
+        originalWarn.apply(console, args);
+        logToPage(args.join(' '), 'warning');
+      };
+      
+      // Check WebGPU support
+      if ('gpu' in navigator) {
+        webgpuStatus.innerHTML = '<span class="success">✓ WebGPU is supported</span>';
+        logToPage('WebGPU API detected in browser', 'success');
+      } else {
+        webgpuStatus.innerHTML = '<span class="error">✗ WebGPU not supported</span>';
+        logToPage('WebGPU not supported in this browser', 'error');
+      }
+      
+      // Button handlers
+      document.getElementById('clear-console').addEventListener('click', () => {
+        consoleOutput.innerHTML = 'Console cleared.\n';
+      });
+      
+      document.getElementById('test-kernels').addEventListener('click', async () => {
+        logToPage('Starting kernel function tests...', 'info');
+        try {
+          // Import and run our GPU test
+          const { initGPUSimulation } = await import('/src/main_gpu.ts');
+          if (typeof initGPUSimulation === 'function') {
+            await initGPUSimulation();
+          } else {
+            // Fallback if export structure is different
+            logToPage('GPU simulation initialized via module import', 'success');
+          }
+        } catch (error) {
+          logToPage(`Failed to load GPU test module: ${error.message}`, 'error');
+        }
+      });
+      
+      // Auto-start the test
+      setTimeout(async () => {
+        logToPage('Auto-starting GPU kernel tests...', 'info');
+        document.getElementById('test-kernels').click();
+      }, 1000);
+    </script>
+  </body>
+</html>
