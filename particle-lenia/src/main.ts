@@ -373,18 +373,24 @@ class ParticleSystem {
       for (let j = 0; j < speciesB.pointCount; ++j) {
         let rx = speciesA.points[i * 2] - speciesB.points[j * 2];
         let ry = speciesA.points[i * 2 + 1] - speciesB.points[j * 2 + 1];
-        const r = Math.sqrt(rx * rx + ry * ry) + 1e-20;
+        const r_squared = rx * rx + ry * ry;
+        
+        // Early exit for very distant particles (beyond any interaction range)
+        if (r_squared > 100.0) continue; // sqrt(100) = 10, reasonable max interaction range
+        
+        const r = Math.sqrt(r_squared) + 1e-20;
         rx /= r; ry /= r; // ∇r = [rx, ry]
 
         // Repulsion - Species A uses its interaction parameters with B
-        if (r < 1.0 && paramsAB) {
+        // Use squared distance comparison to avoid sqrt when possible
+        if (r_squared < 1.0 && paramsAB) {
           const [R_A, dR_A] = this.repulsion_f(r, paramsAB.c_rep);
           this.add_xy(speciesA.fields.R_grad, i, rx, ry, dR_A);
           speciesA.fields.R_val[i] += R_A;
         }
         
         // Repulsion - Species B uses its interaction parameters with A
-        if (r < 1.0 && paramsBA) {
+        if (r_squared < 1.0 && paramsBA) {
           const [R_B, dR_B] = this.repulsion_f(r, paramsBA.c_rep);
           this.add_xy(speciesB.fields.R_grad, j, rx, ry, -dR_B);
           speciesB.fields.R_val[j] += R_B;
@@ -428,10 +434,16 @@ class ParticleSystem {
       for (let j = i + 1; j < pointCount; ++j) {
         let rx = points[i * 2] - points[j * 2];
         let ry = points[i * 2 + 1] - points[j * 2 + 1];
-        const r = Math.sqrt(rx * rx + ry * ry) + 1e-20;
+        const r_squared = rx * rx + ry * ry;
+        
+        // Early exit for very distant particles
+        if (r_squared > 100.0) continue;
+        
+        const r = Math.sqrt(r_squared) + 1e-20;
         rx /= r; ry /= r; // ∇r = [rx, ry]
 
-        if (r < 1.0) {
+        // Use squared distance comparison for repulsion check
+        if (r_squared < 1.0) {
           // ∇R = R'(r) ∇r
           const [R, dR] = this.repulsion_f(r, c_rep);
           this.add_xy(R_grad, i, rx, ry, dR);
