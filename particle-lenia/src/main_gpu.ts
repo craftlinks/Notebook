@@ -9,6 +9,8 @@ import {
   add, sub, mul, div, mod, normalize, length, dot, cross, hash,
   Continue, Break
 } from 'three/tsl';
+// OrbitControls for interactive tumbling
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 
 // Kernel type enums (matching CPU implementation)
 enum KernelType {
@@ -307,9 +309,11 @@ const kernel_f = /*@__PURE__*/ Fn(([x, mu, sigma, w, kernelType]) => {
 class GPUParticleLenia {
   private renderer: THREE.WebGPURenderer | undefined;
   private scene: THREE.Scene;
-  private camera: THREE.OrthographicCamera;
+  private camera: THREE.PerspectiveCamera;
   private worldWidth: number;
   private worldHeight: number;
+  private worldDepth: number;
+  private controls?: OrbitControls;
   private species: Map<string, GPUSpecies> = new Map();
   private animationId: number | null = null;
   private dt: number = 0.033; // Default time step (30 FPS)
@@ -319,19 +323,22 @@ class GPUParticleLenia {
     // Initialize scene and camera first (synchronous)
     this.scene = new THREE.Scene();
     
-    // Set up orthographic camera to match simulation world bounds (55 x 41.25)
+    // Set up perspective camera to match simulation world bounds (55 x 41.25)
     const aspect = 800 / 600;
     const worldHeight = 41.25;
     const worldWidth = worldHeight * aspect;
     this.worldWidth = worldWidth;
     this.worldHeight = worldHeight;
-    this.camera = new THREE.OrthographicCamera(
-      -worldWidth / 2, worldWidth / 2,   // left, right
-      worldHeight / 2, -worldHeight / 2, // top, bottom  
-      0.1, 1000                          // near, far
+    this.worldDepth = 1000; // Assuming a default worldDepth
+    this.camera = new THREE.PerspectiveCamera(
+      75, // Field of view
+      worldWidth / worldHeight, // Aspect ratio
+      0.1, // Near clipping plane
+      this.worldDepth // Far clipping plane
     );
-    this.camera.position.z = 10;
-    this.camera.zoom = 2;   // 2× magnification
+    // Moderate initial framing
+    this.camera.position.set(0, 0, 40);
+    this.camera.zoom = 2.25; // gentler magnification
     this.camera.updateProjectionMatrix();
     
     // Initialize WebGPU asynchronously
@@ -368,14 +375,14 @@ class GPUParticleLenia {
     
     // Create GPU buffers using TSL instancedArray (initialization will be done via compute shader)
     const positionBuffer = instancedArray(pointCount, 'vec3');
-    const velocityBuffer = instancedArray(pointCount, 'vec2');
-    const forceBuffer = instancedArray(pointCount, 'vec2');
+    const velocityBuffer = instancedArray(pointCount, 'vec3');
+    const forceBuffer = instancedArray(pointCount, 'vec3');
     
     // Field buffers for force calculations
     const R_val = instancedArray(pointCount, 'float');     // Repulsion values
     const U_val = instancedArray(pointCount, 'float');     // Attraction values
-    const R_grad = instancedArray(pointCount, 'vec2');     // Repulsion gradients
-    const U_grad = instancedArray(pointCount, 'vec2');     // Attraction gradients
+    const R_grad = instancedArray(pointCount, 'vec3');     // Repulsion gradients
+    const U_grad = instancedArray(pointCount, 'vec3');     // Attraction gradients
     
     // Create geometry – a simple quad that will be billboard-rendered by SpriteNodeMaterial.
     // Using instancing ensures the instanceIndex varies, so each particle gets its unique position.
@@ -641,8 +648,8 @@ class GPUParticleLenia {
       // Initialize accumulators for this particle
       const R_acc = float(0).toVar();
       const U_acc = float(0).toVar();
-      const R_grad_acc = vec2(0, 0).toVar();
-      const U_grad_acc = vec2(0, 0).toVar();
+      const R_grad_acc = vec3(0, 0, 0).toVar();
+      const U_grad_acc = vec3(0, 0, 0).toVar();
       
       // Simplified loop without complex nested function calls
       Loop(uint(pointCount), ({ i: j }) => {
@@ -722,8 +729,8 @@ class GPUParticleLenia {
       // Initialize accumulators for species A particle i
       const R_acc_A = float(0).toVar();
       const U_acc_A = float(0).toVar();
-      const R_grad_acc_A = vec2(0, 0).toVar();
-      const U_grad_acc_A = vec2(0, 0).toVar();
+      const R_grad_acc_A = vec3(0, 0, 0).toVar();
+      const U_grad_acc_A = vec3(0, 0, 0).toVar();
       
       // Simplified loop over all particles j in species B
       Loop(uint(countB), ({ i: j }) => {
@@ -769,8 +776,8 @@ class GPUParticleLenia {
       // Add accumulated results to species A particle i (additive with existing values)
       R_val_A.element(i).addAssign(R_acc_A);
       U_val_A.element(i).addAssign(U_acc_A);
-      R_grad_A.element(i).addAssign(R_grad_acc_A);
-      U_grad_A.element(i).addAssign(U_grad_acc_A);
+      R_grad_A.element(i).assign(R_grad_acc_A);
+      U_grad_A.element(i).assign(U_grad_acc_A);
       
     })().compute(countA);
   }
@@ -798,18 +805,21 @@ class GPUParticleLenia {
       const randX = hash(instanceIndex.add(uint(42))).mul(2.0).sub(1.0); // -1 to 1
       const randY = hash(instanceIndex.add(uint(123))).mul(2.0).sub(1.0); // -1 to 1
       
-      // Scale to small cluster area (10x10 units instead of full world)
-      const clusterSize = 5.0; // Particles clustered in 10x10 area
+      // Scale to small cluster cube (10 units in each axis)
+      const clusterSize = 5.0; // Particles clustered in 10-unit half-extent cube
       const posX = randX.mul(clusterSize);
       const posY = randY.mul(clusterSize);
+      const randZ = hash(instanceIndex.add(uint(777))).mul(2.0).sub(1.0);
+      const posZ = randZ.mul(clusterSize);
       
-      // Set initial position (now vec3)
-      positionBuffer.element(i).assign(vec3(posX, posY, 0.0));
+      // Set initial 3-D position
+      positionBuffer.element(i).assign(vec3(posX, posY, posZ));
       
-      // Set initial velocity with small random component for movement
-      const velX = hash(instanceIndex.add(uint(999))).mul(2.0).sub(1.0).mul(0.5); // -0.5 to 0.5
+      // Set initial velocity with small random component for movement (3-D)
+      const velX = hash(instanceIndex.add(uint(999))).mul(2.0).sub(1.0).mul(0.5);  // -0.5 to 0.5
       const velY = hash(instanceIndex.add(uint(1337))).mul(2.0).sub(1.0).mul(0.5); // -0.5 to 0.5
-      velocityBuffer.element(i).assign(vec2(velX, velY));
+      const velZ = hash(instanceIndex.add(uint(4242))).mul(2.0).sub(1.0).mul(0.5); // -0.5 to 0.5
+      velocityBuffer.element(i).assign(vec3(velX, velY, velZ));
       
     })().compute(pointCount);
   }
@@ -831,8 +841,8 @@ class GPUParticleLenia {
       // Clear all field values
       R_val.element(i).assign(0.0);
       U_val.element(i).assign(0.0);
-      R_grad.element(i).assign(vec2(0.0, 0.0));
-      U_grad.element(i).assign(vec2(0.0, 0.0));
+      R_grad.element(i).assign(vec3(0.0, 0.0, 0.0));
+      U_grad.element(i).assign(vec3(0.0, 0.0, 0.0));
       
     })().compute(pointCount);
   }
@@ -863,8 +873,8 @@ class GPUParticleLenia {
       // Initialize accumulators for this particle
       const R_acc = float(0).toVar();
       const U_acc = float(0).toVar();
-      const R_grad_acc = vec2(0, 0).toVar();
-      const U_grad_acc = vec2(0, 0).toVar();
+      const R_grad_acc = vec3(0, 0, 0).toVar();
+      const U_grad_acc = vec3(0, 0, 0).toVar();
       
       // Loop over all other particles j
       Loop(uint(pointCount), ({ i: j }) => {
@@ -877,8 +887,8 @@ class GPUParticleLenia {
         // Get particle j position
         const pos_j = positionBuffer.element(j);
         
-        // Calculate distance vector and magnitude (2D interaction)
-        const dr = pos_i.xy.sub(pos_j.xy).toVar();
+        // Calculate distance vector and magnitude (3D interaction)
+        const dr = pos_i.sub(pos_j).toVar();
         const r_squared = dr.dot(dr).toVar();
         
         // Early exit for very distant particles (r > 15.0)
@@ -944,13 +954,15 @@ class GPUParticleLenia {
         velocity.assign(velocity.normalize().mul(maxSpeed));
       });
 
-      // Update position (z stays 0)
-      pos_i.addAssign(vec3(velocity.mul(deltaTime), 0.0));
+      // Update position (full 3-D)
+      pos_i.addAssign(velocity.mul(deltaTime));
 
-      // Boundary wrap-around
+      // Boundary wrap-around (x, y, z)
       const halfWidth  = float(this.worldWidth * 0.5);
       const halfHeight = float(this.worldHeight * 0.5);
+      const halfDepth  = float(this.worldDepth * 0.5);
 
+      // X axis
       If(pos_i.x.greaterThan(halfWidth), () => {
         pos_i.x.assign(pos_i.x.sub(this.worldWidth));
       });
@@ -958,11 +970,20 @@ class GPUParticleLenia {
         pos_i.x.assign(pos_i.x.add(this.worldWidth));
       });
 
+      // Y axis
       If(pos_i.y.greaterThan(halfHeight), () => {
         pos_i.y.assign(pos_i.y.sub(this.worldHeight));
       });
       If(pos_i.y.lessThan(halfHeight.negate()), () => {
         pos_i.y.assign(pos_i.y.add(this.worldHeight));
+      });
+
+      // Z axis
+      If(pos_i.z.greaterThan(halfDepth), () => {
+        pos_i.z.assign(pos_i.z.sub(this.worldDepth));
+      });
+      If(pos_i.z.lessThan(halfDepth.negate()), () => {
+        pos_i.z.assign(pos_i.z.add(this.worldDepth));
       });
 
       // Write back updated state
@@ -1006,6 +1027,18 @@ class GPUParticleLenia {
     targetContainer.appendChild(canvasContainer);
     
     console.log('GPU renderer canvas attached to DOM with styling');
+
+    // ----------------------------------------------------------------
+    // Add interactive orbit controls so the user can tumble the scene.
+    // ----------------------------------------------------------------
+    this.controls = new OrbitControls(this.camera, canvas);
+    this.controls.enableDamping = true;
+    this.controls.dampingFactor = 0.05;
+    this.controls.zoomSpeed = 0.6;
+    this.controls.minDistance = 20;
+    this.controls.maxDistance = 800;
+    this.controls.target.set(0, 0, 0);
+    this.controls.update();
   }
   
   /**
@@ -1033,6 +1066,11 @@ class GPUParticleLenia {
           // Single physics pass does everything (force + integration)
           this.renderer!.compute(species.forceCompute);
         }
+      }
+      
+      // Update orbit controls (if present)
+      if (this.controls) {
+        this.controls.update();
       }
       
       // Render the scene
@@ -1254,7 +1292,7 @@ class GPUParticleLenia {
       console.log('🎮 Setting up rendering...');
       console.log(`   - Viewport: 800x600 pixels`);
       console.log(`   - World bounds: 55.0 x 41.25 units`);
-      console.log(`   - Camera: OrthographicCamera with black background`);
+      console.log(`   - Camera: PerspectiveCamera with black background`);
       console.log(`   - Materials: PointsNodeMaterial with GPU position buffers`);
       
       // Attach to DOM for visualization

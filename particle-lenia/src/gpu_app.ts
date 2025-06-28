@@ -78,23 +78,12 @@ async function createSimulation(speciesCount: number) {
     await gpuSim['renderer']!.computeAsync(initCompute)
   }
 
-  // Handle canvas attachment
+  // Always (re)attach canvas so OrbitControls get re-created
   const wrapper = document.getElementById('gpu-canvas-wrapper')
   if (wrapper) {
-    const existingCanvas = wrapper.querySelector('canvas')
-    if (existingCanvas) {
-      // Replace existing canvas with new one
-      existingCanvas.replaceWith(gpuSim['renderer']!.domElement)
-      // Apply the same styling as attachToDom method
-      const canvas = gpuSim['renderer']!.domElement
-      canvas.style.border = '2px solid #00ff88'
-      canvas.style.marginTop = '20px'
-      canvas.style.display = 'block'
-      canvas.style.backgroundColor = '#000'
-    } else {
-      // First time - use normal attachToDom
-      gpuSim.attachToDom(wrapper)
-    }
+    // Clear previous contents
+    wrapper.innerHTML = ''
+    gpuSim.attachToDom(wrapper)
   }
 
   gpuSim.startAnimation()
