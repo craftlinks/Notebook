@@ -904,7 +904,7 @@ class GPUParticleLenia {
       const randY = hash(instanceIndex.add(uint(123))).mul(2.0).sub(1.0); // -1 to 1
       
       // Scale to small cluster cube (10 units in each axis)
-      const clusterSize = 10.0; // Particles clustered in 10-unit half-extent cube
+      const clusterSize = 1.5; // Particles clustered in 10-unit half-extent cube
       const posX = randX.mul(clusterSize);
       const posY = randY.mul(clusterSize);
       const randZ = hash(instanceIndex.add(uint(777))).mul(2.0).sub(1.0);
