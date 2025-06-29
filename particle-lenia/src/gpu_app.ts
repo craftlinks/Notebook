@@ -14,6 +14,13 @@ interface Params {
 
 function createRandomParams(): Params {
   const kernelTypes = Object.values(KernelType);
+
+  const kernelKSelect = document.getElementById('kernel-k-select') as HTMLSelectElement;
+  const kernelGSelect = document.getElementById('kernel-g-select') as HTMLSelectElement;
+
+  const selectedKernelK = kernelKSelect ? kernelKSelect.value as KernelType : kernelTypes[Math.floor(Math.random() * kernelTypes.length)];
+  const selectedKernelG = kernelGSelect ? kernelGSelect.value as KernelType : kernelTypes[Math.floor(Math.random() * kernelTypes.length)];
+
   return {
     mu_k: 1.5 + Math.random() * 8.0,
     sigma_k: 0.2 + Math.random() * 3.0,
@@ -21,8 +28,8 @@ function createRandomParams(): Params {
     mu_g: 0.1 + Math.random() * 0.8,
     sigma_g: 0.025 + Math.random() * 0.35,
     c_rep: 0.3 + Math.random() * 2.4,
-    kernel_k_type: kernelTypes[Math.floor(Math.random() * kernelTypes.length)],
-    kernel_g_type: kernelTypes[Math.floor(Math.random() * kernelTypes.length)]
+    kernel_k_type: selectedKernelK,
+    kernel_g_type: selectedKernelG
   }
 }
 
@@ -271,6 +278,23 @@ function setupUI() {
         loadInput.value = ''
       }
     })
+  }
+
+  const kernelKSelect = document.getElementById('kernel-k-select') as HTMLSelectElement | null;
+  const kernelGSelect = document.getElementById('kernel-g-select') as HTMLSelectElement | null;
+
+  const handleKernelChange = async () => {
+    if (speciesSlider) {
+      const count = parseInt(speciesSlider.value);
+      await createSimulation(count);
+    }
+  };
+
+  if (kernelKSelect) {
+    kernelKSelect.addEventListener('change', handleKernelChange);
+  }
+  if (kernelGSelect) {
+    kernelGSelect.addEventListener('change', handleKernelChange);
   }
 }
 

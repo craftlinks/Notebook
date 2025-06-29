@@ -7,7 +7,7 @@ import {
   Fn, If, Loop, instanceIndex, instancedArray, attributeArray,
   sin, cos, exp, abs, max, min, pow, sqrt, PI, sign, select, clamp,
   add, sub, mul, div, mod, normalize, length, dot, cross, hash,
-  uv, Continue, Break
+  uv, Continue, Break, Switch
 } from 'three/tsl';
 // OrbitControls for interactive tumbling
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -82,6 +82,7 @@ interface GPUSpecies {
   // Field buffers for force calculations
   R_val: any; // TSL instancedArray - repulsion values per particle
   U_val: any; // TSL instancedArray - attraction values per particle  
+  G_val: any; // TSL instancedArray - growth values per particle
   R_grad: any; // TSL instancedArray - repulsion gradients [fx,fy]
   U_grad: any; // TSL instancedArray - attraction gradients [fx,fy]
   // Rendering
@@ -89,14 +90,14 @@ interface GPUSpecies {
   material: THREE.SpriteNodeMaterial; // Shader material
   // Uniform parameters
   params: {
-    mu_k: THREE.Uniform;
-    sigma_k: THREE.Uniform;
-    w_k: THREE.Uniform;
-    mu_g: THREE.Uniform;
-    sigma_g: THREE.Uniform;
-    c_rep: THREE.Uniform;
-    kernel_k_type: THREE.Uniform;
-    kernel_g_type: THREE.Uniform;
+    mu_k: any;
+    sigma_k: any;
+    w_k: any;
+    mu_g: any;
+    sigma_g: any;
+    c_rep: any;
+    kernel_k_type: any;
+    kernel_g_type: any;
   };
   color: string;
   renderStyle: {
@@ -192,119 +193,78 @@ const add_xy = /*@__PURE__*/ Fn(([array, i, x, y, c]) => {
 // =============================================================================
 
 /**
- * Gaussian kernel - TSL implementation
- * Returns vec2(value, derivative)
- */
-const gaussian_kernel = /*@__PURE__*/ Fn(([x, mu, sigma, w]) => {
-  const t = x.sub(mu).div(sigma).toVar();
-  const y = w.div(fast_exp(t.mul(t))).toVar();
-  const derivative = float(-2.0).mul(t).mul(y).div(sigma);
-  return vec2(y, derivative);
-});
-
-/**
- * Exponential decay kernel - asymmetric, longer tail
- * Returns vec2(value, derivative)
- */
-const exponential_kernel = /*@__PURE__*/ Fn(([x, mu, sigma, w]) => {
-  const t = abs(x.sub(mu)).div(sigma).toVar();
-  const exp_t = exp(t.negate()).toVar();
-  const y = w.mul(exp_t).mul(0.6).toVar(); // Moderate dampening
-  const signVal = select(x.greaterThanEqual(mu), float(1.0), float(-1.0));
-  const derivative = signVal.negate().mul(y).div(sigma);
-  return vec2(y, derivative);
-});
-
-/**
- * Polynomial kernel - creates sharper peaks
- * Returns vec2(value, derivative)
- */
-const polynomial_kernel = /*@__PURE__*/ Fn(([x, mu, sigma, w]) => {
-  const t = abs(x.sub(mu)).div(sigma).toVar();
-  
-  return If(t.greaterThan(1.0), () => {
-    return vec2(0.0, 0.0);
-  }).Else(() => {
-    const poly = float(1.0).sub(t.mul(t)).toVar();
-    poly.assign(poly.mul(poly)); // (1-t²)²
-    const y = w.mul(poly).mul(0.8).toVar(); // Less dampening
-    const signVal = select(x.greaterThanEqual(mu), float(1.0), float(-1.0));
-    const derivative = float(-3.2).mul(signVal).mul(t).mul(float(1.0).sub(t.mul(t))).mul(w).div(sigma.mul(sigma));
-    return vec2(y, derivative);
-  });
-});
-
-/**
- * Mexican hat (Ricker) wavelet - creates inhibition zones
- * Returns vec2(value, derivative)
- */
-const mexican_hat_kernel = /*@__PURE__*/ Fn(([x, mu, sigma, w]) => {
-  const t = x.sub(mu).div(sigma).toVar();
-  const t2 = t.mul(t).toVar();
-  const exp_term = exp(t2.div(-2.0)).toVar();
-  const y = w.mul(float(1.0).sub(t2)).mul(exp_term).mul(0.7).toVar(); // Less dampening
-  const derivative = w.negate().mul(t).mul(float(3.0).sub(t2)).mul(exp_term).mul(0.7).div(sigma);
-  return vec2(y, derivative);
-});
-
-/**
- * Sigmoid kernel - creates step-like transitions
- * Returns vec2(value, derivative)
- */
-const sigmoid_kernel = /*@__PURE__*/ Fn(([x, mu, sigma, w]) => {
-  const t = x.sub(mu).div(sigma.mul(1.5)).toVar(); // Sharper transitions
-  const exp_t = exp(t.negate()).toVar();
-  const sigmoid = float(1.0).div(float(1.0).add(exp_t)).toVar();
-  const y = w.mul(sigmoid).mul(0.6).toVar(); // Moderate dampening
-  const derivative = w.mul(sigmoid).mul(float(1.0).sub(sigmoid)).mul(0.6).div(sigma.mul(1.5));
-  return vec2(y, derivative);
-});
-
-/**
- * Sinc kernel - creates oscillatory patterns
- * Returns vec2(value, derivative)
- */
-const sinc_kernel = /*@__PURE__*/ Fn(([x, mu, sigma, w]) => {
-  const t = x.sub(mu).div(sigma).toVar();
-  const abs_t = abs(t).toVar();
-  
-  // Handle near-zero case
-  return If(abs_t.lessThan(1e-6), () => {
-    return vec2(w.mul(0.5), 0.0); // Less dampening
-  }).ElseIf(abs_t.greaterThan(4.0), () => {
-    return vec2(0.0, 0.0);
-  }).Else(() => {
-    const pi_t = PI.mul(t).toVar();
-    const sinc_val = sin(pi_t).div(pi_t).toVar();
-    const y = w.mul(sinc_val).mul(0.5).toVar(); // Less dampening
-    const derivative = w.mul(PI).mul(cos(pi_t).mul(pi_t).sub(sin(pi_t))).mul(0.5).div(pi_t.mul(pi_t).mul(sigma));
-    return vec2(y, derivative);
-  });
-});
-
-/**
  * Kernel function dispatcher - equivalent to kernel_f() in original
  * Returns vec2(value, derivative) based on kernel type
  */
 const kernel_f = /*@__PURE__*/ Fn(([x, mu, sigma, w, kernelType]) => {
   const result = vec2(0.0, 0.0).toVar();
   
-  If(kernelType.equal(0), () => {
-    result.assign(gaussian_kernel(x, mu, sigma, w));
-  }).ElseIf(kernelType.equal(1), () => {
-    result.assign(exponential_kernel(x, mu, sigma, w));
-  }).ElseIf(kernelType.equal(2), () => {
-    result.assign(polynomial_kernel(x, mu, sigma, w));
-  }).ElseIf(kernelType.equal(3), () => {
-    result.assign(mexican_hat_kernel(x, mu, sigma, w));
-  }).ElseIf(kernelType.equal(4), () => {
-    result.assign(sigmoid_kernel(x, mu, sigma, w));
-  }).ElseIf(kernelType.equal(5), () => {
-    result.assign(sinc_kernel(x, mu, sigma, w));
-  }).Else(() => {
-    // Default to Gaussian
-    result.assign(gaussian_kernel(x, mu, sigma, w));
-  });
+  Switch(kernelType)
+    .Case(0, () => { // GAUSSIAN
+      const t = x.sub(mu).div(sigma).toVar();
+      const y = w.div(fast_exp(t.mul(t))).toVar();
+      const derivative = float(-2.0).mul(t).mul(y).div(sigma);
+      result.assign(vec2(y, derivative));
+    })
+    .Case(1, () => { // EXPONENTIAL
+      const t = abs(x.sub(mu)).div(sigma).toVar();
+      const exp_t = exp(t.negate()).toVar();
+      const y = w.mul(exp_t).mul(0.6).toVar(); // Moderate dampening
+      const signVal = select(x.greaterThanEqual(mu), float(1.0), float(-1.0));
+      const derivative = signVal.negate().mul(y).div(sigma);
+      result.assign(vec2(y, derivative));
+    })
+    .Case(2, () => { // POLYNOMIAL
+        const t = abs(x.sub(mu)).div(sigma).toVar();
+        If(t.greaterThan(1.0), () => {
+            result.assign(vec2(0.0, 0.0));
+        }).Else(() => {
+            const poly = float(1.0).sub(t.mul(t)).toVar();
+            poly.assign(poly.mul(poly)); // (1-t²)²
+            const y = w.mul(poly).mul(0.8).toVar(); // Less dampening
+            const signVal = select(x.greaterThanEqual(mu), float(1.0), float(-1.0));
+            const derivative = float(-3.2).mul(signVal).mul(t).mul(float(1.0).sub(t.mul(t))).mul(w).div(sigma.mul(sigma));
+            result.assign(vec2(y, derivative));
+        });
+    })
+    .Case(3, () => { // MEXICAN_HAT
+        const t = x.sub(mu).div(sigma).toVar();
+        const t2 = t.mul(t).toVar();
+        const exp_term = exp(t2.div(-2.0)).toVar();
+        const y = w.mul(float(1.0).sub(t2)).mul(exp_term).mul(0.7).toVar(); // Less dampening
+        const derivative = w.negate().mul(t).mul(float(3.0).sub(t2)).mul(exp_term).mul(0.7).div(sigma);
+        result.assign(vec2(y, derivative));
+    })
+    .Case(4, () => { // SIGMOID
+        const t = x.sub(mu).div(sigma.mul(1.5)).toVar(); // Sharper transitions
+        const exp_t = exp(t.negate()).toVar();
+        const sigmoid = float(1.0).div(float(1.0).add(exp_t)).toVar();
+        const y = w.mul(sigmoid).mul(0.6).toVar(); // Moderate dampening
+        const derivative = w.mul(sigmoid).mul(float(1.0).sub(sigmoid)).mul(0.6).div(sigma.mul(1.5));
+        result.assign(vec2(y, derivative));
+    })
+    .Case(5, () => { // SINC
+        const t = x.sub(mu).div(sigma).toVar();
+        const abs_t = abs(t).toVar();
+        If(abs_t.lessThan(1e-6), () => {
+            result.assign(vec2(w.mul(0.5), 0.0)); // Less dampening
+        }).ElseIf(abs_t.greaterThan(4.0), () => {
+            result.assign(vec2(0.0, 0.0));
+        }).Else(() => {
+            const pi_t = PI.mul(t).toVar();
+            const sinc_val = sin(pi_t).div(pi_t).toVar();
+            const y = w.mul(sinc_val).mul(0.5).toVar(); // Less dampening
+            const derivative = w.mul(PI).mul(cos(pi_t).mul(pi_t).sub(sin(pi_t))).mul(0.5).div(pi_t.mul(pi_t).mul(sigma));
+            result.assign(vec2(y, derivative));
+        });
+    })
+    .Default(() => {
+      // Default to Gaussian
+      const t = x.sub(mu).div(sigma).toVar();
+      const y = w.div(fast_exp(t.mul(t))).toVar();
+      const derivative = float(-2.0).mul(t).mul(y).div(sigma);
+      result.assign(vec2(y, derivative));
+    });
   
   return result;
 });
@@ -324,7 +284,7 @@ class GPUParticleLenia {
   private species: Map<string, GPUSpecies> = new Map();
   private animationId: number | null = null;
   private dt: number = 0.033; // Default time step (30 FPS)
-  private deltaTimeUniform: THREE.Uniform = uniform(0.033);
+  private deltaTimeUniform: any = uniform(0.033);
   
   constructor() {
     // Initialize scene and camera first (synchronous)
@@ -388,6 +348,7 @@ class GPUParticleLenia {
     // Field buffers for force calculations
     const R_val = instancedArray(pointCount, 'float');     // Repulsion values
     const U_val = instancedArray(pointCount, 'float');     // Attraction values
+    const G_val = instancedArray(pointCount, 'float');     // Growth values
     const R_grad = instancedArray(pointCount, 'vec3');     // Repulsion gradients
     const U_grad = instancedArray(pointCount, 'vec3');     // Attraction gradients
     
@@ -435,8 +396,8 @@ class GPUParticleLenia {
       mu_g: uniform(params.mu_g),
       sigma_g: uniform(params.sigma_g),
       c_rep: uniform(params.c_rep),
-      kernel_k_type: uniform(params.kernel_k_type),
-      kernel_g_type: uniform(params.kernel_g_type)
+      kernel_k_type: uniform(kernelTypeToNumber(params.kernel_k_type)),
+      kernel_g_type: uniform(kernelTypeToNumber(params.kernel_g_type))
     } as const;
     
     // Connect GPU position buffer (per-instance) to rendering positions
@@ -464,12 +425,16 @@ class GPUParticleLenia {
       forceBuffer,
       R_val,
       U_val,
+      G_val,
       R_grad,
       U_grad,
       mesh,
       material,
       params: paramUniforms,
       color: speciesColor,
+      renderStyle: {
+        strokeStyle: speciesColor,
+      },
       interSpeciesForces: new Map<string, THREE.ComputeNode>()
     };
     
@@ -732,11 +697,10 @@ class GPUParticleLenia {
           R_grad_acc.addAssign(dr_norm.mul(dR_force));
         });
         
-        // Simple Gaussian attraction calculation without function dispatcher
-        const t = r.sub(params.mu_k).div(params.sigma_k);
-        const exp_t = fast_exp(t.mul(t));
-        const K_force = params.w_k.div(exp_t);
-        const dK_force = float(-2.0).mul(t).mul(K_force).div(params.sigma_k);
+        // Use kernel_f dispatcher for attraction
+        const kernel_result = kernel_f(r, params.mu_k, params.sigma_k, params.w_k, params.kernel_k_type);
+        const K_force = kernel_result.x;
+        const dK_force = kernel_result.y;
         
         U_acc.addAssign(K_force);
         U_grad_acc.addAssign(dr_norm.mul(dK_force));
@@ -763,6 +727,7 @@ class GPUParticleLenia {
       velocityBuffer: velA,
       R_val: R_val_A,
       U_val: U_val_A,
+      G_val: G_val_A,
       R_grad: R_grad_A,
       U_grad: U_grad_A,
       params: paramsA
@@ -790,6 +755,7 @@ class GPUParticleLenia {
       // Initialize accumulators for species A particle i
       const R_acc_A = float(0).toVar();
       const U_acc_A = float(0).toVar();
+      const G_acc_A = float(0).toVar();
       const R_grad_acc_A = vec3(0, 0, 0).toVar();
       const U_grad_acc_A = vec3(0, 0, 0).toVar();
       
@@ -823,14 +789,14 @@ class GPUParticleLenia {
           R_grad_acc_A.addAssign(dr_norm.mul(dR_force));
         });
         
-        // Simple Gaussian attraction A->B
-        const t = r.sub(paramsA.mu_k).div(paramsA.sigma_k);
-        const exp_t = fast_exp(t.mul(t));
-        const K_force = paramsA.w_k.div(exp_t);
-        const dK_force = float(-2.0).mul(t).mul(K_force).div(paramsA.sigma_k);
-        
-        U_acc_A.addAssign(K_force);
-        U_grad_acc_A.addAssign(dr_norm.mul(dK_force));
+        // Attraction Potential (U) from B to A
+        const kernel_k_result = kernel_f(r, paramsA.mu_k, paramsA.sigma_k, paramsA.w_k, paramsA.kernel_k_type);
+        U_acc_A.addAssign(kernel_k_result.x);
+        U_grad_acc_A.addAssign(dr_norm.mul(kernel_k_result.y));
+
+        // Growth Function (G) from B to A
+        const kernel_g_result = kernel_f(r, paramsA.mu_g, paramsA.sigma_g, float(1.0), paramsA.kernel_g_type);
+        G_acc_A.addAssign(kernel_g_result.x);
         
       });
       
@@ -839,6 +805,7 @@ class GPUParticleLenia {
       // ------------------------------------------------------------------
       R_val_A.element(i).addAssign(R_acc_A);
       U_val_A.element(i).addAssign(U_acc_A);
+      G_val_A.element(i).addAssign(G_acc_A);
       R_grad_A.element(i).addAssign(R_grad_acc_A);
       U_grad_A.element(i).addAssign(U_grad_acc_A);
 
@@ -847,7 +814,8 @@ class GPUParticleLenia {
       // ------------------------------------------------------------------
       const growth_force   = U_grad_acc_A.sub(R_grad_acc_A).toVar();
       const growth_mag     = length(growth_force);
-      const growth_response = growth_mag.mul(paramsA.mu_g).mul(10.0).toVar();
+      // The growth function G(U) is now G_val, which modulates the force
+      const growth_response = G_acc_A.sub(1).mul(10.0).toVar();
       const appliedForce   = growth_force.mul(growth_response).mul(2.0).toVar();
 
       // Integrate into velocity
@@ -968,7 +936,7 @@ class GPUParticleLenia {
    * Create force calculation compute shader - calculates particle-lenia interactions
    */
   createForceCalculationCompute(species: GPUSpecies) {
-    const { pointCount, positionBuffer, velocityBuffer, forceBuffer, R_val, U_val, R_grad, U_grad, params } = species;
+    const { pointCount, positionBuffer, velocityBuffer, forceBuffer, R_val, U_val, G_val, R_grad, U_grad, params } = species;
     
     // Shared uniforms
     const deltaTime = this.deltaTimeUniform;
@@ -990,6 +958,7 @@ class GPUParticleLenia {
       // Initialize accumulators for this particle
       const R_acc = float(0).toVar();
       const U_acc = float(0).toVar();
+      const G_acc = float(0).toVar();
       const R_grad_acc = vec3(0, 0, 0).toVar();
       const U_grad_acc = vec3(0, 0, 0).toVar();
       
@@ -1028,20 +997,21 @@ class GPUParticleLenia {
           R_grad_acc.addAssign(dr_norm.mul(dR_force));
         });
         
-        // Simple Gaussian attraction calculation
-        const t = r.sub(params.mu_k).div(params.sigma_k);
-        const exp_t = fast_exp(t.mul(t));
-        const K_force = params.w_k.div(exp_t);
-        const dK_force = float(-2.0).mul(t).mul(K_force).div(params.sigma_k);
-        
-        U_acc.addAssign(K_force);
-        U_grad_acc.addAssign(dr_norm.mul(dK_force));
+        // Attraction Potential (U)
+        const kernel_k_result = kernel_f(r, params.mu_k, params.sigma_k, params.w_k, params.kernel_k_type);
+        U_acc.addAssign(kernel_k_result.x);
+        U_grad_acc.addAssign(dr_norm.mul(kernel_k_result.y));
+
+        // Growth Function (G)
+        const kernel_g_result = kernel_f(r, params.mu_g, params.sigma_g, float(1.0), params.kernel_g_type);
+        G_acc.addAssign(kernel_g_result.x);
         
       });
       
       // Store accumulated results
       R_val.element(i).assign(R_acc);
       U_val.element(i).assign(U_acc);
+      G_val.element(i).assign(G_acc);
       R_grad.element(i).assign(R_grad_acc);
       U_grad.element(i).assign(U_grad_acc);
       
@@ -1050,8 +1020,9 @@ class GPUParticleLenia {
       
       // Apply growth function scaling with amplification
       const growth_magnitude = length(growth_force);
-      const growth_response = growth_magnitude.mul(params.mu_g).mul(10.0).toVar(); // 10x amplification
-      
+      // The growth function G(U) is now G_val, which modulates the force
+      const growth_response = G_acc.sub(1).mul(10.0).toVar();
+
       // Store final force with additional scaling for visibility
       const appliedForce = growth_force.mul(growth_response).mul(2.0).toVar();
       forceBuffer.element(i).assign(appliedForce);
@@ -1442,8 +1413,8 @@ class GPUParticleLenia {
       // Debug: Log camera and scene info
       console.log('📷 Camera info:');
       console.log(`   - Position: (${this.camera.position.x}, ${this.camera.position.y}, ${this.camera.position.z})`);
-      console.log(`   - Left/Right: ${this.camera.left} to ${this.camera.right}`);
-      console.log(`   - Top/Bottom: ${this.camera.top} to ${this.camera.bottom}`);
+      // console.log(`   - Left/Right: ${this.camera.left} to ${this.camera.right}`);
+      // console.log(`   - Top/Bottom: ${this.camera.top} to ${this.camera.bottom}`);
       console.log(`   - Scene children: ${this.scene.children.length}`);
       
       // Debug: Check mesh details
@@ -1479,8 +1450,8 @@ class GPUParticleLenia {
     if (newParams.mu_g !== undefined)      species.params.mu_g.value      = newParams.mu_g;
     if (newParams.sigma_g !== undefined)   species.params.sigma_g.value   = newParams.sigma_g;
     if (newParams.c_rep !== undefined)     species.params.c_rep.value     = newParams.c_rep;
-    if (newParams.kernel_k_type !== undefined) species.params.kernel_k_type.value = newParams.kernel_k_type;
-    if (newParams.kernel_g_type !== undefined) species.params.kernel_g_type.value = newParams.kernel_g_type;
+    if (newParams.kernel_k_type !== undefined) species.params.kernel_k_type.value = kernelTypeToNumber(newParams.kernel_k_type);
+    if (newParams.kernel_g_type !== undefined) species.params.kernel_g_type.value = kernelTypeToNumber(newParams.kernel_g_type);
 
     return true;
   }
