@@ -415,8 +415,9 @@ class GPUParticleLenia {
     // create a soft glow similar to the WebGPU reference renderer.
 
     const distFromCenter = length(uv().sub(vec2(0.5, 0.5)));
-    // Glow alpha: stronger exponential fall-off for crisper circle
-    const glowAlpha = exp(distFromCenter.mul(distFromCenter).mul(-20.0));
+    // Glow alpha: sharp power-based fall-off for crisp circular edge
+    // alpha = clamp(1 - (r * 2)^8, 0, 1) to create hard edge with minimal blur
+    const glowAlpha = clamp(float(1.0).sub(pow(distFromCenter.mul(2.0), 8.0)), float(0.0), float(1.0));
 
     // Glow controls transparency only; keep full intrinsic colour for brightness
     material.colorNode = color(speciesColor);
