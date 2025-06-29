@@ -187,6 +187,28 @@ function setupDragAndDrop() {
         if (success) {
           console.log('Simulation loaded successfully via drag and drop')
           
+          // Try to load kernel selections from the dropped file
+          try {
+            const fileText = await file.text();
+            const simulationData = JSON.parse(fileText);
+            
+            if (simulationData.kernelSelections) {
+              const kernelKSelect = document.getElementById('kernel-k-select') as HTMLSelectElement;
+              const kernelGSelect = document.getElementById('kernel-g-select') as HTMLSelectElement;
+              
+              if (kernelKSelect && simulationData.kernelSelections.kernel_k) {
+                kernelKSelect.value = simulationData.kernelSelections.kernel_k;
+              }
+              if (kernelGSelect && simulationData.kernelSelections.kernel_g) {
+                kernelGSelect.value = simulationData.kernelSelections.kernel_g;
+              }
+              
+              console.log('Kernel selections restored from drag-and-drop:', simulationData.kernelSelections);
+            }
+          } catch (error) {
+            console.warn('Could not restore kernel selections from dropped file:', error);
+          }
+          
           // Update species slider and display to match loaded simulation
           const currentSpeciesCount = gpuSim.getSpeciesCount()
           const speciesSlider = document.getElementById('species-slider') as HTMLInputElement | null
@@ -247,8 +269,30 @@ function setupUI() {
   if (saveBtn) {
     saveBtn.addEventListener('click', () => {
       if (gpuSim) {
-        gpuSim.saveSimulation()
-        console.log('GPU simulation saved')
+        // Before saving, update the kernel selections in the simulation data
+        const kernelKSelect = document.getElementById('kernel-k-select') as HTMLSelectElement;
+        const kernelGSelect = document.getElementById('kernel-g-select') as HTMLSelectElement;
+        
+        // Save current kernel selections as metadata
+        const simulationData = JSON.parse(gpuSim.exportSimulation());
+        simulationData.kernelSelections = {
+          kernel_k: kernelKSelect ? kernelKSelect.value : 'gaussian',
+          kernel_g: kernelGSelect ? kernelGSelect.value : 'gaussian'
+        };
+        
+        // Save the enhanced simulation data
+        const blob = new Blob([JSON.stringify(simulationData, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `gpu-particle-lenia-${Date.now()}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        console.log('GPU simulation saved with kernel selections');
       }
     })
   }
@@ -262,8 +306,33 @@ function setupUI() {
         if (success) {
           console.log('GPU simulation loaded successfully')
           
+          // Try to load kernel selections from the file
+          try {
+            const fileText = await files[0].text();
+            const simulationData = JSON.parse(fileText);
+            
+            if (simulationData.kernelSelections) {
+              const kernelKSelect = document.getElementById('kernel-k-select') as HTMLSelectElement;
+              const kernelGSelect = document.getElementById('kernel-g-select') as HTMLSelectElement;
+              
+              if (kernelKSelect && simulationData.kernelSelections.kernel_k) {
+                kernelKSelect.value = simulationData.kernelSelections.kernel_k;
+              }
+              if (kernelGSelect && simulationData.kernelSelections.kernel_g) {
+                kernelGSelect.value = simulationData.kernelSelections.kernel_g;
+              }
+              
+              console.log('Kernel selections restored:', simulationData.kernelSelections);
+            }
+          } catch (error) {
+            console.warn('Could not restore kernel selections from file:', error);
+          }
+          
           // Update species slider and display to match loaded simulation
           const currentSpeciesCount = gpuSim.getSpeciesCount()
+          const speciesSlider = document.getElementById('species-slider') as HTMLInputElement | null
+          const speciesCountDisplay = document.getElementById('species-count')
+          
           if (speciesSlider && speciesCountDisplay) {
             speciesSlider.value = currentSpeciesCount.toString()
             speciesCountDisplay.textContent = currentSpeciesCount.toString()
