@@ -1,0 +1,86 @@
+{
+  "timestamp": "2025-06-28T18:39:22.528Z",
+  "worldDimensions": {
+    "width": 55,
+    "height": 41.25
+  },
+  "stepsPerFrame": 10,
+  "species": [
+    {
+      "id": "species_0",
+      "name": "Species 1",
+      "pointCount": 125,
+      "params": {
+        "mu_k": 6.0402493669119295,
+        "sigma_k": 1.314121801240237,
+        "w_k": 0.11034874701303993,
+        "mu_g": 0.6619958924053271,
+        "sigma_g": 0.2555753701053437,
+        "c_rep": 2.4033891623900248,
+        "kernel_k_type": "mexican_hat",
+        "kernel_g_type": "mexican_hat"
+      },
+      "color": "#00ff88",
+      "renderStyle": {
+        "strokeStyle": "#00ff88"
+      }
+    },
+    {
+      "id": "species_1",
+      "name": "Species 2",
+      "pointCount": 125,
+      "params": {
+        "mu_k": 1.9389902973692852,
+        "sigma_k": 1.126960677277223,
+        "w_k": 0.06219159456491952,
+        "mu_g": 0.14123193925823474,
+        "sigma_g": 0.08922494921215013,
+        "c_rep": 1.5171563052865122,
+        "kernel_k_type": "gaussian",
+        "kernel_g_type": "sigmoid"
+      },
+      "color": "#4488ff",
+      "renderStyle": {
+        "strokeStyle": "#4488ff"
+      }
+    }
+  ],
+  "interactions": [
+    {
+      "speciesAId": "species_0",
+      "interactions": [
+        {
+          "speciesBId": "species_1",
+          "params": {
+            "mu_k": 2.344132352107798,
+            "sigma_k": 1.0445250682816059,
+            "w_k": 0.06320483948405727,
+            "mu_g": 0.7774842191268361,
+            "sigma_g": 0.25169865508365,
+            "c_rep": 1.7840717949041969,
+            "kernel_k_type": "mexican_hat",
+            "kernel_g_type": "polynomial"
+          }
+        }
+      ]
+    },
+    {
+      "speciesAId": "species_1",
+      "interactions": [
+        {
+          "speciesBId": "species_0",
+          "params": {
+            "mu_k": 6.9546415699588975,
+            "sigma_k": 2.2975739632188,
+            "w_k": 0.03128680909422765,
+            "mu_g": 0.704784993614251,
+            "sigma_g": 0.05414602442947465,
+            "c_rep": 2.286757572635642,
+            "kernel_k_type": "polynomial",
+            "kernel_g_type": "sinc"
+          }
+        }
+      ]
+    }
+  ]
+}

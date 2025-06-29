@@ -1,0 +1,89 @@
+{
+  "timestamp": "2025-06-29T09:37:33.302Z",
+  "worldDimensions": {
+    "width": 55,
+    "height": 41.25
+  },
+  "species": [
+    {
+      "id": "gpu_species_0",
+      "name": "GPU Species 1",
+      "pointCount": 7000,
+      "params": {
+        "mu_k": 6.208439499795911,
+        "sigma_k": 2.150510948443269,
+        "w_k": 0.07500655145449132,
+        "mu_g": 0.3959807804316481,
+        "sigma_g": 0.09170546452509662,
+        "c_rep": 0.9332136667836879,
+        "kernel_k_type": "polynomial",
+        "kernel_g_type": "sigmoid"
+      },
+      "color": "#00ff88"
+    },
+    {
+      "id": "gpu_species_1",
+      "name": "GPU Species 2",
+      "pointCount": 7000,
+      "params": {
+        "mu_k": 4.6215716205407515,
+        "sigma_k": 2.5611946344938903,
+        "w_k": 0.09560754424893868,
+        "mu_g": 0.28537818915931396,
+        "sigma_g": 0.07949731984207496,
+        "c_rep": 1.3402274457537167,
+        "kernel_k_type": "polynomial",
+        "kernel_g_type": "gaussian"
+      },
+      "color": "#4488ff"
+    },
+    {
+      "id": "gpu_species_2",
+      "name": "GPU Species 3",
+      "pointCount": 7000,
+      "params": {
+        "mu_k": 5.552245141149934,
+        "sigma_k": 0.7510612690752505,
+        "w_k": 0.07975046436405316,
+        "mu_g": 0.2894113111970831,
+        "sigma_g": 0.33279030815587596,
+        "c_rep": 2.2151633463283815,
+        "kernel_k_type": "gaussian",
+        "kernel_g_type": "sigmoid"
+      },
+      "color": "#ff4488"
+    },
+    {
+      "id": "gpu_species_3",
+      "name": "GPU Species 4",
+      "pointCount": 7000,
+      "params": {
+        "mu_k": 3.55883823979603,
+        "sigma_k": 1.1448135501517291,
+        "w_k": 0.10996668062522233,
+        "mu_g": 0.6169902004732197,
+        "sigma_g": 0.20095692182288163,
+        "c_rep": 0.7484167211114732,
+        "kernel_k_type": "sinc",
+        "kernel_g_type": "gaussian"
+      },
+      "color": "#ff8844"
+    },
+    {
+      "id": "gpu_species_4",
+      "name": "GPU Species 5",
+      "pointCount": 7000,
+      "params": {
+        "mu_k": 4.760909866552277,
+        "sigma_k": 2.695818248911439,
+        "w_k": 0.0769087240348518,
+        "mu_g": 0.5486111410197079,
+        "sigma_g": 0.20472534949192242,
+        "c_rep": 0.5883379186306938,
+        "kernel_k_type": "exponential",
+        "kernel_g_type": "sigmoid"
+      },
+      "color": "#8844ff"
+    }
+  ]
+}

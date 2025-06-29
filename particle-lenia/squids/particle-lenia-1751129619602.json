@@ -1,0 +1,88 @@
+{
+  "timestamp": "2025-06-28T16:53:39.602Z",
+  "worldDimensions": {
+    "width": 55,
+    "height": 41.25
+  },
+  "stepsPerFrame": 10,
+  "species": [
+    {
+      "id": "species_0",
+      "name": "Species 1",
+      "pointCount": 125,
+      "params": {
+        "mu_k": 7.74439010185974,
+        "sigma_k": 1.9858140666362312,
+        "w_k": 0.03859600954310177,
+        "mu_g": 0.23540108525056702,
+        "sigma_g": 0.29387597212254,
+        "c_rep": 2.5260015833378433,
+        "dt": 0.02,
+        "kernel_k_type": "mexican_hat",
+        "kernel_g_type": "mexican_hat"
+      },
+      "color": "#00ff88",
+      "renderStyle": {
+        "strokeStyle": "#00ff88"
+      }
+    },
+    {
+      "id": "species_1",
+      "name": "Species 2",
+      "pointCount": 125,
+      "params": {
+        "mu_k": 9.026921667775683,
+        "sigma_k": 1.924295690035447,
+        "w_k": 0.025457559471050002,
+        "mu_g": 0.2646856597638676,
+        "sigma_g": 0.11159687454223564,
+        "c_rep": 2.034602630945606,
+        "dt": 0.02,
+        "kernel_k_type": "polynomial",
+        "kernel_g_type": "sinc"
+      },
+      "color": "#4488ff",
+      "renderStyle": {
+        "strokeStyle": "#4488ff"
+      }
+    }
+  ],
+  "interactions": [
+    {
+      "speciesAId": "species_0",
+      "interactions": [
+        {
+          "speciesBId": "species_1",
+          "params": {
+            "mu_k": 8.546574701385165,
+            "sigma_k": 1.5303537841052193,
+            "w_k": 0.05944518476245372,
+            "c_rep": 2.9214222293764727,
+            "mu_g": 0.4325497465438426,
+            "sigma_g": 0.09200269857183907,
+            "kernel_k_type": "sigmoid",
+            "kernel_g_type": "polynomial"
+          }
+        }
+      ]
+    },
+    {
+      "speciesAId": "species_1",
+      "interactions": [
+        {
+          "speciesBId": "species_0",
+          "params": {
+            "mu_k": 5.928130726966077,
+            "sigma_k": 1.9001360390260411,
+            "w_k": 0.1034068317834768,
+            "c_rep": 0.8214719738392782,
+            "mu_g": 0.24396389677831964,
+            "sigma_g": 0.15511106453032408,
+            "kernel_k_type": "polynomial",
+            "kernel_g_type": "mexican_hat"
+          }
+        }
+      ]
+    }
+  ]
+}

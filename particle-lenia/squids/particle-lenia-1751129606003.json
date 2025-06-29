@@ -1,0 +1,88 @@
+{
+  "timestamp": "2025-06-28T16:53:26.001Z",
+  "worldDimensions": {
+    "width": 55,
+    "height": 41.25
+  },
+  "stepsPerFrame": 10,
+  "species": [
+    {
+      "id": "species_0",
+      "name": "Species 1",
+      "pointCount": 125,
+      "params": {
+        "mu_k": 2.562590062731708,
+        "sigma_k": 2.2140097180760234,
+        "w_k": 0.024509643840681404,
+        "mu_g": 0.31419560024159604,
+        "sigma_g": 0.21959063367038667,
+        "c_rep": 1.5648854953212545,
+        "dt": 0.02,
+        "kernel_k_type": "polynomial",
+        "kernel_g_type": "gaussian"
+      },
+      "color": "#00ff88",
+      "renderStyle": {
+        "strokeStyle": "#00ff88"
+      }
+    },
+    {
+      "id": "species_1",
+      "name": "Species 2",
+      "pointCount": 125,
+      "params": {
+        "mu_k": 3.5424831782556376,
+        "sigma_k": 2.553934391034331,
+        "w_k": 0.1292754084109611,
+        "mu_g": 0.7050041141590562,
+        "sigma_g": 0.3514316534869237,
+        "c_rep": 1.174787307552264,
+        "dt": 0.02,
+        "kernel_k_type": "mexican_hat",
+        "kernel_g_type": "exponential"
+      },
+      "color": "#4488ff",
+      "renderStyle": {
+        "strokeStyle": "#4488ff"
+      }
+    }
+  ],
+  "interactions": [
+    {
+      "speciesAId": "species_0",
+      "interactions": [
+        {
+          "speciesBId": "species_1",
+          "params": {
+            "mu_k": 7.969914411268852,
+            "sigma_k": 0.6233390333798081,
+            "w_k": 0.05038911661039933,
+            "c_rep": 2.111777684759061,
+            "mu_g": 0.8152745438906879,
+            "sigma_g": 0.3541173466190202,
+            "kernel_k_type": "gaussian",
+            "kernel_g_type": "polynomial"
+          }
+        }
+      ]
+    },
+    {
+      "speciesAId": "species_1",
+      "interactions": [
+        {
+          "speciesBId": "species_0",
+          "params": {
+            "mu_k": 7.0464053704605325,
+            "sigma_k": 1.8804474900733874,
+            "w_k": 0.03368436192426893,
+            "c_rep": 2.3155680496689635,
+            "mu_g": 0.8665190045516205,
+            "sigma_g": 0.22021201174867427,
+            "kernel_k_type": "gaussian",
+            "kernel_g_type": "gaussian"
+          }
+        }
+      ]
+    }
+  ]
+}

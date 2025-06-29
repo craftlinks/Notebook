@@ -1,0 +1,35 @@
+{
+  "timestamp": "2025-06-28T18:43:32.974Z",
+  "worldDimensions": {
+    "width": 55,
+    "height": 41.25
+  },
+  "stepsPerFrame": 10,
+  "species": [
+    {
+      "id": "species_0",
+      "name": "Species 1",
+      "pointCount": 200,
+      "params": {
+        "mu_k": 1.6714644165777006,
+        "sigma_k": 2.9072470404529467,
+        "w_k": 0.07655554981176105,
+        "mu_g": 0.7586696317017445,
+        "sigma_g": 0.2691617119767,
+        "c_rep": 1.7865886674349096,
+        "kernel_k_type": "sinc",
+        "kernel_g_type": "mexican_hat"
+      },
+      "color": "#00ff88",
+      "renderStyle": {
+        "strokeStyle": "#00ff88"
+      }
+    }
+  ],
+  "interactions": [
+    {
+      "speciesAId": "species_0",
+      "interactions": []
+    }
+  ]
+}

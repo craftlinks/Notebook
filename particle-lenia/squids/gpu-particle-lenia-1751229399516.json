@@ -1,0 +1,61 @@
+{
+  "timestamp": "2025-06-29T20:36:39.516Z",
+  "worldDimensions": {
+    "width": 55,
+    "height": 41.25
+  },
+  "species": [
+    {
+      "id": "gpu_species_0",
+      "name": "GPU Species 1",
+      "pointCount": 7000,
+      "params": {
+        "mu_k": 6.326670987301796,
+        "sigma_k": 1.6484789942566476,
+        "w_k": 0.06100647814118601,
+        "mu_g": 0.6955875107887636,
+        "sigma_g": 0.13238932908687148,
+        "c_rep": 0.9890086338576738,
+        "kernel_k_type": 3,
+        "kernel_g_type": 4
+      },
+      "color": "#00ff88"
+    },
+    {
+      "id": "gpu_species_1",
+      "name": "GPU Species 2",
+      "pointCount": 7000,
+      "params": {
+        "mu_k": 7.971824394325154,
+        "sigma_k": 2.1403650534094507,
+        "w_k": 0.010732809082852283,
+        "mu_g": 0.2902215560777047,
+        "sigma_g": 0.17324001509122264,
+        "c_rep": 1.6517992263777894,
+        "kernel_k_type": 3,
+        "kernel_g_type": 4
+      },
+      "color": "#4488ff"
+    },
+    {
+      "id": "gpu_species_2",
+      "name": "GPU Species 3",
+      "pointCount": 7000,
+      "params": {
+        "mu_k": 8.51326731010084,
+        "sigma_k": 2.9872676593322782,
+        "w_k": 0.12017033532397592,
+        "mu_g": 0.8894683736545784,
+        "sigma_g": 0.03932738955819194,
+        "c_rep": 1.175984765221505,
+        "kernel_k_type": 3,
+        "kernel_g_type": 4
+      },
+      "color": "#ff4488"
+    }
+  ],
+  "kernelSelections": {
+    "kernel_k": "mexican_hat",
+    "kernel_g": "sigmoid"
+  }
+}

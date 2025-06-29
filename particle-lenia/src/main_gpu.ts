@@ -35,6 +35,19 @@ function kernelTypeToNumber(kernelType: KernelType): number {
   }
 }
 
+// Convert number back to KernelType enum for loading saved simulations
+function numberToKernelType(num: number): KernelType {
+  switch (num) {
+    case 0: return KernelType.GAUSSIAN;
+    case 1: return KernelType.EXPONENTIAL;
+    case 2: return KernelType.POLYNOMIAL;
+    case 3: return KernelType.MEXICAN_HAT;
+    case 4: return KernelType.SIGMOID;
+    case 5: return KernelType.SINC;
+    default: return KernelType.GAUSSIAN; // Default fallback
+  }
+}
+
 // Type definitions (same as original)
 interface Params {
   mu_k: number;
@@ -231,8 +244,8 @@ const kernel_f = /*@__PURE__*/ Fn(([x, mu, sigma, w, kernelType]) => {
         const t = x.sub(mu).div(sigma).toVar();
         const t2 = t.mul(t).toVar();
         const exp_term = exp(t2.div(-2.0)).toVar();
-        const y = w.mul(float(1.0).sub(t2)).mul(exp_term).mul(0.7).toVar(); // Less dampening
-        const derivative = w.negate().mul(t).mul(float(3.0).sub(t2)).mul(exp_term).mul(0.7).div(sigma);
+        const y = w.mul(float(1.0).sub(t2)).mul(exp_term).mul(0.2).toVar(); // Less dampening
+        const derivative = w.negate().mul(t).mul(float(3.0).sub(t2)).mul(exp_term).mul(0.2).div(sigma);
         result.assign(vec2(y, derivative));
     })
     .Case(4, () => { // SIGMOID
@@ -1220,6 +1233,11 @@ class GPUParticleLenia {
       }))
     };
     
+    console.log(`💾 Exporting simulation with ${this.species.size} species:`);
+    for (const [id, species] of this.species.entries()) {
+      console.log(`   - ${id}: ${species.pointCount} particles, kernels: ${species.params.kernel_k_type.value}(k), ${species.params.kernel_g_type.value}(g)`);
+    }
+    
     return JSON.stringify(simulationData, null, 2);
   }
 
@@ -1229,6 +1247,8 @@ class GPUParticleLenia {
   async importSimulation(jsonData: string): Promise<boolean> {
     try {
       const data = JSON.parse(jsonData);
+      
+      console.log(`📂 Importing simulation with ${data.species ? data.species.length : 0} species from ${data.timestamp || 'unknown time'}`);
       
       // Stop current animation
       this.stopAnimation();
@@ -1243,6 +1263,9 @@ class GPUParticleLenia {
       
       // Restore species
       for (const speciesData of data.species) {
+        console.log(`   - Loading ${speciesData.name || speciesData.id}: ${speciesData.pointCount} particles`);
+        console.log(`     Kernels: ${speciesData.params.kernel_k_type}(k) -> ${numberToKernelType(speciesData.params.kernel_k_type)}, ${speciesData.params.kernel_g_type}(g) -> ${numberToKernelType(speciesData.params.kernel_g_type)}`);
+        
         const params: Params = {
           mu_k: speciesData.params.mu_k,
           sigma_k: speciesData.params.sigma_k,
@@ -1250,8 +1273,8 @@ class GPUParticleLenia {
           mu_g: speciesData.params.mu_g,
           sigma_g: speciesData.params.sigma_g,
           c_rep: speciesData.params.c_rep,
-          kernel_k_type: speciesData.params.kernel_k_type,
-          kernel_g_type: speciesData.params.kernel_g_type
+          kernel_k_type: numberToKernelType(speciesData.params.kernel_k_type),
+          kernel_g_type: numberToKernelType(speciesData.params.kernel_g_type)
         };
         
         this.createSpecies(speciesData.pointCount, params);
@@ -1266,6 +1289,7 @@ class GPUParticleLenia {
       // Restart animation
       this.startAnimation();
       
+      console.log(`✅ Successfully imported ${this.species.size} species`);
       return true;
       
     } catch (error) {
@@ -1455,6 +1479,132 @@ class GPUParticleLenia {
 
     return true;
   }
+
+  /**
+   * Test save/load functionality to verify it preserves all species data correctly
+   */
+  async testSaveLoad(): Promise<boolean> {
+    console.log('\n🧪 Testing Save/Load Functionality...');
+    console.log('='.repeat(50));
+    
+    // Create test species with different kernel types
+    const testParams1: Params = {
+      mu_k: 3.5,
+      sigma_k: 0.75,
+      w_k: 0.07,
+      mu_g: 0.35,
+      sigma_g: 0.13,
+      c_rep: 1.1,
+      kernel_k_type: KernelType.GAUSSIAN,
+      kernel_g_type: KernelType.EXPONENTIAL
+    };
+    
+    const testParams2: Params = {
+      mu_k: 2.8,
+      sigma_k: 0.9,
+      w_k: 0.09,
+      mu_g: 0.42,
+      sigma_g: 0.18,
+      c_rep: 0.8,
+      kernel_k_type: KernelType.MEXICAN_HAT,
+      kernel_g_type: KernelType.SINC
+    };
+    
+    const testParams3: Params = {
+      mu_k: 4.2,
+      sigma_k: 0.6,
+      w_k: 0.05,
+      mu_g: 0.28,
+      sigma_g: 0.11,
+      c_rep: 1.3,
+      kernel_k_type: KernelType.POLYNOMIAL,
+      kernel_g_type: KernelType.SIGMOID
+    };
+    
+    // Clear existing species
+    this.stopAnimation();
+    for (const species of this.species.values()) {
+      this.scene.remove(species.mesh);
+      species.mesh.geometry.dispose();
+      species.material.dispose();
+    }
+    this.species.clear();
+    
+    // Create test species
+    const id1 = this.createSpecies(25, testParams1);
+    const id2 = this.createSpecies(35, testParams2);
+    const id3 = this.createSpecies(20, testParams3);
+    
+    console.log(`✓ Created 3 test species with different kernel types`);
+    console.log(`   - Species 1: ${testParams1.kernel_k_type} (k), ${testParams1.kernel_g_type} (g)`);
+    console.log(`   - Species 2: ${testParams2.kernel_k_type} (k), ${testParams2.kernel_g_type} (g)`);
+    console.log(`   - Species 3: ${testParams3.kernel_k_type} (k), ${testParams3.kernel_g_type} (g)`);
+    
+    // Export simulation
+    const exportedData = this.exportSimulation();
+    console.log(`📤 Exported simulation data (${exportedData.length} characters)`);
+    
+    // Store original species count and data for verification
+    const originalSpeciesCount = this.species.size;
+    const originalSpeciesData = Array.from(this.species.values()).map(s => ({
+      pointCount: s.pointCount,
+      kernel_k: s.params.kernel_k_type.value,
+      kernel_g: s.params.kernel_g_type.value,
+      mu_k: s.params.mu_k.value,
+      c_rep: s.params.c_rep.value
+    }));
+    
+    // Import simulation back
+    const importSuccess = await this.importSimulation(exportedData);
+    
+    if (!importSuccess) {
+      console.error('❌ Import failed');
+      return false;
+    }
+    
+    // Verify restoration
+    const restoredSpeciesCount = this.species.size;
+    const restoredSpeciesData = Array.from(this.species.values()).map(s => ({
+      pointCount: s.pointCount,
+      kernel_k: s.params.kernel_k_type.value,
+      kernel_g: s.params.kernel_g_type.value,
+      mu_k: s.params.mu_k.value,
+      c_rep: s.params.c_rep.value
+    }));
+    
+    // Check species count
+    if (originalSpeciesCount !== restoredSpeciesCount) {
+      console.error(`❌ Species count mismatch: original ${originalSpeciesCount}, restored ${restoredSpeciesCount}`);
+      return false;
+    }
+    
+    // Check species data (order may differ, so sort by pointCount for comparison)
+    const originalSorted = originalSpeciesData.sort((a, b) => a.pointCount - b.pointCount);
+    const restoredSorted = restoredSpeciesData.sort((a, b) => a.pointCount - b.pointCount);
+    
+    for (let i = 0; i < originalSorted.length; i++) {
+      const orig = originalSorted[i];
+      const rest = restoredSorted[i];
+      
+      if (orig.pointCount !== rest.pointCount ||
+          orig.kernel_k !== rest.kernel_k ||
+          orig.kernel_g !== rest.kernel_g ||
+          Math.abs(orig.mu_k - rest.mu_k) > 1e-6 ||
+          Math.abs(orig.c_rep - rest.c_rep) > 1e-6) {
+        console.error(`❌ Species data mismatch at index ${i}:`);
+        console.error(`   Original:  ${JSON.stringify(orig)}`);
+        console.error(`   Restored:  ${JSON.stringify(rest)}`);
+        return false;
+      }
+    }
+    
+    console.log('✅ All species data correctly preserved through save/load cycle');
+    console.log(`   - Species count: ${restoredSpeciesCount}`);
+    console.log(`   - Total particles: ${restoredSpeciesData.reduce((sum, s) => sum + s.pointCount, 0)}`);
+    console.log(`   - Kernel types correctly converted`);
+    
+    return true;
+  }
 }
 
 // Initialize GPU simulation for testing
@@ -1472,19 +1622,29 @@ async function initGPUSimulation() {
     // Test particle interaction compute shaders
     await gpuSim.testParticleInteractions();
     
+    // Test save/load functionality (IMPORTANT: this should work correctly now)
+    const saveLoadSuccess = await gpuSim.testSaveLoad();
+    if (!saveLoadSuccess) {
+      console.error('❌ Save/Load test failed - simulation parameters may not persist correctly!');
+    }
+    
     // Test basic rendering system
     await gpuSim.testBasicRendering();
     
-    console.log('\n🎉 GPU initialization, particle interactions, and rendering complete!');
+    console.log('\n🎉 GPU initialization, particle interactions, save/load, and rendering complete!');
     console.log('💡 Next steps:');
     console.log('   - Call gpuSim.startAnimation() to begin real-time simulation');
-    console.log('   - Add inter-species interactions between all species');
+    console.log('   - Use gpuSim.saveSimulation() to save current state');
+    console.log('   - Use gpuSim.loadSimulationFile(file) to load saved simulations');
     console.log('   - Scale up particle counts for performance testing');
     
     // Store reference globally for manual control
     if (typeof window !== 'undefined') {
       (window as any).gpuSim = gpuSim;
       console.log('📌 gpuSim instance available globally as window.gpuSim');
+      console.log('📁 Example save/load usage:');
+      console.log('   window.gpuSim.saveSimulation("my-simulation.json")');
+      console.log('   // Or load via file input: gpuSim.loadSimulationFile(file)');
     }
     
     return gpuSim;

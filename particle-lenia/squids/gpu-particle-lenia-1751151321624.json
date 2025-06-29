@@ -1,0 +1,25 @@
+{
+  "timestamp": "2025-06-28T22:55:21.623Z",
+  "worldDimensions": {
+    "width": 55,
+    "height": 41.25
+  },
+  "species": [
+    {
+      "id": "gpu_species_0",
+      "name": "GPU Species 1",
+      "pointCount": 25000,
+      "params": {
+        "mu_k": 9.279516096959796,
+        "sigma_k": 0.221219899609769,
+        "w_k": 0.04622723602522247,
+        "mu_g": 0.8454036447150621,
+        "sigma_g": 0.23117336812609057,
+        "c_rep": 1.9562478403128705,
+        "kernel_k_type": "sinc",
+        "kernel_g_type": "mexican_hat"
+      },
+      "color": "#00ff88"
+    }
+  ]
+}

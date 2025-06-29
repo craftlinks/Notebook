@@ -1,0 +1,162 @@
+{
+  "timestamp": "2025-06-28T19:13:02.326Z",
+  "worldDimensions": {
+    "width": 55,
+    "height": 41.25
+  },
+  "stepsPerFrame": 10,
+  "species": [
+    {
+      "id": "species_0",
+      "name": "Species 1",
+      "pointCount": 125,
+      "params": {
+        "mu_k": 4.513029646212768,
+        "sigma_k": 0.6783580770764952,
+        "w_k": 0.053727300425141,
+        "mu_g": 0.41614934579800866,
+        "sigma_g": 0.11414699469417675,
+        "c_rep": 1.6396401408867676,
+        "kernel_k_type": "mexican_hat",
+        "kernel_g_type": "polynomial"
+      },
+      "color": "#00ff88",
+      "renderStyle": {
+        "strokeStyle": "#00ff88"
+      }
+    },
+    {
+      "id": "species_1",
+      "name": "Species 2",
+      "pointCount": 125,
+      "params": {
+        "mu_k": 2.438711087203031,
+        "sigma_k": 1.9599771610645371,
+        "w_k": 0.047196380913282994,
+        "mu_g": 0.512259417690419,
+        "sigma_g": 0.3120429111819355,
+        "c_rep": 1.1265466804171687,
+        "kernel_k_type": "mexican_hat",
+        "kernel_g_type": "polynomial"
+      },
+      "color": "#4488ff",
+      "renderStyle": {
+        "strokeStyle": "#4488ff"
+      }
+    },
+    {
+      "id": "species_2",
+      "name": "Species 3",
+      "pointCount": 125,
+      "params": {
+        "mu_k": 4.336599207318603,
+        "sigma_k": 2.2541051656018025,
+        "w_k": 0.11840758825000873,
+        "mu_g": 0.15608361338567722,
+        "sigma_g": 0.21373614609427347,
+        "c_rep": 1.9695814601059243,
+        "kernel_k_type": "gaussian",
+        "kernel_g_type": "mexican_hat"
+      },
+      "color": "#ff4488",
+      "renderStyle": {
+        "strokeStyle": "#ff4488"
+      }
+    }
+  ],
+  "interactions": [
+    {
+      "speciesAId": "species_0",
+      "interactions": [
+        {
+          "speciesBId": "species_1",
+          "params": {
+            "mu_k": 8.8595593294454,
+            "sigma_k": 1.431152234122329,
+            "w_k": 0.07330729591946612,
+            "mu_g": 0.5962567711178779,
+            "sigma_g": 0.14694226598076443,
+            "c_rep": 0.617135782004202,
+            "kernel_k_type": "gaussian",
+            "kernel_g_type": "mexican_hat"
+          }
+        },
+        {
+          "speciesBId": "species_2",
+          "params": {
+            "mu_k": 6.329884115526889,
+            "sigma_k": 2.4457638078932042,
+            "w_k": 0.1065457724155281,
+            "mu_g": 0.18125519641133556,
+            "sigma_g": 0.2538862215467277,
+            "c_rep": 2.0336151184624094,
+            "kernel_k_type": "mexican_hat",
+            "kernel_g_type": "mexican_hat"
+          }
+        }
+      ]
+    },
+    {
+      "speciesAId": "species_1",
+      "interactions": [
+        {
+          "speciesBId": "species_0",
+          "params": {
+            "mu_k": 2.6329676709304177,
+            "sigma_k": 3.18301556115549,
+            "w_k": 0.04437527977700629,
+            "mu_g": 0.5309102190318308,
+            "sigma_g": 0.13340741998461733,
+            "c_rep": 0.967404701132963,
+            "kernel_k_type": "polynomial",
+            "kernel_g_type": "sigmoid"
+          }
+        },
+        {
+          "speciesBId": "species_2",
+          "params": {
+            "mu_k": 8.21609436794957,
+            "sigma_k": 2.2755709255027887,
+            "w_k": 0.04579698836411541,
+            "mu_g": 0.6569588974808552,
+            "sigma_g": 0.05467778788221099,
+            "c_rep": 2.385691874430673,
+            "kernel_k_type": "gaussian",
+            "kernel_g_type": "mexican_hat"
+          }
+        }
+      ]
+    },
+    {
+      "speciesAId": "species_2",
+      "interactions": [
+        {
+          "speciesBId": "species_0",
+          "params": {
+            "mu_k": 8.335419105330335,
+            "sigma_k": 2.5777984037344988,
+            "w_k": 0.08760206165280976,
+            "mu_g": 0.2342649758425117,
+            "sigma_g": 0.3117420557965875,
+            "c_rep": 0.9184277713991857,
+            "kernel_k_type": "mexican_hat",
+            "kernel_g_type": "exponential"
+          }
+        },
+        {
+          "speciesBId": "species_1",
+          "params": {
+            "mu_k": 5.365111019524822,
+            "sigma_k": 0.6071299788161493,
+            "w_k": 0.07079622983787577,
+            "mu_g": 0.41756275128360976,
+            "sigma_g": 0.11769686728699147,
+            "c_rep": 0.9601390960344454,
+            "kernel_k_type": "polynomial",
+            "kernel_g_type": "sigmoid"
+          }
+        }
+      ]
+    }
+  ]
+}

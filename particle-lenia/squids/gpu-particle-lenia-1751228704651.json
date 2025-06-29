@@ -1,0 +1,93 @@
+{
+  "timestamp": "2025-06-29T20:25:04.651Z",
+  "worldDimensions": {
+    "width": 55,
+    "height": 41.25
+  },
+  "species": [
+    {
+      "id": "gpu_species_0",
+      "name": "GPU Species 1",
+      "pointCount": 7000,
+      "params": {
+        "mu_k": 4.158801339153094,
+        "sigma_k": 1.619313639879187,
+        "w_k": 0.12363807892811914,
+        "mu_g": 0.5599081125790383,
+        "sigma_g": 0.2348321125612257,
+        "c_rep": 2.3536851361806965,
+        "kernel_k_type": 0,
+        "kernel_g_type": 4
+      },
+      "color": "#00ff88"
+    },
+    {
+      "id": "gpu_species_1",
+      "name": "GPU Species 2",
+      "pointCount": 7000,
+      "params": {
+        "mu_k": 4.507329150434728,
+        "sigma_k": 1.4418500196458164,
+        "w_k": 0.11859660123874444,
+        "mu_g": 0.2558731713553237,
+        "sigma_g": 0.34059184206873805,
+        "c_rep": 2.3509480632186177,
+        "kernel_k_type": 0,
+        "kernel_g_type": 4
+      },
+      "color": "#4488ff"
+    },
+    {
+      "id": "gpu_species_2",
+      "name": "GPU Species 3",
+      "pointCount": 7000,
+      "params": {
+        "mu_k": 3.863678123645605,
+        "sigma_k": 2.4893496974759306,
+        "w_k": 0.05898457026975378,
+        "mu_g": 0.5692455434613232,
+        "sigma_g": 0.084540740537882,
+        "c_rep": 2.350767918425227,
+        "kernel_k_type": 0,
+        "kernel_g_type": 4
+      },
+      "color": "#ff4488"
+    },
+    {
+      "id": "gpu_species_3",
+      "name": "GPU Species 4",
+      "pointCount": 7000,
+      "params": {
+        "mu_k": 6.561712080283936,
+        "sigma_k": 1.7887007473739474,
+        "w_k": 0.12257975858128564,
+        "mu_g": 0.7215031369214379,
+        "sigma_g": 0.33537980379517884,
+        "c_rep": 0.4442551134501115,
+        "kernel_k_type": 0,
+        "kernel_g_type": 4
+      },
+      "color": "#ff8844"
+    },
+    {
+      "id": "gpu_species_4",
+      "name": "GPU Species 5",
+      "pointCount": 7000,
+      "params": {
+        "mu_k": 8.07908587264534,
+        "sigma_k": 0.4581082772604603,
+        "w_k": 0.07597647659029509,
+        "mu_g": 0.7115544568254487,
+        "sigma_g": 0.27247712120866513,
+        "c_rep": 2.4986665564238426,
+        "kernel_k_type": 0,
+        "kernel_g_type": 4
+      },
+      "color": "#8844ff"
+    }
+  ],
+  "kernelSelections": {
+    "kernel_k": "gaussian",
+    "kernel_g": "sigmoid"
+  }
+}

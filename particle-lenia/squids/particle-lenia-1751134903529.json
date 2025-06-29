@@ -1,0 +1,90 @@
+{
+  "timestamp": "2025-06-28T18:21:43.528Z",
+  "worldDimensions": {
+    "width": 55,
+    "height": 41.25
+  },
+  "stepsPerFrame": 10,
+  "species": [
+    {
+      "id": "species_0",
+      "name": "Species 1",
+      "pointCount": 125,
+      "params": {
+        "mu_k": 1.5486068786223726,
+        "sigma_k": 0.20117824457280847,
+        "w_k": 0.06755553034457504,
+        "mu_g": 0.6087792544238534,
+        "sigma_g": 0.15085741509424502,
+        "c_rep": 1.7028846987279354,
+        "dt": 0.13,
+        "kernel_k_type": "mexican_hat",
+        "kernel_g_type": "mexican_hat"
+      },
+      "color": "#00ff88",
+      "renderStyle": {
+        "strokeStyle": "#00ff88"
+      }
+    },
+    {
+      "id": "species_1",
+      "name": "Species 2",
+      "pointCount": 125,
+      "params": {
+        "mu_k": 8.525718593276837,
+        "sigma_k": 2.686771514919223,
+        "w_k": 0.08410619177718982,
+        "mu_g": 0.21689599514791988,
+        "sigma_g": 0.22389833204652798,
+        "c_rep": 1.9121000646477442,
+        "dt": 0.13,
+        "kernel_k_type": "gaussian",
+        "kernel_g_type": "gaussian"
+      },
+      "color": "#4488ff",
+      "renderStyle": {
+        "strokeStyle": "#4488ff"
+      }
+    }
+  ],
+  "interactions": [
+    {
+      "speciesAId": "species_0",
+      "interactions": [
+        {
+          "speciesBId": "species_1",
+          "params": {
+            "mu_k": 6.767124910948991,
+            "sigma_k": 0.6331848397839202,
+            "w_k": 0.06188672527912388,
+            "c_rep": 2.807797209818481,
+            "mu_g": 0.4325026332056703,
+            "sigma_g": 0.36303300209211997,
+            "dt": 0.05,
+            "kernel_k_type": "gaussian",
+            "kernel_g_type": "polynomial"
+          }
+        }
+      ]
+    },
+    {
+      "speciesAId": "species_1",
+      "interactions": [
+        {
+          "speciesBId": "species_0",
+          "params": {
+            "mu_k": 3.445705197249568,
+            "sigma_k": 1.200766683701703,
+            "w_k": 0.11706096570475831,
+            "c_rep": 1.5124499547983101,
+            "mu_g": 0.7755816687271158,
+            "sigma_g": 0.28828109061468377,
+            "dt": 0.05,
+            "kernel_k_type": "polynomial",
+            "kernel_g_type": "sigmoid"
+          }
+        }
+      ]
+    }
+  ]
+}

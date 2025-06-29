@@ -1,0 +1,35 @@
+{
+  "timestamp": "2025-06-28T18:42:57.476Z",
+  "worldDimensions": {
+    "width": 55,
+    "height": 41.25
+  },
+  "stepsPerFrame": 10,
+  "species": [
+    {
+      "id": "species_0",
+      "name": "Species 1",
+      "pointCount": 200,
+      "params": {
+        "mu_k": 3.1192389582828755,
+        "sigma_k": 1.473748898134274,
+        "w_k": 0.061400248810734845,
+        "mu_g": 0.41635746429599796,
+        "sigma_g": 0.3525998690319921,
+        "c_rep": 0.690548983630171,
+        "kernel_k_type": "polynomial",
+        "kernel_g_type": "exponential"
+      },
+      "color": "#00ff88",
+      "renderStyle": {
+        "strokeStyle": "#00ff88"
+      }
+    }
+  ],
+  "interactions": [
+    {
+      "speciesAId": "species_0",
+      "interactions": []
+    }
+  ]
+}
