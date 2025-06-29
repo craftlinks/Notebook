@@ -100,6 +100,105 @@ function updateInfo() {
   infoDiv.innerHTML = `Total Particles: ${totalParticles} | Species: ${gpuSim['species'].size}`
 }
 
+function setupDragAndDrop() {
+  const canvasWrapper = document.getElementById('gpu-canvas-wrapper')
+  if (!canvasWrapper) return
+
+  let dragCounter = 0
+
+  const addDragOverlay = () => {
+    let overlay = document.getElementById('drag-overlay')
+    if (!overlay) {
+      overlay = document.createElement('div')
+      overlay.id = 'drag-overlay'
+      overlay.style.cssText = `
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 123, 255, 0.1);
+        border: 3px dashed #007bff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 18px;
+        color: #007bff;
+        font-weight: bold;
+        pointer-events: none;
+        z-index: 1000;
+      `
+      overlay.textContent = 'Drop simulation file here'
+      canvasWrapper.style.position = 'relative'
+      canvasWrapper.appendChild(overlay)
+    }
+    overlay.style.display = 'flex'
+  }
+
+  const removeDragOverlay = () => {
+    const overlay = document.getElementById('drag-overlay')
+    if (overlay) {
+      overlay.style.display = 'none'
+    }
+  }
+
+  canvasWrapper.addEventListener('dragenter', (e) => {
+    e.preventDefault()
+    dragCounter++
+    addDragOverlay()
+  })
+
+  canvasWrapper.addEventListener('dragleave', (e) => {
+    e.preventDefault()
+    dragCounter--
+    if (dragCounter === 0) {
+      removeDragOverlay()
+    }
+  })
+
+  canvasWrapper.addEventListener('dragover', (e) => {
+    e.preventDefault()
+  })
+
+  canvasWrapper.addEventListener('drop', async (e) => {
+    e.preventDefault()
+    dragCounter = 0
+    removeDragOverlay()
+
+    const files = e.dataTransfer?.files
+    if (files && files.length > 0) {
+      const file = files[0]
+      
+      // Check if it's a JSON file
+      if (!file.name.toLowerCase().endsWith('.json')) {
+        alert('Please drop a JSON simulation file')
+        return
+      }
+
+      if (gpuSim) {
+        const success = await gpuSim.loadSimulationFile(file)
+        if (success) {
+          console.log('Simulation loaded successfully via drag and drop')
+          
+          // Update species slider and display to match loaded simulation
+          const currentSpeciesCount = gpuSim.getSpeciesCount()
+          const speciesSlider = document.getElementById('species-slider') as HTMLInputElement | null
+          const speciesCountDisplay = document.getElementById('species-count')
+          
+          if (speciesSlider && speciesCountDisplay) {
+            speciesSlider.value = currentSpeciesCount.toString()
+            speciesCountDisplay.textContent = currentSpeciesCount.toString()
+          }
+          
+          updateInfo()
+        } else {
+          alert('Failed to load simulation file')
+        }
+      }
+    }
+  })
+}
+
 function setupUI() {
   const speciesSlider = document.getElementById('species-slider') as HTMLInputElement | null
   const speciesCountDisplay = document.getElementById('species-count')
@@ -177,5 +276,6 @@ function setupUI() {
 
 document.addEventListener('DOMContentLoaded', async () => {
   setupUI()
+  setupDragAndDrop()
   await createSimulation(1)
 }) 
