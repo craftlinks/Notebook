@@ -7,7 +7,7 @@ import {
   Fn, If, Loop, instanceIndex, instancedArray, attributeArray,
   sin, cos, exp, abs, max, min, pow, sqrt, PI, sign, select, clamp,
   add, sub, mul, div, mod, normalize, length, dot, cross, hash,
-  Continue, Break
+  uv, Continue, Break
 } from 'three/tsl';
 // OrbitControls for interactive tumbling
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
@@ -407,6 +407,23 @@ class GPUParticleLenia {
     material.colorNode = color(speciesColor);
     
     // ---------------------------------------------------------------
+    // Radial alpha falloff for smooth circular particles with glow
+    // ---------------------------------------------------------------
+    // Compute distance from sprite center using the built-in uv() node
+    // uv() ranges 0-1 in both axes on the quad. We subtract 0.5 to
+    // recenter, get length, then apply an exponential fall-off to
+    // create a soft glow similar to the WebGPU reference renderer.
+
+    const distFromCenter = length(uv().sub(vec2(0.5, 0.5)));
+    // Glow alpha: stronger exponential fall-off for crisper circle
+    const glowAlpha = exp(distFromCenter.mul(distFromCenter).mul(-20.0));
+
+    // Glow controls transparency only; keep full intrinsic colour for brightness
+    material.colorNode = color(speciesColor);
+    material.opacityNode = glowAlpha;
+    material.transparent = true;
+    
+    // ---------------------------------------------------------------
     // Create uniform nodes for all species parameters once so they can
     // be referenced both by rendering nodes and compute shaders.
     // ---------------------------------------------------------------
@@ -428,8 +445,9 @@ class GPUParticleLenia {
     const rAttr = R_val.toAttribute();
     const safeDenom = max(rAttr.mul(5.0), float(0.001));
     const rawScale  = paramUniforms.c_rep.div(safeDenom);
-    const compressed = sqrt(rawScale).mul(0.3); // overall shrink factor
-    const dynamicScale = clamp(compressed, float(0.02), float(0.2));
+    // Slightly larger sprites for better visibility
+    const compressed = sqrt(rawScale).mul(0.5); // moderate shrink factor
+    const dynamicScale = clamp(compressed, float(0.04), float(0.3));
     material.scaleNode = dynamicScale;
     
     // Create instanced mesh (one quad per particle)
