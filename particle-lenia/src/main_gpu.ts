@@ -10,7 +10,7 @@ import {
   uv, Continue, Break
 } from 'three/tsl';
 // OrbitControls for interactive tumbling
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 // Kernel type enums (matching CPU implementation)
 enum KernelType {
