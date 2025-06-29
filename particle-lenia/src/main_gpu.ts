@@ -474,11 +474,11 @@ class GPUParticleLenia {
       if (otherId === id) continue; // skip self
 
       // Forces on *new* species due to *other* species
-      const fromOther = this.createInterSpeciesForceCompute(species, otherSpecies);
+      const fromOther = this.createInterSpeciesCompute(species, otherSpecies);
       species.interSpeciesForces.set(otherId, fromOther);
 
       // Forces on *other* species due to *new* species
-      const toOther = this.createInterSpeciesForceCompute(otherSpecies, species);
+      const toOther = this.createInterSpeciesCompute(otherSpecies, species);
       otherSpecies.interSpeciesForces.set(id, toOther);
     }
     
@@ -738,8 +738,23 @@ class GPUParticleLenia {
    * Replaces computeInterSpeciesInteraction() with GPU parallel computation
    */
   createInterSpeciesCompute(speciesA: GPUSpecies, speciesB: GPUSpecies) {
-    const { pointCount: countA, positionBuffer: posA, R_val: R_val_A, U_val: U_val_A, R_grad: R_grad_A, U_grad: U_grad_A, params: paramsA } = speciesA;
+    const {
+      pointCount: countA,
+      positionBuffer: posA,
+      velocityBuffer: velA,
+      R_val: R_val_A,
+      U_val: U_val_A,
+      R_grad: R_grad_A,
+      U_grad: U_grad_A,
+      params: paramsA
+    } = speciesA;
+
     const { pointCount: countB, positionBuffer: posB } = speciesB;
+
+    // Shared uniforms reused from the main integration pass
+    const deltaTime = this.deltaTimeUniform;
+    const damping   = uniform(0.95);
+    const maxSpeed  = uniform(15.0);
     
     return Fn(() => {
       // Each thread handles one particle from species A
@@ -800,12 +815,68 @@ class GPUParticleLenia {
         
       });
       
-      // Add accumulated results to species A particle i (additive with existing values)
+      // ------------------------------------------------------------------
+      // Combine accumulated inter-species results with any existing fields
+      // ------------------------------------------------------------------
       R_val_A.element(i).addAssign(R_acc_A);
       U_val_A.element(i).addAssign(U_acc_A);
-      R_grad_A.element(i).assign(R_grad_acc_A);
-      U_grad_A.element(i).assign(U_grad_acc_A);
-      
+      R_grad_A.element(i).addAssign(R_grad_acc_A);
+      U_grad_A.element(i).addAssign(U_grad_acc_A);
+
+      // ------------------------------------------------------------------
+      // Convert gradients into a growth force and integrate velocity/position
+      // ------------------------------------------------------------------
+      const growth_force   = U_grad_acc_A.sub(R_grad_acc_A).toVar();
+      const growth_mag     = length(growth_force);
+      const growth_response = growth_mag.mul(paramsA.mu_g).mul(10.0).toVar();
+      const appliedForce   = growth_force.mul(growth_response).mul(2.0).toVar();
+
+      // Integrate into velocity
+      const vel = velA.element(i).toVar();
+      vel.addAssign(appliedForce.mul(deltaTime));
+      // Damping
+      vel.mulAssign(damping);
+      // Clamp speed
+      const speed = length(vel);
+      If(speed.greaterThan(maxSpeed), () => {
+        vel.assign(vel.normalize().mul(maxSpeed));
+      });
+
+      // Update position with wrap-around
+      pos_i.addAssign(vel.mul(deltaTime));
+
+      const halfWidth  = float(this.worldWidth * 0.5);
+      const halfHeight = float(this.worldHeight * 0.5);
+      const halfDepth  = float(this.worldDepth * 0.5);
+
+      // X
+      If(pos_i.x.greaterThan(halfWidth), () => {
+        pos_i.x.assign(pos_i.x.sub(this.worldWidth));
+      });
+      If(pos_i.x.lessThan(halfWidth.negate()), () => {
+        pos_i.x.assign(pos_i.x.add(this.worldWidth));
+      });
+
+      // Y
+      If(pos_i.y.greaterThan(halfHeight), () => {
+        pos_i.y.assign(pos_i.y.sub(this.worldHeight));
+      });
+      If(pos_i.y.lessThan(halfHeight.negate()), () => {
+        pos_i.y.assign(pos_i.y.add(this.worldHeight));
+      });
+
+      // Z
+      If(pos_i.z.greaterThan(halfDepth), () => {
+        pos_i.z.assign(pos_i.z.sub(this.worldDepth));
+      });
+      If(pos_i.z.lessThan(halfDepth.negate()), () => {
+        pos_i.z.assign(pos_i.z.add(this.worldDepth));
+      });
+
+      // Write back updated state
+      posA.element(i).assign(pos_i);
+      velA.element(i).assign(vel);
+
     })().compute(countA);
   }
   
@@ -833,7 +904,7 @@ class GPUParticleLenia {
       const randY = hash(instanceIndex.add(uint(123))).mul(2.0).sub(1.0); // -1 to 1
       
       // Scale to small cluster cube (10 units in each axis)
-      const clusterSize = 5.0; // Particles clustered in 10-unit half-extent cube
+      const clusterSize = 10.0; // Particles clustered in 10-unit half-extent cube
       const posX = randX.mul(clusterSize);
       const posY = randY.mul(clusterSize);
       const randZ = hash(instanceIndex.add(uint(777))).mul(2.0).sub(1.0);
@@ -1087,11 +1158,24 @@ class GPUParticleLenia {
     const animate = () => {
       this.animationId = requestAnimationFrame(animate);
       
-      // Run complete particle-lenia simulation step for all species
+      // ------------------------------------------------------------------
+      // Run complete particle-Lenia simulation step for ALL species:
+      //   1. Intra-species pass (species.forceCompute) – handles self-interaction
+      //   2. Inter-species passes (species.interSpeciesForces) – handles
+      //      interactions coming *from* every other species into the current
+      //      one.  Each of those compute nodes already updates velocity/
+      //      position, so no further integration step is required.
+      // ------------------------------------------------------------------
+
       for (const species of this.species.values()) {
+        // Intra-species physics & integration
         if (species.forceCompute) {
-          // Single physics pass does everything (force + integration)
           this.renderer!.compute(species.forceCompute);
+        }
+
+        // Inter-species contributions from all other species
+        for (const compute of species.interSpeciesForces.values()) {
+          this.renderer!.compute(compute);
         }
       }
       

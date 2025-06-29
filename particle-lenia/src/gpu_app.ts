@@ -41,7 +41,7 @@ async function createSimulation(speciesCount: number) {
   // wait for WebGPU initialization inside the class
   await new Promise((resolve) => {
     const checkRenderer = () => {
-      if (gpuSim['renderer']) {
+      if (gpuSim!['renderer']) {
         resolve(true)
       } else {
         setTimeout(checkRenderer, 100)
