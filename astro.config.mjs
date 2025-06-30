@@ -1,11 +1,18 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
 import mdx from '@astrojs/mdx';
+import remarkMath from 'remark-math';
+import rehypeMathjax from 'rehype-mathjax/svg';
 
 // https://astro.build/config
 export default defineConfig({
-  // Add MDX integration
-  integrations: [mdx()],
+  // Add MDX integration with math support
+  integrations: [
+    mdx({
+      remarkPlugins: [remarkMath],
+      rehypePlugins: [rehypeMathjax],
+    })
+  ],
 
   site: 'https://www.craftlinks.art/Notebook/',
   base: '/Notebook/',

@@ -16,6 +16,9 @@ const { title, description = "Interactive tutorials and projects for web technol
     <meta name="generator" content={Astro.generator} />
     <meta name="description" content={description} />
     <title>{title}</title>
+    
+    <!-- MathJax output is SVG and needs no external CSS -->
+    
     <style>
       body {
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -81,6 +84,21 @@ const { title, description = "Interactive tutorials and projects for web technol
         background: none;
         padding: 0;
         color: inherit;
+      }
+      
+      /* Minimal MathJax dark-theme tweak */
+      mjx-container {
+        color: #f9fafb;
+      }
+
+      mjx-container[jax="SVG"][display="true"] {
+        background: #1f2937;
+        border: 1px solid #374151;
+        border-radius: 8px;
+        padding: 1.5rem;
+        margin: 1rem 0;
+        text-align: center;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
       }
     </style>
   </head>

@@ -9,7 +9,11 @@
     "astro": "astro"
   },
   "dependencies": {
-    "astro": "^5.10.1"
+    "astro": "^5.10.1",
+    "katex": "^0.16.22",
+    "rehype-katex": "^7.0.1",
+    "rehype-mathjax": "^7.1.0",
+    "remark-math": "^6.0.0"
   },
   "devDependencies": {
     "@astrojs/markdown-remark": "^6.0.0",

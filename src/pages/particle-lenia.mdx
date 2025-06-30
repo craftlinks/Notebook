@@ -1,32 +1,41 @@
 ---
-title: "Particle Lenia"
+title: "Particle Lenia GPU Accelerated"
 description: "Exploring emergent behaviors in particle systems using GPU-accelerated Lenia algorithms"
 layout: "../layouts/Layout.astro"
 ---
 
-# Particle Lenia
+# Particle Lenia.
 
-Particle Lenia is a fascinating exploration of emergent behaviors in particle systems, implementing Lenia algorithms on the GPU for real-time visualization and interaction.
+[Lenia](https://arxiv.org/abs/1812.05433) is a family of cellular automata that produces lifelike behaviors and patterns, first described in the seminal paper by Bert Wang-Chak Chan. 
+This project is heavily inspired by the original [Particle Lenia](https://google-research.github.io/self-organising-systems/particle-lenia/) 
+research by Alexander Mordvintsev et al., which implemented a particle-based version of Lenia in Python and [JAX](https://docs.jax.dev/en/latest/). 
+Recognizing the importance of scale (number of particles) for simulation dynamics and iteration times for rapid pattern exploration, 
+I ported the simulation to the GPU and made it 3D. I also added several update kernels in addition to the original Gaussian one and programmed in 
+support for multi-species particle simulations which opens up a whole new breed of Mathematical Lifeforms, some that behave very remensicent to critters found in [Particle Life](https://youtu.be/p4YirERTVF0?si=E2bExaHTX8kbKKtp).
 
-## Introduction
+This port was achieved using compute shaders within [Three.js](https://threejs.org/examples/) and the (still unofficial) [Three.js Shading Language (TSL)](https://github.com/mrdoob/three.js/wiki/Three.js-Shading-Language).
+You can explore the Particle Lenia universe yourself at the bottom of this post
+on the condition that your browser supports [WebGPU](https://developer.mozilla.org/en-US/docs/Web/API/WebGPU_API) 
+and you have a graphics card with enough muscle top crunch the numbers.
+The source code for the Particle Lenia implementation can be found here [TODO], go wild.
 
-Lenia is a family of cellular automata that produces lifelike behaviors and patterns. This project extends the traditional grid-based Lenia into a particle system, creating fluid, organic movements that resemble living organisms.
+## A too short intro to Energy Fields and Particles in Particle Lenia.
+ 
+Particle Lenia defines a **Motion law** in which particles move against the local gradient $\nabla E$ of the _energy field_ $E = R - G$, 
+where $R$ is called the **Repulsion Field** and $G$ the **Growth Field**. 
+Particles seek the direction of local lowest $E$ by minimizing repulsion energy $R$ and maximizing for $G$. Yes, it is that simple. 
+The emergent behaviors and patterns are a consequence of the local particle interactions, and in smaller part by the selection of the kernels (MexicanHat is my favorite).  
 
-## Features
+If you're interested in the math, I encourage you to read the exposition in the original [Particle Lenia paper](https://google-research.github.io/self-organising-systems/particle-lenia/). 
+It only requires that you understand what a 'gradient' is (ask an LLM) and how to apply the chain-rule for finding the differential equations.
 
-- GPU-accelerated particle simulation
-- Real-time parameter tuning
-- Multiple species interactions
-- Emergent behaviors and pattern formation
+## Gallery
 
-## Getting Started
+TODO: the examples (images) can be dragged and dropped to the simulation window.
+People can save their own to file and load or drag'n-drop.
 
-This page will guide you through understanding and implementing Particle Lenia systems.
+## Simulation window
 
-### Basic Concepts
+allow full screen? No, but maybe try maximise width (and height) of the canvas and make sure aspect ratio is taken into account.
 
-Lenia operates on continuous space and time, using smooth kernels and growth functions to create organic behaviors.
 
-## Examples
-
-Coming soon: Interactive examples and parameter exploration tools. 
