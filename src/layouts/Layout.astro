@@ -217,6 +217,35 @@ const { title, description = "Interactive tutorials and projects for web technol
           gap: 8px;
         }
       }
+
+      /* Navigation arrows */
+      .nav {
+        position: absolute;
+        top: 50%;
+        transform: translateY(-50%);
+        color: #ffffff;
+        font-size: 50px;
+        font-weight: bold;
+        cursor: pointer;
+        user-select: none;
+        z-index: 1001;
+        padding: 4px 10px;
+        background: rgba(0, 0, 0, 0.3);
+        border-radius: 4px;
+        transition: background 0.3s ease;
+      }
+
+      .nav:hover {
+        background: rgba(0, 0, 0, 0.5);
+      }
+
+      .nav.prev {
+        left: 10px;
+      }
+
+      .nav.next {
+        right: 10px;
+      }
     </style>
   </head>
   <body>
@@ -285,6 +314,23 @@ const { title, description = "Interactive tutorials and projects for web technol
         'gpu-particle-lenia-1751398653406.png'
       ];
 
+      // Current index of the image being shown in the modal
+      let currentIndex = 0;
+
+      /**
+       * Update modal image to the image at the given index and wrap around.
+       * @param {number} index - Desired image index.
+       */
+      function showImage(index) {
+        const modalImage = document.getElementById('modalImage');
+        if (!modalImage) return;
+
+        const total = galleryImages.length;
+        currentIndex = (index + total) % total; // wrap-around behaviour
+        modalImage.src = baseUrl + `particle-lenia/${galleryImages[currentIndex]}`;
+        modalImage.alt = `Particle Lenia Experiment ${currentIndex + 1}`;
+      }
+
       // Function to create gallery items
       function createGallery() {
         const gallery = document.getElementById('particle-gallery');
@@ -300,7 +346,7 @@ const { title, description = "Interactive tutorials and projects for web technol
           img.loading = 'lazy'; // Lazy loading for better performance
           
           // Add click event for modal
-          item.addEventListener('click', () => openModal(img.src, img.alt));
+          item.addEventListener('click', () => openModal(index));
           
           item.appendChild(img);
           gallery.appendChild(item);
@@ -308,13 +354,11 @@ const { title, description = "Interactive tutorials and projects for web technol
       }
 
       // Modal functionality
-      function openModal(src, alt) {
+      function openModal(index) {
         const modal = document.getElementById('modal');
-        const modalImage = document.getElementById('modalImage');
-        if (!modal || !modalImage) return;
-        
-        modalImage.src = src;
-        modalImage.alt = alt;
+        if (!modal) return;
+
+        showImage(index);
         modal.classList.add('active');
         
         // Prevent body scroll when modal is open
@@ -329,6 +373,14 @@ const { title, description = "Interactive tutorials and projects for web technol
         
         // Restore body scroll
         document.body.style.overflow = 'auto';
+      }
+
+      function nextImage() {
+        showImage(currentIndex + 1);
+      }
+
+      function prevImage() {
+        showImage(currentIndex - 1);
       }
 
       // Event listeners
@@ -355,8 +407,30 @@ const { title, description = "Interactive tutorials and projects for web technol
         document.addEventListener('keydown', (e) => {
           if (e.key === 'Escape') {
             closeModal();
+          } else if (e.key === 'ArrowLeft') {
+            prevImage();
+          } else if (e.key === 'ArrowRight') {
+            nextImage();
           }
         });
+
+        // Navigation buttons
+        const prevBtn = document.getElementById('prevModal');
+        const nextBtn = document.getElementById('nextModal');
+
+        if (prevBtn) {
+          prevBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            prevImage();
+          });
+        }
+
+        if (nextBtn) {
+          nextBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            nextImage();
+          });
+        }
       });
     </script>
     
