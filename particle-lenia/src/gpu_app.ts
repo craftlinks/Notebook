@@ -326,8 +326,23 @@ function restoreUIFromSimulationData(simulationData: any) {
     else if (simulationData.species && simulationData.species.length > 0) {
       const firstSpecies = simulationData.species[0];
       if (firstSpecies.params) {
-        const kernelK = firstSpecies.params.kernel_k_type;
-        const kernelG = firstSpecies.params.kernel_g_type;
+        const mapNumberToKernel = (num: number): string => {
+          switch (num) {
+            case 0: return 'gaussian';
+            case 1: return 'exponential';
+            case 2: return 'polynomial';
+            case 3: return 'mexican_hat';
+            case 4: return 'sigmoid';
+            case 5: return 'sinc';
+            default: return 'gaussian';
+          }
+        };
+
+        const rawK = firstSpecies.params.kernel_k_type;
+        const rawG = firstSpecies.params.kernel_g_type;
+
+        const kernelK = typeof rawK === 'number' ? mapNumberToKernel(rawK) : rawK;
+        const kernelG = typeof rawG === 'number' ? mapNumberToKernel(rawG) : rawG;
         
         if (kernelKSelect && kernelK) {
           kernelKSelect.value = kernelK;

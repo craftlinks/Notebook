@@ -824,8 +824,31 @@ class ParticleSystem {
       this.interactionParams.clear();
       SpeciesFactory.resetCounters();
       
+      // Helper to map numeric kernel codes back to string enums
+      const mapNumberToKernel = (num: number): KernelType => {
+        switch (num) {
+          case 0: return KernelType.GAUSSIAN;
+          case 1: return KernelType.EXPONENTIAL;
+          case 2: return KernelType.POLYNOMIAL;
+          case 3: return KernelType.MEXICAN_HAT;
+          case 4: return KernelType.SIGMOID;
+          case 5: return KernelType.SINC;
+          default: return KernelType.GAUSSIAN;
+        }
+      };
+
       // Restore species
       for (const speciesData of data.species) {
+        // Ensure kernel type fields are strings, not numeric codes (back-compat)
+        const rawK = speciesData.params.kernel_k_type;
+        const rawG = speciesData.params.kernel_g_type;
+
+        const paramsCorrected = {
+          ...speciesData.params,
+          kernel_k_type: typeof rawK === 'number' ? mapNumberToKernel(rawK) : rawK,
+          kernel_g_type: typeof rawG === 'number' ? mapNumberToKernel(rawG) : rawG
+        } as Params;
+
         const species: Species = {
           id: speciesData.id,
           name: speciesData.name,
@@ -841,7 +864,7 @@ class ParticleSystem {
             U_val_pool: new Map<string, Float32Array>(),
             U_grad_pool: new Map<string, Float32Array>(),
           },
-          params: speciesData.params,
+          params: paramsCorrected,
           color: speciesData.color,
           renderStyle: speciesData.renderStyle
         };

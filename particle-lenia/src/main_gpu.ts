@@ -344,7 +344,7 @@ class GPUParticleLenia {
   /**
    * Create a new species with GPU buffers
    */
-  createSpecies(pointCount: number, params: Params): string {
+  createSpecies(pointCount: number, params: Params, name?: string, colorOverride?: string): string {
     if (!this.renderer) {
       throw new Error('WebGPU renderer not initialized. Wait for initialization to complete.');
     }
@@ -376,8 +376,8 @@ class GPUParticleLenia {
     });
     
     // Set particle color
-    const colors = ['#00ff88', '#4488ff', '#ff4488', '#ff8844', '#8844ff'];
-    const speciesColor = colors[this.species.size % colors.length];
+    const defaultColors = ['#00ff88', '#4488ff', '#ff4488', '#ff8844', '#8844ff'];
+    const speciesColor = colorOverride ?? defaultColors[this.species.size % defaultColors.length];
     material.colorNode = color(speciesColor);
     
     // ---------------------------------------------------------------
@@ -431,7 +431,7 @@ class GPUParticleLenia {
     
     const species: GPUSpecies = {
       id,
-      name: `GPU Species ${this.species.size + 1}`,
+      name: name ?? `GPU Species ${this.species.size + 1}`,
       pointCount,
       positionBuffer,
       velocityBuffer,
@@ -1285,7 +1285,7 @@ class GPUParticleLenia {
           kernel_g_type: kernel_g_type
         };
         
-        this.createSpecies(speciesData.pointCount, params);
+        this.createSpecies(speciesData.pointCount, params, speciesData.name, speciesData.color);
       }
       
       // Initialize positions for all species
