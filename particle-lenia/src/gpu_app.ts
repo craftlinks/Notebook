@@ -291,32 +291,9 @@ async function loadSimulationFromImage(file: File): Promise<boolean> {
       if (success) {
         console.log('🖼️ Simulation loaded successfully from image metadata');
         
-        // Restore kernel selections if present
-        if (simulationData.kernelSelections) {
-          const kernelKSelect = document.getElementById('kernel-k-select') as HTMLSelectElement;
-          const kernelGSelect = document.getElementById('kernel-g-select') as HTMLSelectElement;
-          
-          if (kernelKSelect && simulationData.kernelSelections.kernel_k) {
-            kernelKSelect.value = simulationData.kernelSelections.kernel_k;
-          }
-          if (kernelGSelect && simulationData.kernelSelections.kernel_g) {
-            kernelGSelect.value = simulationData.kernelSelections.kernel_g;
-          }
-          
-          console.log('Kernel selections restored from image:', simulationData.kernelSelections);
-        }
+        // Use the unified restore function
+        restoreUIFromSimulationData(simulationData);
         
-        // Update species slider and display
-        const currentSpeciesCount = gpuSim.getSpeciesCount();
-        const speciesSlider = document.getElementById('species-slider') as HTMLInputElement | null;
-        const speciesCountDisplay = document.getElementById('species-count');
-        
-        if (speciesSlider && speciesCountDisplay) {
-          speciesSlider.value = currentSpeciesCount.toString();
-          speciesCountDisplay.textContent = currentSpeciesCount.toString();
-        }
-        
-        updateInfo();
         return true;
       }
     }
@@ -330,12 +307,12 @@ async function loadSimulationFromImage(file: File): Promise<boolean> {
 
 // Helper function to restore UI state from simulation data
 function restoreUIFromSimulationData(simulationData: any) {
-  // Try to load kernel selections from the loaded data
+  const kernelKSelect = document.getElementById('kernel-k-select') as HTMLSelectElement;
+  const kernelGSelect = document.getElementById('kernel-g-select') as HTMLSelectElement;
+  
+  // Try to load kernel selections from explicit kernelSelections field (newer saves)
   try {
     if (simulationData.kernelSelections) {
-      const kernelKSelect = document.getElementById('kernel-k-select') as HTMLSelectElement;
-      const kernelGSelect = document.getElementById('kernel-g-select') as HTMLSelectElement;
-      
       if (kernelKSelect && simulationData.kernelSelections.kernel_k) {
         kernelKSelect.value = simulationData.kernelSelections.kernel_k;
       }
@@ -343,7 +320,27 @@ function restoreUIFromSimulationData(simulationData: any) {
         kernelGSelect.value = simulationData.kernelSelections.kernel_g;
       }
       
-      console.log('Kernel selections restored:', simulationData.kernelSelections);
+      console.log('Kernel selections restored from kernelSelections:', simulationData.kernelSelections);
+    }
+    // If no explicit kernelSelections, try to extract from first species (older saves)
+    else if (simulationData.species && simulationData.species.length > 0) {
+      const firstSpecies = simulationData.species[0];
+      if (firstSpecies.params) {
+        const kernelK = firstSpecies.params.kernel_k_type;
+        const kernelG = firstSpecies.params.kernel_g_type;
+        
+        if (kernelKSelect && kernelK) {
+          kernelKSelect.value = kernelK;
+        }
+        if (kernelGSelect && kernelG) {
+          kernelGSelect.value = kernelG;
+        }
+        
+        console.log('Kernel selections restored from species params:', {
+          kernel_k: kernelK,
+          kernel_g: kernelG
+        });
+      }
     }
   } catch (error) {
     console.warn('Could not restore kernel selections:', error);

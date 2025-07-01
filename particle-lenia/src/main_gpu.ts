@@ -1264,7 +1264,15 @@ class GPUParticleLenia {
       // Restore species
       for (const speciesData of data.species) {
         console.log(`   - Loading ${speciesData.name || speciesData.id}: ${speciesData.pointCount} particles`);
-        console.log(`     Kernels: ${speciesData.params.kernel_k_type}(k) -> ${numberToKernelType(speciesData.params.kernel_k_type)}, ${speciesData.params.kernel_g_type}(g) -> ${numberToKernelType(speciesData.params.kernel_g_type)}`);
+        // Handle both string and number formats for kernel types (backward compatibility)
+        const kernel_k_type = typeof speciesData.params.kernel_k_type === 'string' 
+          ? speciesData.params.kernel_k_type as KernelType 
+          : numberToKernelType(speciesData.params.kernel_k_type);
+        const kernel_g_type = typeof speciesData.params.kernel_g_type === 'string' 
+          ? speciesData.params.kernel_g_type as KernelType 
+          : numberToKernelType(speciesData.params.kernel_g_type);
+          
+        console.log(`     Kernels: ${speciesData.params.kernel_k_type}(k) -> ${kernel_k_type}, ${speciesData.params.kernel_g_type}(g) -> ${kernel_g_type}`);
         
         const params: Params = {
           mu_k: speciesData.params.mu_k,
@@ -1273,8 +1281,8 @@ class GPUParticleLenia {
           mu_g: speciesData.params.mu_g,
           sigma_g: speciesData.params.sigma_g,
           c_rep: speciesData.params.c_rep,
-          kernel_k_type: numberToKernelType(speciesData.params.kernel_k_type),
-          kernel_g_type: numberToKernelType(speciesData.params.kernel_g_type)
+          kernel_k_type: kernel_k_type,
+          kernel_g_type: kernel_g_type
         };
         
         this.createSpecies(speciesData.pointCount, params);
