@@ -37,6 +37,70 @@ type Nullable<T> = T | null
 
 let gpuSim: Nullable<GPUParticleLenia> = null
 
+// Helper function to capture screenshot from WebGPU canvas
+function captureScreenshot(filename: string, width?: number, height?: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (!gpuSim || !gpuSim['renderer']) {
+      reject(new Error('GPU simulation not initialized'));
+      return;
+    }
+
+    const renderer = gpuSim['renderer'] as any; // THREE.WebGPURenderer
+    const camera = gpuSim['camera'] as any; // THREE.PerspectiveCamera
+    const scene = gpuSim['scene'] as any; // THREE.Scene
+    const canvas = renderer.domElement;
+    
+    // Store original dimensions
+    const originalWidth = canvas.width;
+    const originalHeight = canvas.height;
+    const originalAspect = camera.aspect;
+    
+    // Set desired screenshot dimensions (default to current canvas size or high-res)
+    const screenshotWidth = width || Math.max(canvas.width, 1920);
+    const screenshotHeight = height || Math.max(canvas.height, 1080);
+    
+    try {
+      // Update camera aspect ratio for new dimensions
+      camera.aspect = screenshotWidth / screenshotHeight;
+      camera.updateProjectionMatrix();
+      
+      // Set renderer to new size
+      renderer.setSize(screenshotWidth, screenshotHeight);
+      
+      // Force a render frame at new resolution
+      renderer.render(scene, camera);
+      
+      // Capture the image
+      canvas.toBlob((blob: Blob | null) => {
+        if (blob) {
+          // Create download link for the screenshot
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          
+          console.log(`📸 Screenshot saved: ${filename} (${screenshotWidth}x${screenshotHeight})`);
+          resolve();
+        } else {
+          reject(new Error('Failed to create screenshot blob'));
+        }
+      }, 'image/png');
+      
+    } catch (error) {
+      reject(error);
+    } finally {
+      // Restore original dimensions
+      camera.aspect = originalAspect;
+      camera.updateProjectionMatrix();
+      renderer.setSize(originalWidth, originalHeight);
+    }
+  });
+}
+
 async function createSimulation(speciesCount: number) {
   // Clean up existing simulation if any
   if (gpuSim) {
@@ -265,34 +329,71 @@ function setupUI() {
     })
   }
 
-  // Stub save / load functionality – console log for now
+  // Save simulation data and screenshot with matching filenames
   if (saveBtn) {
-    saveBtn.addEventListener('click', () => {
+    saveBtn.addEventListener('click', async () => {
       if (gpuSim) {
-        // Before saving, update the kernel selections in the simulation data
-        const kernelKSelect = document.getElementById('kernel-k-select') as HTMLSelectElement;
-        const kernelGSelect = document.getElementById('kernel-g-select') as HTMLSelectElement;
+        // Store original button text and disable button during save
+        const originalText = saveBtn.textContent;
+        saveBtn.textContent = 'Saving...';
+        saveBtn.disabled = true;
         
-        // Save current kernel selections as metadata
-        const simulationData = JSON.parse(gpuSim.exportSimulation());
-        simulationData.kernelSelections = {
-          kernel_k: kernelKSelect ? kernelKSelect.value : 'gaussian',
-          kernel_g: kernelGSelect ? kernelGSelect.value : 'gaussian'
-        };
+        // Generate timestamp-based filename base
+        const timestamp = Date.now();
+        const baseName = `gpu-particle-lenia-${timestamp}`;
         
-        // Save the enhanced simulation data
-        const blob = new Blob([JSON.stringify(simulationData, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `gpu-particle-lenia-${Date.now()}.json`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        
-        console.log('GPU simulation saved with kernel selections');
+        try {
+          // Before saving, update the kernel selections in the simulation data
+          const kernelKSelect = document.getElementById('kernel-k-select') as HTMLSelectElement;
+          const kernelGSelect = document.getElementById('kernel-g-select') as HTMLSelectElement;
+          
+          // Save current kernel selections as metadata
+          const simulationData = JSON.parse(gpuSim.exportSimulation());
+          simulationData.kernelSelections = {
+            kernel_k: kernelKSelect ? kernelKSelect.value : 'gaussian',
+            kernel_g: kernelGSelect ? kernelGSelect.value : 'gaussian'
+          };
+          
+          // Update button status
+          saveBtn.textContent = 'Saving Data...';
+          
+          // Save the enhanced simulation data
+          const jsonBlob = new Blob([JSON.stringify(simulationData, null, 2)], { type: 'application/json' });
+          const jsonUrl = URL.createObjectURL(jsonBlob);
+          
+          const jsonLink = document.createElement('a');
+          jsonLink.href = jsonUrl;
+          jsonLink.download = `${baseName}.json`;
+          document.body.appendChild(jsonLink);
+          jsonLink.click();
+          document.body.removeChild(jsonLink);
+          URL.revokeObjectURL(jsonUrl);
+          
+          console.log('💾 GPU simulation saved with kernel selections');
+          
+          // Update button status
+          saveBtn.textContent = 'Capturing Screenshot...';
+          
+          // Capture and save screenshot with matching filename
+          await captureScreenshot(`${baseName}.png`);
+          
+          console.log('✅ Save complete: simulation data + screenshot');
+          
+          // Show success briefly
+          saveBtn.textContent = '✅ Saved!';
+          setTimeout(() => {
+            saveBtn.textContent = originalText;
+            saveBtn.disabled = false;
+          }, 2000);
+          
+        } catch (error) {
+          console.error('❌ Error during save operation:', error);
+          alert('Failed to save simulation or screenshot. Check console for details.');
+          
+          // Restore button state on error
+          saveBtn.textContent = originalText;
+          saveBtn.disabled = false;
+        }
       }
     })
   }
