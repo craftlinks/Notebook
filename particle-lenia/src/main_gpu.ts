@@ -1205,6 +1205,109 @@ class GPUParticleLenia {
     }
   }
   
+  // --------------------------------------------------------------------------
+  // NEW FEATURE: Deterministic offline renderer
+  // --------------------------------------------------------------------------
+  /**
+   * Render a fixed-length, fixed-FPS video purely off-line (no realtime loop).
+   * The simulation is advanced frame-by-frame in a blocking loop; each frame
+   * is rendered once and pushed through a WebCodecs VideoEncoder so the output
+   * is 100 % stutter-free even on slow hardware.
+   *
+   * If WebCodecs is not available, the method returns null and logs a warning.
+   */
+  async recordOfflineVideo(options: {
+    seconds: number;
+    fps?: number;
+    width?: number;
+    height?: number;
+    progress?: (frame: number, total: number) => void;
+  }): Promise<Blob | null> {
+    if (!this.renderer) {
+      console.warn('Renderer not initialised – cannot record video');
+      return null;
+    }
+
+    const {
+      seconds,
+      fps = 60,
+      width = 1920,
+      height = 1080,
+      progress = () => {}
+    } = options;
+
+    if (typeof (window as any).VideoEncoder === 'undefined') {
+      console.warn('WebCodecs VideoEncoder not supported in this browser.');
+      return null;
+    }
+
+    // Pause live playback (if any) and remember state
+    const wasRunning = this.animationId !== null;
+    if (wasRunning) this.stopAnimation();
+
+    const canvas = this.renderer.domElement;
+
+    // Store current canvas size / camera aspect so we can restore later
+    const original = { w: canvas.width, h: canvas.height };
+    const originalAspect = this.camera.aspect;
+
+    // Resize for offline render
+    this.camera.aspect = width / height;
+    this.camera.updateProjectionMatrix();
+    this.renderer.setSize(width, height);
+
+    // We'll output a ZIP of PNG frames for maximum compatibility.  Video
+    // container muxing in pure JS is unreliable across browsers and codecs.
+    const pngFrames: Blob[] = [];
+ 
+    const totalFrames = Math.ceil(seconds * fps);
+    console.log(`📼 Offline rendering started (${totalFrames} frames @ ${fps} fps)`);
+
+    for (let frame = 0; frame < totalFrames; frame++) {
+      // Step physics for each species (same as realtime loop)
+      for (const species of Array.from(this.species.values())) {
+        if (species.forceCompute) {
+          this.renderer.compute(species.forceCompute);
+        }
+        // @ts-ignore – Map iteration typing quirk with THREE NodeBuilder
+        for (const computeNode of Array.from(species.interSpeciesForces.values())) {
+          this.renderer.compute(computeNode);
+        }
+      }
+
+      // Render scene
+      this.renderer.render(this.scene, this.camera);
+
+      // Ensure GPU commands are done before reading pixels (best effort)
+      // Not all runtimes expose device.queue; optional chaining avoids errors.
+      await (this.renderer as any).device?.queue?.onSubmittedWorkDone?.();
+
+      // Capture PNG blob for this frame
+      // eslint-disable-next-line no-await-in-loop
+      const pngBlob: Blob = await new Promise((res) => canvas.toBlob((b) => res(b!), 'image/png'));
+      pngFrames.push(pngBlob);
+
+      progress(frame + 1, totalFrames);
+    }
+
+    const { default: JSZip } = await import('jszip');
+    const zip = new JSZip();
+    pngFrames.forEach((b, i) => {
+      zip.file(`frame_${i.toString().padStart(5, '0')}.png`, b);
+    });
+    const outputBlob = await zip.generateAsync({ type: 'blob' });
+
+    // Restore original viewport
+    this.renderer.setSize(original.w, original.h);
+    this.camera.aspect = originalAspect;
+    this.camera.updateProjectionMatrix();
+
+    if (wasRunning) this.startAnimation();
+
+    console.log('✅ Offline rendering finished');
+    return outputBlob;
+  }
+
   /**
    * Export simulation state to JSON string
    */

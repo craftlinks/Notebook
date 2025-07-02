@@ -1,5 +1,37 @@
 import { GPUParticleLenia, KernelType } from './main_gpu'
 
+// ---------------------------------------------------------------------------
+// OFFLINE RENDER SETTINGS – flip OFFLINE_RENDER_MODE to false to disable.
+// ---------------------------------------------------------------------------
+const OFFLINE_RENDER_MODE = true;            // whether to auto-render video
+const OFFLINE_SECONDS     = 60;              // video length in seconds
+const OFFLINE_FPS         = 60;              // output frame-rate
+const OFFLINE_RES         = {                // video resolution
+  width : 1920,
+  height: 1080
+};
+
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a   = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// NEW: helper to derive a sensible .zip filename from the name of the
+// file that initiated the simulation load. For example
+//   "gpu-particle-lenia-1751396547627.png" -> "gpu-particle-lenia-1751396547627.zip"
+//   "my-sim.json"                            -> "my-sim.zip"
+function getZipFilename(originalName: string): string {
+  const dotIndex = originalName.lastIndexOf('.')
+  const base = dotIndex !== -1 ? originalName.substring(0, dotIndex) : originalName
+  return `${base}.zip`
+}
+
 // Simple helper to generate random Params matching the interface in main_gpu.ts
 interface Params {
   mu_k: number;
@@ -294,6 +326,20 @@ async function loadSimulationFromImage(file: File): Promise<boolean> {
         // Use the unified restore function
         restoreUIFromSimulationData(simulationData);
         
+        // ------------------------------------------------------------------
+        // Trigger offline video capture if the mode is enabled.
+        // ------------------------------------------------------------------
+        if (OFFLINE_RENDER_MODE) {
+          const blob = await gpuSim.recordOfflineVideo({
+            seconds: OFFLINE_SECONDS,
+            fps:     OFFLINE_FPS,
+            width:   OFFLINE_RES.width,
+            height:  OFFLINE_RES.height,
+            progress:(f,t)=>console.log(`🎞️ ${f}/${t}`)
+          });
+          if (blob) downloadBlob(blob, getZipFilename(file.name));
+        }
+
         return true;
       }
     }
@@ -535,6 +581,18 @@ function setupDragAndDrop() {
             } catch (error) {
               console.warn('Could not restore UI state from dropped file:', error);
             }
+
+            // Offline render
+            if (OFFLINE_RENDER_MODE) {
+              const blob = await gpuSim.recordOfflineVideo({
+                seconds: OFFLINE_SECONDS,
+                fps:     OFFLINE_FPS,
+                width:   OFFLINE_RES.width,
+                height:  OFFLINE_RES.height,
+                progress:(f,t)=>console.log(`🎞️ ${f}/${t}`)
+              });
+              if (blob) downloadBlob(blob, getZipFilename(file.name));
+            }
           } else {
             alert('Failed to load simulation file')
           }
@@ -653,6 +711,17 @@ function setupUI() {
           success = await loadSimulationFromImage(file);
           if (success) {
             console.log('🖼️ GPU simulation loaded successfully from PNG');
+
+            if (OFFLINE_RENDER_MODE) {
+              const blob = await gpuSim.recordOfflineVideo({
+                seconds: OFFLINE_SECONDS,
+                fps:     OFFLINE_FPS,
+                width:   OFFLINE_RES.width,
+                height:  OFFLINE_RES.height,
+                progress:(f,t)=>console.log(`🎞️ ${f}/${t}`)
+              });
+              if (blob) downloadBlob(blob, getZipFilename(file.name));
+            }
           }
         } else if (fileName.endsWith('.json')) {
           success = await gpuSim.loadSimulationFile(file);
@@ -666,6 +735,17 @@ function setupUI() {
               restoreUIFromSimulationData(simulationData);
             } catch (error) {
               console.warn('Could not restore UI state from JSON file:', error);
+            }
+
+            if (OFFLINE_RENDER_MODE) {
+              const blob = await gpuSim.recordOfflineVideo({
+                seconds: OFFLINE_SECONDS,
+                fps:     OFFLINE_FPS,
+                width:   OFFLINE_RES.width,
+                height:  OFFLINE_RES.height,
+                progress:(f,t)=>console.log(`🎞️ ${f}/${t}`)
+              });
+              if (blob) downloadBlob(blob, getZipFilename(file.name));
             }
           }
         }
