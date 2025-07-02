@@ -1222,7 +1222,17 @@ class GPUParticleLenia {
     width?: number;
     height?: number;
     progress?: (frame: number, total: number) => void;
-  }): Promise<Blob | null> {
+    /**
+     * Maximum number of PNG frames that will be stored in one ZIP archive
+     * before the archive is flushed and a new one is started.  Keeping this
+     * reasonably low prevents the browser from trying to allocate multi-GB
+     * buffers when JSZip generates the archive.
+     *
+     * Defaults to 300 which is five seconds at 60 fps – well below the 2 GB
+     * ArrayBuffer limit even for noisy HD frames.
+     */
+    framesPerZip?: number;
+  }): Promise<Blob | Blob[] | null> {
     if (!this.renderer) {
       console.warn('Renderer not initialised – cannot record video');
       return null;
@@ -1233,7 +1243,8 @@ class GPUParticleLenia {
       fps = 60,
       width = 1920,
       height = 1080,
-      progress = () => {}
+      progress = () => {},
+      framesPerZip = 300
     } = options;
 
     if (typeof (window as any).VideoEncoder === 'undefined') {
@@ -1256,12 +1267,19 @@ class GPUParticleLenia {
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
 
-    // We'll output a ZIP of PNG frames for maximum compatibility.  Video
     // container muxing in pure JS is unreliable across browsers and codecs.
-    const pngFrames: Blob[] = [];
- 
+    // Instead of collecting **all** frames in RAM, we add them to JSZip on the
+    // fly and flush the archive every `framesPerZip` frames.  This keeps peak
+    // memory usage bounded.
+
+    const { default: JSZip } = await import('jszip');
+
+    let zip = new JSZip();
+    let framesInCurrentZip = 0;
+    const outputBlobs: Blob[] = [];
+
     const totalFrames = Math.ceil(seconds * fps);
-    console.log(`📼 Offline rendering started (${totalFrames} frames @ ${fps} fps)`);
+    console.log(`📼 Offline rendering started (${totalFrames} frames @ ${fps} fps, ${framesPerZip} frames per ZIP)`);
 
     for (let frame = 0; frame < totalFrames; frame++) {
       // Step physics for each species (same as realtime loop)
@@ -1279,23 +1297,32 @@ class GPUParticleLenia {
       this.renderer.render(this.scene, this.camera);
 
       // Ensure GPU commands are done before reading pixels (best effort)
-      // Not all runtimes expose device.queue; optional chaining avoids errors.
       await (this.renderer as any).device?.queue?.onSubmittedWorkDone?.();
 
       // Capture PNG blob for this frame
       // eslint-disable-next-line no-await-in-loop
       const pngBlob: Blob = await new Promise((res) => canvas.toBlob((b) => res(b!), 'image/png'));
-      pngFrames.push(pngBlob);
+
+      // Add to current zip
+      zip.file(`frame_${frame.toString().padStart(5, '0')}.png`, pngBlob);
+      framesInCurrentZip++;
+
+      // Flush if reached framesPerZip or last frame
+      const isLastFrame = frame === totalFrames - 1;
+      if (framesInCurrentZip >= framesPerZip || isLastFrame) {
+        // eslint-disable-next-line no-await-in-loop
+        const blobPart = await zip.generateAsync({ type: 'blob' });
+        outputBlobs.push(blobPart);
+
+        // Prepare next chunk if not last frame
+        if (!isLastFrame) {
+          zip = new JSZip();
+          framesInCurrentZip = 0;
+        }
+      }
 
       progress(frame + 1, totalFrames);
     }
-
-    const { default: JSZip } = await import('jszip');
-    const zip = new JSZip();
-    pngFrames.forEach((b, i) => {
-      zip.file(`frame_${i.toString().padStart(5, '0')}.png`, b);
-    });
-    const outputBlob = await zip.generateAsync({ type: 'blob' });
 
     // Restore original viewport
     this.renderer.setSize(original.w, original.h);
@@ -1305,7 +1332,9 @@ class GPUParticleLenia {
     if (wasRunning) this.startAnimation();
 
     console.log('✅ Offline rendering finished');
-    return outputBlob;
+
+    // Return a single blob if only one chunk was needed, otherwise the array
+    return outputBlobs.length === 1 ? outputBlobs[0] : outputBlobs;
   }
 
   /**

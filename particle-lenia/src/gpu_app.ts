@@ -11,15 +11,30 @@ const OFFLINE_RES         = {                // video resolution
   height: 1080
 };
 
-function downloadBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const a   = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+function downloadBlob(blob: Blob | Blob[], filename: string): void {
+  // Allow both single Blob and arrays of Blobs (ZIP chunks).
+  const blobs = Array.isArray(blob) ? blob : [blob];
+
+  blobs.forEach((b, idx) => {
+    const url = URL.createObjectURL(b);
+    const a   = document.createElement('a');
+
+    // Derive part-aware filename when we have multiple chunks
+    let partName = filename;
+    if (blobs.length > 1) {
+      const dot = filename.lastIndexOf('.');
+      const base = dot !== -1 ? filename.slice(0, dot) : filename;
+      const ext  = dot !== -1 ? filename.slice(dot) : '';
+      partName = `${base}_part${idx + 1}${ext}`;
+    }
+
+    a.href = url;
+    a.download = partName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  });
 }
 
 // NEW: helper to derive a sensible .zip filename from the name of the
