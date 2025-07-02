@@ -1274,9 +1274,82 @@ class GPUParticleLenia {
 
     const { default: JSZip } = await import('jszip');
 
+    // ------------------------------------------------------------------
+    // You can switch between the simpler toBlob() encoder (option 1) and
+    // the OffscreenCanvas worker encoder (option 2) using this flag.  We
+    // default to *false* because, on some systems, the structured-clone &
+    // bitmap transfer introduce more jank than the CPU time they save.
+    // ------------------------------------------------------------------
+    const USE_WORKER_ENCODER = false;
+
+    // Worker-related state (only initialised when the flag is true)
+    let pngWorker: Worker | null = null;
+    let encodeResolvers: Map<number, () => void> | null = null;
+
+    if (USE_WORKER_ENCODER) {
+      // Dynamically import the worker (Vite/ESM-friendly)
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore – bundler will inline the worker via URL
+      pngWorker = new Worker(new URL('./png_worker.ts', import.meta.url), {
+        type: 'module'
+      });
+
+      encodeResolvers = new Map<number, () => void>();
+
+      pngWorker.onmessage = (ev: MessageEvent) => {
+        const { frame, blob, error, fileName } = ev.data as {
+          frame: number;
+          fileName: string;
+          blob?: Blob;
+          error?: string;
+        };
+
+        const resolver = encodeResolvers!.get(frame);
+        if (resolver) {
+          if (blob) {
+            zip.file(fileName, blob, { compression: 'STORE' });
+          } else {
+            console.error(`Worker failed to encode frame ${frame}: ${error}`);
+          }
+          resolver();
+          encodeResolvers!.delete(frame);
+        }
+      };
+    }
+
     let zip = new JSZip();
-    let framesInCurrentZip = 0;
     const outputBlobs: Blob[] = [];
+
+    // Generic helper – either encode via worker or fall back to toBlob()
+    const encodeFrame = (frameIdx: number, fileName: string): Promise<void> => {
+      if (USE_WORKER_ENCODER && pngWorker && encodeResolvers) {
+        // Prefer zero-copy transfer if supported
+        if ('transferToImageBitmap' in canvas) {
+          const bitmap = (canvas as any).transferToImageBitmap() as ImageBitmap;
+          return new Promise<void>((resolve) => {
+            encodeResolvers!.set(frameIdx, resolve);
+            pngWorker!.postMessage({ frame: frameIdx, fileName, bitmap }, [bitmap]);
+          });
+        }
+        return createImageBitmap(canvas).then((bitmap) => {
+          return new Promise<void>((resolve) => {
+            encodeResolvers!.set(frameIdx, resolve);
+            pngWorker!.postMessage({ frame: frameIdx, fileName, bitmap }, [bitmap]);
+          });
+        });
+      }
+
+      // Simple toBlob path (option 1) – still off-thread but no extra transfer
+      return new Promise<void>((resolve) => {
+        canvas.toBlob((blob) => {
+          if (blob) zip.file(fileName, blob, { compression: 'STORE' });
+          resolve();
+        }, 'image/png');
+      });
+    };
+
+    let framesStartedInCurrentZip = 0;
+    let pendingPromises: Promise<void>[] = [];
 
     const totalFrames = Math.ceil(seconds * fps);
     console.log(`📼 Offline rendering started (${totalFrames} frames @ ${fps} fps, ${framesPerZip} frames per ZIP)`);
@@ -1296,28 +1369,34 @@ class GPUParticleLenia {
       // Render scene
       this.renderer.render(this.scene, this.camera);
 
-      // Ensure GPU commands are done before reading pixels (best effort)
-      await (this.renderer as any).device?.queue?.onSubmittedWorkDone?.();
+      // Kick off asynchronous PNG encode – do NOT await it here
+      const fileName = `frame_${frame.toString().padStart(5, '0')}.png`;
+      const encodePromise = encodeFrame(frame, fileName);
 
-      // Capture PNG blob for this frame
-      // eslint-disable-next-line no-await-in-loop
-      const pngBlob: Blob = await new Promise((res) => canvas.toBlob((b) => res(b!), 'image/png'));
+      pendingPromises.push(encodePromise);
+      framesStartedInCurrentZip++;
 
-      // Add to current zip
-      zip.file(`frame_${frame.toString().padStart(5, '0')}.png`, pngBlob);
-      framesInCurrentZip++;
-
-      // Flush if reached framesPerZip or last frame
+      // Decide if we need to flush the current zip
       const isLastFrame = frame === totalFrames - 1;
-      if (framesInCurrentZip >= framesPerZip || isLastFrame) {
+      const chunkFull = framesStartedInCurrentZip >= framesPerZip;
+
+      if (chunkFull || isLastFrame) {
+        // Wait until every PNG scheduled for this chunk is actually inside the archive
+        await Promise.all(pendingPromises);
+        pendingPromises = [];
+
         // eslint-disable-next-line no-await-in-loop
-        const blobPart = await zip.generateAsync({ type: 'blob' });
+        const blobPart = await zip.generateAsync({
+          type: 'blob',
+          compression: 'STORE',
+          compressionOptions: { level: 0 }
+        });
         outputBlobs.push(blobPart);
 
-        // Prepare next chunk if not last frame
         if (!isLastFrame) {
+          // Start a fresh archive for the next chunk
           zip = new JSZip();
-          framesInCurrentZip = 0;
+          framesStartedInCurrentZip = 0;
         }
       }
 
@@ -1332,6 +1411,9 @@ class GPUParticleLenia {
     if (wasRunning) this.startAnimation();
 
     console.log('✅ Offline rendering finished');
+
+    // Clean up the worker to free resources
+    pngWorker?.terminate();
 
     // Return a single blob if only one chunk was needed, otherwise the array
     return outputBlobs.length === 1 ? outputBlobs[0] : outputBlobs;
