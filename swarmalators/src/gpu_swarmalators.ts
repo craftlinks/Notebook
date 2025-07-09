@@ -13,11 +13,20 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 // Swarmalator parameters based on the mathematical model
 export interface SwarmalatorParams {
-  J: number;        // Coupling strength between spatial and phase dynamics
-  K: number;        // Synchronization strength
+  J: number;        // Coupling strength between spatial and phase dynamics (global fallback)
+  K: number;        // Synchronization strength (global fallback)
   omega: number;    // Natural frequency
   naturalVelocity: number; // Natural propulsion velocity (v_n in equations)
   dt: number;       // Time step
+}
+
+// Species-based coupling parameters
+export interface SpeciesParams {
+  numSpecies: number;           // Number of distinct species
+  JMatrix: number[][];          // J coupling matrix [species_i][species_j]
+  KMatrix: number[][];          // K coupling matrix [species_i][species_j]
+  speciesColors: string[];      // Colors for each species
+  speciesDistribution: number[]; // Probability distribution for species assignment
 }
 
 // GPU-compatible swarmalator data structure
@@ -31,7 +40,8 @@ interface GPUSwarmalator {
   velocityBuffer: any;    // TSL instancedArray - particle velocities [vx,vy,vz]
   phaseBuffer: any;       // TSL instancedArray - oscillator phases [θ]
   phaseVelocityBuffer: any; // TSL instancedArray - phase velocities [dθ/dt]
-  naturalFreqBuffer: any;   // NEW: per-particle natural frequency ω_n
+  naturalFreqBuffer: any;   // per-particle natural frequency ω_n
+  speciesBuffer: any;       // NEW: per-particle species ID
   
   // Rendering
   mesh: THREE.InstancedMesh;
@@ -39,11 +49,18 @@ interface GPUSwarmalator {
   
   // Uniform parameters
   params: {
-    J: any;
-    K: any;
+    J: any;                // Fallback J (scalar)
+    K: any;                // Fallback K (scalar)
     omega: any;
     naturalVelocity: any;
     dt: any;
+  };
+  
+  // Species parameters
+  speciesParams: {
+    numSpecies: any;       // Number of species
+    JMatrix: any;          // J coupling matrix (flattened)
+    KMatrix: any;          // K coupling matrix (flattened)
   };
   
   color: string;
@@ -120,6 +137,15 @@ const phaseCoupling = /*@__PURE__*/ Fn(([phaseI, phaseJ, distance, K]) => {
   return K.mul(sin(phaseDiff)).div(distance);
 });
 
+/**
+ * Get coupling strength between two species from flattened matrix with global offset
+ * Matrix access: matrix[i * numSpecies + j] + globalOffset
+ */
+const getSpeciesCoupling = /*@__PURE__*/ Fn(([matrix, speciesI, speciesJ, numSpecies, globalOffset]) => {
+  const index = speciesI.mul(numSpecies).add(speciesJ);
+  return matrix.element(index).add(globalOffset);
+});
+
 // =============================================================================
 // GPU SWARMALATOR CLASS
 // =============================================================================
@@ -135,16 +161,33 @@ class GPUSwarmalators {
   private swarmalators: Map<string, GPUSwarmalator> = new Map();
   private animationId: number | null = null;
   private globalParams: SwarmalatorParams;
+  private speciesParams: SpeciesParams;
   
-  constructor(params?: Partial<SwarmalatorParams>) {
-    // Default swarmalator parameters
+  constructor(params?: Partial<SwarmalatorParams>, speciesParams?: Partial<SpeciesParams>) {
+    // Default swarmalator parameters (J and K are now global offsets)
     this.globalParams = {
-      J: 2.0,           // Strong coupling
-      K: 0.3,           // Moderate synchronization strength
+      J: 0.0,           // Global J offset (starts at 0)
+      K: 0.0,           // Global K offset (starts at 0) 
       omega: 2.0,       // No natural frequency initially
       naturalVelocity:  1.1, // No natural propulsion
       dt: 0.14,         // Larger time step
       ...params
+    };
+    
+    // Default species parameters (2 species with different coupling)
+    this.speciesParams = {
+      numSpecies: 2,
+      JMatrix: [
+        [1.0, 0.5],  // Species 0 to [0, 1]
+        [0.5, 1.0]   // Species 1 to [0, 1]
+      ],
+      KMatrix: [
+        [0.8, 0.2],  // Species 0 to [0, 1]
+        [0.2, 0.8]   // Species 1 to [0, 1]
+      ],
+      speciesColors: ['#ff4444', '#44ff44'],
+      speciesDistribution: [0.5, 0.5],
+      ...speciesParams
     };
     
     // Initialize scene and camera
@@ -198,6 +241,7 @@ class GPUSwarmalators {
     const phaseBuffer = instancedArray(count, 'float');
     const phaseVelocityBuffer = instancedArray(count, 'float');
     const naturalFreqBuffer = instancedArray(count, 'float');
+    const speciesBuffer = instancedArray(count, 'uint');
     
     // Create geometry and material
     const geometry = new THREE.PlaneGeometry(1, 1);
@@ -207,9 +251,26 @@ class GPUSwarmalators {
       transparent: true
     });
     
-    // Phase-based color visualization
+    // Species-based color visualization with phase modulation
     const phaseAttr = phaseBuffer.toAttribute();
-    material.colorNode = phaseToColor(phaseAttr);
+    const speciesAttr = speciesBuffer.toAttribute();
+    
+    // Create a hybrid color system: base color from species, modulated by phase
+    material.colorNode = Fn(() => {
+      const species = speciesAttr;
+      const phase = phaseAttr;
+      
+      // Base color from species (red for species 0, green for species 1)
+      const baseColor = select(species.equal(uint(0)), 
+        vec3(1.0, 0.3, 0.3), // Red for species 0
+        vec3(0.3, 1.0, 0.3)  // Green for species 1
+      );
+      
+      // Phase modulation for brightness
+      const phaseBrightness = cos(phase).mul(0.3).add(0.7);
+      
+      return vec4(baseColor.mul(phaseBrightness), 1.0);
+    })();
     
     // Dynamic alpha based on phase velocity (more active = brighter)
     const phaseVelAttr = phaseVelocityBuffer.toAttribute();
@@ -222,6 +283,10 @@ class GPUSwarmalators {
     // Dynamic scale based on synchronization
     material.scaleNode = float(0.05);
     
+    // Flatten coupling matrices for GPU
+    const flatJMatrix = this.speciesParams.JMatrix.flat();
+    const flatKMatrix = this.speciesParams.KMatrix.flat();
+    
     // Create uniform parameters
     const paramUniforms = {
       J: uniform(finalParams.J),
@@ -229,6 +294,13 @@ class GPUSwarmalators {
       omega: uniform(finalParams.omega),
       naturalVelocity: uniform(finalParams.naturalVelocity),
       dt: uniform(finalParams.dt)
+    };
+    
+    // Create species uniform parameters
+    const speciesParamUniforms = {
+      numSpecies: uniform(this.speciesParams.numSpecies),
+      JMatrix: uniformArray(flatJMatrix),
+      KMatrix: uniformArray(flatKMatrix)
     };
     
     // Create instanced mesh
@@ -243,10 +315,12 @@ class GPUSwarmalators {
       velocityBuffer,
       phaseBuffer,
       phaseVelocityBuffer,
-      naturalFreqBuffer, // NEW: per-particle natural frequency
+      naturalFreqBuffer,
+      speciesBuffer,
       mesh,
       material,
       params: paramUniforms,
+      speciesParams: speciesParamUniforms,
       color: '#00ff88'
     };
     
@@ -270,8 +344,10 @@ class GPUSwarmalators {
       velocityBuffer, 
       phaseBuffer, 
       phaseVelocityBuffer,
-      naturalFreqBuffer, // NEW: per-particle natural frequency
-      params 
+      naturalFreqBuffer,
+      speciesBuffer,
+      params,
+      speciesParams
     } = swarmalator;
     
     return Fn(() => {
@@ -285,7 +361,8 @@ class GPUSwarmalators {
       // Get current particle state
       const pos_i = positionBuffer.element(i).toVar();
       const phase_i = phaseBuffer.element(i).toVar();
-      const omega_i = naturalFreqBuffer.element(i).toVar(); // per-particle natural frequency
+      const omega_i = naturalFreqBuffer.element(i).toVar();
+      const species_i = speciesBuffer.element(i).toVar();
       
       // Initialize force and phase coupling accumulators
       const force_acc = vec3(0.0, 0.0, 0.0).toVar();
@@ -302,24 +379,26 @@ class GPUSwarmalators {
         // Get other particle state
         const pos_j = positionBuffer.element(j);
         const phase_j = phaseBuffer.element(j);
+        const species_j = speciesBuffer.element(j);
         
         // Calculate distance vector and magnitude
         const dr = pos_j.sub(pos_i).toVar();
         const distance = length(dr).add(1e-6).toVar(); // Add small epsilon to avoid division by zero
         
-        // NOTE: For an exact numerical reproduction we keep *all* pairwise interactions.
-        // No early exit based on distance – every particle influences every other.
+        // Get species-specific coupling parameters with global offsets
+        const J_ij = getSpeciesCoupling(speciesParams.JMatrix, species_i, species_j, speciesParams.numSpecies, params.J);
+        const K_ij = getSpeciesCoupling(speciesParams.KMatrix, species_i, species_j, speciesParams.numSpecies, params.K);
         
-        // Calculate attractive force (modulated by phase difference)
-        const attractive = attractiveForce(dr, distance, phase_i, phase_j, params.J);
+        // Calculate attractive force (modulated by phase difference and species coupling)
+        const attractive = attractiveForce(dr, distance, phase_i, phase_j, J_ij);
         force_acc.addAssign(attractive);
         
         // Calculate repulsive force (inverse–square) – always active, no scaling.
         const repulsive = repulsiveForce(dr, distance);
         force_acc.addAssign(repulsive.mul(1.0)); // Strengthen repulsion for more spacing
         
-        // Calculate phase coupling
-        const coupling = phaseCoupling(phase_i, phase_j, distance, params.K);
+        // Calculate phase coupling with species-specific strength
+        const coupling = phaseCoupling(phase_i, phase_j, distance, K_ij);
         phase_coupling_acc.addAssign(coupling);
         
       });
@@ -392,7 +471,7 @@ class GPUSwarmalators {
    * Initialize particle positions and phases
    */
   createInitCompute(swarmalator: GPUSwarmalator) {
-    const { pointCount, positionBuffer, velocityBuffer, phaseBuffer, phaseVelocityBuffer, naturalFreqBuffer } = swarmalator;
+    const { pointCount, positionBuffer, velocityBuffer, phaseBuffer, phaseVelocityBuffer, naturalFreqBuffer, speciesBuffer } = swarmalator;
     
     return Fn(() => {
       const i = instanceIndex;
@@ -431,6 +510,10 @@ class GPUSwarmalators {
       // Random initial natural frequency [0.0, 2.0] - wide spread
       const randNaturalFreq = hash(instanceIndex.add(uint(161718))).mul(2.0);
       naturalFreqBuffer.element(i).assign(randNaturalFreq);
+      
+      // Assign species based on distribution (simple: alternate between species for now)
+      const species = uint(hash(instanceIndex.add(uint(192021))).mul(float(this.speciesParams.numSpecies)));
+      speciesBuffer.element(i).assign(species);
       
     })().compute(pointCount);
   }
@@ -564,10 +647,39 @@ class GPUSwarmalators {
   }
   
   /**
+   * Update species parameters
+   */
+  updateSpeciesParams(newSpeciesParams: Partial<SpeciesParams>) {
+    this.speciesParams = { ...this.speciesParams, ...newSpeciesParams };
+    
+    // Update all swarmalators
+    for (const swarmalator of this.swarmalators.values()) {
+      if (newSpeciesParams.numSpecies !== undefined) {
+        swarmalator.speciesParams.numSpecies.value = newSpeciesParams.numSpecies;
+      }
+      if (newSpeciesParams.JMatrix !== undefined) {
+        const flatJMatrix = newSpeciesParams.JMatrix.flat();
+        swarmalator.speciesParams.JMatrix.array = flatJMatrix;
+      }
+      if (newSpeciesParams.KMatrix !== undefined) {
+        const flatKMatrix = newSpeciesParams.KMatrix.flat();
+        swarmalator.speciesParams.KMatrix.array = flatKMatrix;
+      }
+    }
+  }
+  
+  /**
    * Get current parameters
    */
   getParams(): SwarmalatorParams {
     return { ...this.globalParams };
+  }
+  
+  /**
+   * Get current species parameters
+   */
+  getSpeciesParams(): SpeciesParams {
+    return { ...this.speciesParams };
   }
   
   /**

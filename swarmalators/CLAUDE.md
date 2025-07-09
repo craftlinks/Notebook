@@ -1,8 +1,3 @@
-## Goal
-
-- Use particle-lenia TSL as a blueprint for implementing Swarmalators
-- Swarmalators concept and math: @claude/swarmalators.md
-
 ## Technical Examples
 
 - TSL example @claude/tsl_example.html

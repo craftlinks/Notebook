@@ -100,6 +100,74 @@
             color: #000;
         }
         
+        .species-button {
+            background: #333;
+            color: #ff8800;
+            border: 2px solid #ff8800;
+            padding: 10px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.3s ease;
+        }
+        
+        .species-button:hover {
+            background: #ff8800;
+            color: #000;
+        }
+        
+        .matrix-container {
+            display: flex;
+            gap: 20px;
+            margin-top: 15px;
+        }
+        
+        .matrix-display {
+            flex: 1;
+            background: #111;
+            border: 1px solid #666;
+            border-radius: 8px;
+            padding: 15px;
+        }
+        
+        .matrix-display h4 {
+            margin: 0 0 10px 0;
+            color: #00ff88;
+            text-align: center;
+        }
+        
+        .matrix-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+        
+        .matrix-cell {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        
+        .matrix-cell label {
+            font-size: 11px;
+            color: #ccc;
+            font-weight: bold;
+        }
+        
+        .matrix-cell input[type="range"] {
+            width: 100%;
+        }
+        
+        .matrix-cell input[type="number"] {
+            width: 60px;
+            background: #222;
+            color: #00ff88;
+            border: 1px solid #666;
+            padding: 3px;
+            border-radius: 3px;
+            font-size: 11px;
+        }
+        
         .info {
             background: #222;
             border: 1px solid #00ff88;
@@ -149,17 +217,17 @@
             <h3>Swarmalator Parameters</h3>
             
             <div class="control-group">
-                <label for="J-slider">J (Spatial-Phase Coupling):</label>
-                <input type="range" id="J-slider" min="-2" max="2" value="2" step="0.1">
-                <input type="number" id="J-value" value="2" step="0.1">
-                <span class="info">Positive: like attracts like, Negative: opposites attract</span>
+                <label for="J-slider">J Offset (Global Spatial Coupling):</label>
+                <input type="range" id="J-slider" min="-2" max="2" value="0" step="0.1">
+                <input type="number" id="J-value" value="0" step="0.1">
+                <span class="info">Global offset added to all J matrix values</span>
             </div>
             
             <div class="control-group">
-                <label for="K-slider">K (Synchronization Strength):</label>
-                <input type="range" id="K-slider" min="-2" max="2" value="0.3" step="0.1">
-                <input type="number" id="K-value" value="0.3" step="0.1">
-                <span class="info">Positive: synchronization, Negative: desynchronization</span>
+                <label for="K-slider">K Offset (Global Phase Coupling):</label>
+                <input type="range" id="K-slider" min="-2" max="2" value="0" step="0.1">
+                <input type="number" id="K-value" value="0" step="0.1">
+                <span class="info">Global offset added to all K matrix values</span>
             </div>
             
             <div class="control-group">
@@ -198,18 +266,83 @@
                 <button class="pattern-button" data-pattern="makes-me-dizzy">Makes Me Dizzy</button>
                 <button class="pattern-button" data-pattern="fractured">Fractured</button>
             </div>
+            
+            <h3>Species Interactions</h3>
+            <div class="pattern-buttons">
+                <button class="species-button" data-species="symmetric-species">Symmetric Species</button>
+                <button class="species-button" data-species="predator-prey">Predator-Prey</button>
+                <button class="species-button" data-species="segregated-species">Segregated Species</button>
+                <button class="species-button" id="randomize-matrices">Randomize All Interactions</button>
+            </div>
+            
+            <h3>Species Coupling Matrices</h3>
+            <div class="matrix-container">
+                <div class="matrix-display">
+                    <h4>J Matrix (Spatial Coupling)</h4>
+                    <div class="matrix-grid" id="j-matrix">
+                        <div class="matrix-cell">
+                            <label>J[0,0] (Red→Red):</label>
+                            <input type="range" id="j-0-0" min="-2" max="2" value="1.0" step="0.1">
+                            <input type="number" id="j-0-0-value" value="1.0" step="0.1">
+                        </div>
+                        <div class="matrix-cell">
+                            <label>J[0,1] (Red→Green):</label>
+                            <input type="range" id="j-0-1" min="-2" max="2" value="0.5" step="0.1">
+                            <input type="number" id="j-0-1-value" value="0.5" step="0.1">
+                        </div>
+                        <div class="matrix-cell">
+                            <label>J[1,0] (Green→Red):</label>
+                            <input type="range" id="j-1-0" min="-2" max="2" value="0.5" step="0.1">
+                            <input type="number" id="j-1-0-value" value="0.5" step="0.1">
+                        </div>
+                        <div class="matrix-cell">
+                            <label>J[1,1] (Green→Green):</label>
+                            <input type="range" id="j-1-1" min="-2" max="2" value="1.0" step="0.1">
+                            <input type="number" id="j-1-1-value" value="1.0" step="0.1">
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="matrix-display">
+                    <h4>K Matrix (Phase Coupling)</h4>
+                    <div class="matrix-grid" id="k-matrix">
+                        <div class="matrix-cell">
+                            <label>K[0,0] (Red→Red):</label>
+                            <input type="range" id="k-0-0" min="-2" max="2" value="0.8" step="0.1">
+                            <input type="number" id="k-0-0-value" value="0.8" step="0.1">
+                        </div>
+                        <div class="matrix-cell">
+                            <label>K[0,1] (Red→Green):</label>
+                            <input type="range" id="k-0-1" min="-2" max="2" value="0.2" step="0.1">
+                            <input type="number" id="k-0-1-value" value="0.2" step="0.1">
+                        </div>
+                        <div class="matrix-cell">
+                            <label>K[1,0] (Green→Red):</label>
+                            <input type="range" id="k-1-0" min="-2" max="2" value="0.2" step="0.1">
+                            <input type="number" id="k-1-0-value" value="0.2" step="0.1">
+                        </div>
+                        <div class="matrix-cell">
+                            <label>K[1,1] (Green→Green):</label>
+                            <input type="range" id="k-1-1" min="-2" max="2" value="0.8" step="0.1">
+                            <input type="number" id="k-1-1-value" value="0.8" step="0.1">
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
         
         <div class="info">
             <strong>Instructions:</strong><br>
-            • Colors represent oscillator phases (rainbow wheel)<br>
-            • Brightness indicates phase velocity (activity)<br>
+            • Colors represent particle species (Red/Green) with phase brightness modulation<br>
+            • Species interact via coupling matrices (J, K) + global offsets<br>
             • Use mouse to rotate/zoom the view<br>
-            • Try different parameter combinations to see emergent patterns<br>
+            • <strong>Global Offsets:</strong> J and K sliders add to all matrix values<br>
+            • <strong>Matrix Controls:</strong> Set specific species-pair interactions<br>
             • <strong>J &gt; 0:</strong> particles with similar phases attract<br>
             • <strong>J &lt; 0:</strong> particles with opposite phases attract<br>
             • <strong>K &gt; 0:</strong> phases synchronize<br>
-            • <strong>K &lt; 0:</strong> phases desynchronize
+            • <strong>K &lt; 0:</strong> phases desynchronize<br>
+            • <strong>Species Presets:</strong> Load different interaction patterns
         </div>
         
         <div id="canvas-container" class="canvas-container">
