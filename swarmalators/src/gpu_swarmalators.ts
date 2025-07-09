@@ -287,13 +287,20 @@ class GPUSwarmalators {
     // Dynamic alpha based on phase velocity (more active = brighter)
     const phaseVelAttr = phaseVelocityBuffer.toAttribute();
     const alpha = clamp(abs(phaseVelAttr).mul(5.0).add(0.3), float(0.1), float(1.0));
-    material.opacityNode = alpha;
+
+    // Radial glow falloff for soft circular sprites (borrowed from particle-lenia)
+    const dist = length(uv().sub(vec2(0.5, 0.5)));
+    const radialAlpha = clamp(float(1.0).sub(pow(dist.mul(2.0), 8.0)), float(0.0), float(1.0));
+
+    // Combine activity-based brightness with radial glow
+    material.opacityNode = radialAlpha.mul(alpha);
     
     // Position from buffer
     material.positionNode = positionBuffer.toAttribute();
     
-    // Dynamic scale based on synchronization
-    material.scaleNode = float(0.05);
+    // Dynamic scale based on phase activity (brighter and larger when active)
+    const dynamicScale = clamp(abs(phaseVelAttr).mul(0.02).add(0.05), float(0.03), float(0.15));
+    material.scaleNode = dynamicScale;
     
     // Flatten coupling matrices for GPU
     const flatJMatrix = this.speciesParams.JMatrix.flat();
