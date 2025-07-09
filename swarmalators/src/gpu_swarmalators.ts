@@ -20,13 +20,13 @@ export interface SwarmalatorParams {
   dt: number;       // Time step
 }
 
-// Species-based coupling parameters
+// Species-based coupling parameters (supports up to 5 species)
 export interface SpeciesParams {
-  numSpecies: number;           // Number of distinct species
-  JMatrix: number[][];          // J coupling matrix [species_i][species_j]
-  KMatrix: number[][];          // K coupling matrix [species_i][species_j]
-  speciesColors: string[];      // Colors for each species
-  speciesDistribution: number[]; // Probability distribution for species assignment
+  numSpecies: number;           // Number of distinct species (1-5)
+  JMatrix: number[][];          // J coupling matrix [species_i][species_j] (numSpecies x numSpecies)
+  KMatrix: number[][];          // K coupling matrix [species_i][species_j] (numSpecies x numSpecies)
+  speciesColors: string[];      // Colors for each species (up to 5)
+  speciesDistribution: number[]; // Probability distribution for species assignment (must sum to 1)
 }
 
 // GPU-compatible swarmalator data structure
@@ -185,7 +185,7 @@ class GPUSwarmalators {
         [0.8, 0.2],  // Species 0 to [0, 1]
         [0.2, 0.8]   // Species 1 to [0, 1]
       ],
-      speciesColors: ['#ff4444', '#44ff44'],
+      speciesColors: ['#ff4444', '#44ff44', '#4444ff', '#ffff44', '#ff44ff'],
       speciesDistribution: [0.5, 0.5],
       ...speciesParams
     };
@@ -260,10 +260,19 @@ class GPUSwarmalators {
       const species = speciesAttr;
       const phase = phaseAttr;
       
-      // Base color from species (red for species 0, green for species 1)
+      // Base color from species (supports up to 5 species)
       const baseColor = select(species.equal(uint(0)), 
         vec3(1.0, 0.3, 0.3), // Red for species 0
-        vec3(0.3, 1.0, 0.3)  // Green for species 1
+        select(species.equal(uint(1)), 
+          vec3(0.3, 1.0, 0.3), // Green for species 1
+          select(species.equal(uint(2)), 
+            vec3(0.3, 0.3, 1.0), // Blue for species 2
+            select(species.equal(uint(3)), 
+              vec3(1.0, 1.0, 0.3), // Yellow for species 3
+              vec3(1.0, 0.3, 1.0)  // Magenta for species 4
+            )
+          )
+        )
       );
       
       // Phase modulation for brightness
@@ -666,6 +675,51 @@ class GPUSwarmalators {
         swarmalator.speciesParams.KMatrix.array = flatKMatrix;
       }
     }
+  }
+
+  /**
+   * Change the number of species (requires recreation of swarmalators)
+   */
+  setNumSpecies(numSpecies: number) {
+    if (numSpecies < 1 || numSpecies > 5) {
+      throw new Error('Number of species must be between 1 and 5');
+    }
+
+    // Create new matrices for the specified number of species
+    const newJMatrix: number[][] = [];
+    const newKMatrix: number[][] = [];
+    
+    for (let i = 0; i < numSpecies; i++) {
+      newJMatrix[i] = [];
+      newKMatrix[i] = [];
+      for (let j = 0; j < numSpecies; j++) {
+        if (i === j) {
+          // Diagonal elements (self-interaction)
+          newJMatrix[i][j] = 1.0;
+          newKMatrix[i][j] = 0.8;
+        } else {
+          // Off-diagonal elements (cross-species interaction)
+          newJMatrix[i][j] = 0.5;
+          newKMatrix[i][j] = 0.2;
+        }
+      }
+    }
+
+    // Create uniform distribution for species assignment
+    const newDistribution = new Array(numSpecies).fill(1.0 / numSpecies);
+
+    // Update species parameters
+    this.speciesParams = {
+      ...this.speciesParams,
+      numSpecies,
+      JMatrix: newJMatrix,
+      KMatrix: newKMatrix,
+      speciesDistribution: newDistribution
+    };
+
+    console.log(`Set number of species to ${numSpecies}`);
+    console.log('New J Matrix:', newJMatrix);
+    console.log('New K Matrix:', newKMatrix);
   }
   
   /**

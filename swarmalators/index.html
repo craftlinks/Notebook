@@ -138,9 +138,14 @@
         
         .matrix-grid {
             display: grid;
-            grid-template-columns: 1fr 1fr;
             gap: 10px;
         }
+        
+        .matrix-grid.species-1 { grid-template-columns: 1fr; }
+        .matrix-grid.species-2 { grid-template-columns: 1fr 1fr; }
+        .matrix-grid.species-3 { grid-template-columns: 1fr 1fr 1fr; }
+        .matrix-grid.species-4 { grid-template-columns: 1fr 1fr 1fr 1fr; }
+        .matrix-grid.species-5 { grid-template-columns: 1fr 1fr 1fr 1fr 1fr; }
         
         .matrix-cell {
             display: flex;
@@ -178,8 +183,13 @@
         }
         
         .canvas-container {
+            background: #111;
+            border: 2px solid #00ff88;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 0 20px rgba(0, 255, 136, 0.3);
             text-align: center;
-            margin-top: 20px;
         }
         
         .status {
@@ -211,6 +221,10 @@
         
         <div id="status" class="status loading">
             Initializing WebGPU renderer...
+        </div>
+        
+        <div id="canvas-container" class="canvas-container">
+            <!-- GPU renderer canvas will be attached here -->
         </div>
         
         <div class="controls">
@@ -267,11 +281,27 @@
                 <button class="pattern-button" data-pattern="fractured">Fractured</button>
             </div>
             
+            <h3>Species Configuration</h3>
+            <div class="control-group">
+                <label for="species-count">Number of Species:</label>
+                <select id="species-count" style="background: #222; color: #00ff88; border: 1px solid #00ff88; padding: 5px; border-radius: 3px;">
+                    <option value="1">1 Species</option>
+                    <option value="2" selected>2 Species</option>
+                    <option value="3">3 Species</option>
+                    <option value="4">4 Species</option>
+                    <option value="5">5 Species</option>
+                </select>
+                <span class="info">Number of particle species (requires simulation reset)</span>
+            </div>
+            
             <h3>Species Interactions</h3>
             <div class="pattern-buttons">
                 <button class="species-button" data-species="symmetric-species">Symmetric Species</button>
                 <button class="species-button" data-species="predator-prey">Predator-Prey</button>
                 <button class="species-button" data-species="segregated-species">Segregated Species</button>
+                <button class="species-button" data-species="three-species-chain">3-Species Chain</button>
+                <button class="species-button" data-species="four-species-ecosystem">4-Species Ecosystem</button>
+                <button class="species-button" data-species="five-species-complex">5-Species Complex</button>
                 <button class="species-button" id="randomize-matrices">Randomize All Interactions</button>
             </div>
             
@@ -280,52 +310,14 @@
                 <div class="matrix-display">
                     <h4>J Matrix (Spatial Coupling)</h4>
                     <div class="matrix-grid" id="j-matrix">
-                        <div class="matrix-cell">
-                            <label>J[0,0] (Red→Red):</label>
-                            <input type="range" id="j-0-0" min="-2" max="2" value="1.0" step="0.1">
-                            <input type="number" id="j-0-0-value" value="1.0" step="0.1">
-                        </div>
-                        <div class="matrix-cell">
-                            <label>J[0,1] (Red→Green):</label>
-                            <input type="range" id="j-0-1" min="-2" max="2" value="0.5" step="0.1">
-                            <input type="number" id="j-0-1-value" value="0.5" step="0.1">
-                        </div>
-                        <div class="matrix-cell">
-                            <label>J[1,0] (Green→Red):</label>
-                            <input type="range" id="j-1-0" min="-2" max="2" value="0.5" step="0.1">
-                            <input type="number" id="j-1-0-value" value="0.5" step="0.1">
-                        </div>
-                        <div class="matrix-cell">
-                            <label>J[1,1] (Green→Green):</label>
-                            <input type="range" id="j-1-1" min="-2" max="2" value="1.0" step="0.1">
-                            <input type="number" id="j-1-1-value" value="1.0" step="0.1">
-                        </div>
+                        <!-- Matrix controls will be dynamically generated -->
                     </div>
                 </div>
                 
                 <div class="matrix-display">
                     <h4>K Matrix (Phase Coupling)</h4>
                     <div class="matrix-grid" id="k-matrix">
-                        <div class="matrix-cell">
-                            <label>K[0,0] (Red→Red):</label>
-                            <input type="range" id="k-0-0" min="-2" max="2" value="0.8" step="0.1">
-                            <input type="number" id="k-0-0-value" value="0.8" step="0.1">
-                        </div>
-                        <div class="matrix-cell">
-                            <label>K[0,1] (Red→Green):</label>
-                            <input type="range" id="k-0-1" min="-2" max="2" value="0.2" step="0.1">
-                            <input type="number" id="k-0-1-value" value="0.2" step="0.1">
-                        </div>
-                        <div class="matrix-cell">
-                            <label>K[1,0] (Green→Red):</label>
-                            <input type="range" id="k-1-0" min="-2" max="2" value="0.2" step="0.1">
-                            <input type="number" id="k-1-0-value" value="0.2" step="0.1">
-                        </div>
-                        <div class="matrix-cell">
-                            <label>K[1,1] (Green→Green):</label>
-                            <input type="range" id="k-1-1" min="-2" max="2" value="0.8" step="0.1">
-                            <input type="number" id="k-1-1-value" value="0.8" step="0.1">
-                        </div>
+                        <!-- Matrix controls will be dynamically generated -->
                     </div>
                 </div>
             </div>
@@ -333,9 +325,10 @@
         
         <div class="info">
             <strong>Instructions:</strong><br>
-            • Colors represent particle species (Red/Green) with phase brightness modulation<br>
+            • Colors represent particle species (Red/Green/Blue/Yellow/Magenta) with phase brightness modulation<br>
             • Species interact via coupling matrices (J, K) + global offsets<br>
             • Use mouse to rotate/zoom the view<br>
+            • <strong>Species Count:</strong> Select 1-5 species (resets simulation)<br>
             • <strong>Global Offsets:</strong> J and K sliders add to all matrix values<br>
             • <strong>Matrix Controls:</strong> Set specific species-pair interactions<br>
             • <strong>J &gt; 0:</strong> particles with similar phases attract<br>
@@ -345,9 +338,6 @@
             • <strong>Species Presets:</strong> Load different interaction patterns
         </div>
         
-        <div id="canvas-container" class="canvas-container">
-            <!-- GPU renderer canvas will be attached here -->
-        </div>
     </div>
     
     <script type="module" src="src/swarmalators_app.ts"></script>
