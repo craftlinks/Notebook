@@ -276,6 +276,10 @@
             text-align: center;
             margin: 15px 0;
         }
+
+        .quick-actions > * {
+            margin: 0 5px;
+        }
     </style>
 </head>
 <body>
@@ -292,6 +296,14 @@
 
         <div class="quick-actions">
             <button id="randomize-matrices" class="species-button">Randomize All Interactions</button>
+            <label for="species-count" style="color: #00ff88; font-weight: bold;">Species:</label>
+            <select id="species-count" style="background: #222; color: #00ff88; border: 1px solid #00ff88; padding: 5px; border-radius: 3px;">
+                <option value="1">1</option>
+                <option value="2" selected>2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
+            </select>
         </div>
 
         <div class="save-load-section">
@@ -358,19 +370,6 @@
                 <button class="pattern-button" data-pattern="solar-convection">Solar Convection</button>
                 <button class="pattern-button" data-pattern="makes-me-dizzy">Makes Me Dizzy</button>
                 <button class="pattern-button" data-pattern="fractured">Fractured</button>
-            </div>
-            
-            <h3>Species Configuration</h3>
-            <div class="control-group">
-                <label for="species-count">Number of Species:</label>
-                <select id="species-count" style="background: #222; color: #00ff88; border: 1px solid #00ff88; padding: 5px; border-radius: 3px;">
-                    <option value="1">1 Species</option>
-                    <option value="2" selected>2 Species</option>
-                    <option value="3">3 Species</option>
-                    <option value="4">4 Species</option>
-                    <option value="5">5 Species</option>
-                </select>
-                <span class="info">Number of particle species (requires simulation reset)</span>
             </div>
             
             <h3>Species Coupling Matrices</h3>

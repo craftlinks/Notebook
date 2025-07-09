@@ -712,18 +712,53 @@ function changeNumSpecies(numSpecies: number) {
   if (!swarmalators) return;
   
   try {
-    // Use the new setNumSpecies method
+    // Capture existing species parameters before change
+    const prevParams = swarmalators.getSpeciesParams();
+    const prevNum = prevParams.numSpecies;
+    const prevJ = prevParams.JMatrix;
+    const prevK = prevParams.KMatrix;
+
+    // Apply the new species count inside the engine
     swarmalators.setNumSpecies(numSpecies);
-    
-    // Update matrix controls to reflect new species count
+
+    // Build new J/K matrices preserving previous values where possible and
+    // randomising any newly-introduced interactions.
+    const JMatrix: number[][] = [];
+    const KMatrix: number[][] = [];
+
+    for (let i = 0; i < numSpecies; i++) {
+      JMatrix[i] = [];
+      KMatrix[i] = [];
+      for (let j = 0; j < numSpecies; j++) {
+        if (i < prevNum && j < prevNum) {
+          // Preserve existing interactions
+          JMatrix[i][j] = prevJ[i][j];
+          KMatrix[i][j] = prevK[i][j];
+        } else {
+          // Randomise new interactions (including diagonal if i===j)
+          if (i === j) {
+            JMatrix[i][j] = Math.random() * 4.0 + 0.5;  // [0.5, 4.5]
+            KMatrix[i][j] = Math.random() * 3.0 + 0.5;  // [0.5, 3.5]
+          } else {
+            JMatrix[i][j] = (Math.random() - 0.5) * 6.0; // [-3, 3]
+            KMatrix[i][j] = (Math.random() - 0.5) * 4.0; // [-2, 2]
+          }
+        }
+      }
+    }
+
+    // Update species parameters with new matrices
+    swarmalators.updateSpeciesParams({ JMatrix, KMatrix });
+
+    // Refresh UI controls to reflect the new matrices
     updateMatrixControls();
-    
-    // Recreate swarmalators to apply new species count
+
+    // Recreate swarmalators with current particle count
     const count = parseInt((document.getElementById('count-value') as HTMLInputElement).value);
     createSwarmalators(count);
-    
-    updateStatus(`Changed to ${numSpecies} species`, 'ready');
-    console.log(`Changed to ${numSpecies} species`);
+
+    updateStatus(`Changed to ${numSpecies} species (matrices updated)`, 'ready');
+    console.log(`Changed to ${numSpecies} species`, { JMatrix, KMatrix });
   } catch (error) {
     console.error('Error changing species count:', error);
     updateStatus('Error changing species count', 'error');
