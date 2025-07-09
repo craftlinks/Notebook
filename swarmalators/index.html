@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPU Swarmalators Test</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: 'Courier New', monospace;
+            background: #000;
+            color: #00ff88;
+        }
+        
+        h1 {
+            text-align: center;
+            color: #00ff88;
+            text-shadow: 0 0 10px #00ff88;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .controls {
+            background: #111;
+            border: 2px solid #00ff88;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 0 20px rgba(0, 255, 136, 0.3);
+        }
+        
+        .control-group {
+            margin-bottom: 15px;
+        }
+        
+        .control-group label {
+            display: inline-block;
+            width: 200px;
+            color: #00ff88;
+            font-weight: bold;
+        }
+        
+        .control-group input[type="range"] {
+            width: 200px;
+            margin-right: 10px;
+        }
+        
+        .control-group input[type="number"] {
+            width: 80px;
+            background: #222;
+            color: #00ff88;
+            border: 1px solid #00ff88;
+            padding: 5px;
+            border-radius: 3px;
+        }
+        
+        .control-group button {
+            background: #00ff88;
+            color: #000;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        
+        .control-group button:hover {
+            background: #00cc70;
+        }
+        
+        .control-group button:active {
+            background: #009955;
+        }
+        
+        .pattern-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .pattern-button {
+            background: #333;
+            color: #00ff88;
+            border: 2px solid #00ff88;
+            padding: 10px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.3s ease;
+        }
+        
+        .pattern-button:hover {
+            background: #00ff88;
+            color: #000;
+        }
+        
+        .info {
+            background: #222;
+            border: 1px solid #00ff88;
+            border-radius: 5px;
+            padding: 10px;
+            margin-top: 10px;
+            font-size: 14px;
+        }
+        
+        .canvas-container {
+            text-align: center;
+            margin-top: 20px;
+        }
+        
+        .status {
+            text-align: center;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+        
+        .status.loading {
+            background: #333;
+            color: #ffaa00;
+        }
+        
+        .status.ready {
+            background: #113311;
+            color: #00ff88;
+        }
+        
+        .status.error {
+            background: #331111;
+            color: #ff4444;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>GPU Swarmalators Visualization</h1>
+        
+        <div id="status" class="status loading">
+            Initializing WebGPU renderer...
+        </div>
+        
+        <div class="controls">
+            <h3>Swarmalator Parameters</h3>
+            
+            <div class="control-group">
+                <label for="J-slider">J (Spatial-Phase Coupling):</label>
+                <input type="range" id="J-slider" min="-2" max="2" value="2" step="0.1">
+                <input type="number" id="J-value" value="2" step="0.1">
+                <span class="info">Positive: like attracts like, Negative: opposites attract</span>
+            </div>
+            
+            <div class="control-group">
+                <label for="K-slider">K (Synchronization Strength):</label>
+                <input type="range" id="K-slider" min="-2" max="2" value="0.3" step="0.1">
+                <input type="number" id="K-value" value="0.3" step="0.1">
+                <span class="info">Positive: synchronization, Negative: desynchronization</span>
+            </div>
+            
+            <div class="control-group">
+                <label for="omega-slider">ω (Natural Frequency):</label>
+                <input type="range" id="omega-slider" min="-2" max="2" value="0" step="0.1">
+                <input type="number" id="omega-value" value="0" step="0.1">
+                <span class="info">Natural oscillation frequency</span>
+            </div>
+            
+            <div class="control-group">
+                <label for="dt-slider">dt (Time Step):</label>
+                <input type="range" id="dt-slider" min="0.05" max="0.5" value="0.14" step="0.01">
+                <input type="number" id="dt-value" value="0.14" step="0.01">
+                <span class="info">Simulation time step</span>
+            </div>
+            
+            <div class="control-group">
+                <label for="count-slider">Particle Count:</label>
+                <input type="range" id="count-slider" min="100" max="20000" value="1000" step="50">
+                <input type="number" id="count-value" value="1000" step="50">
+                <button id="recreate-button">Recreate</button>
+            </div>
+            
+            <div class="control-group">
+                <button id="start-button">Start</button>
+                <button id="stop-button">Stop</button>
+                <button id="reset-button">Reset</button>
+            </div>
+            
+            <h3>Preset Patterns</h3>
+            <div class="pattern-buttons">
+                <button class="pattern-button" data-pattern="rainbow-ring">Rainbow Ring</button>
+                <button class="pattern-button" data-pattern="dancing-circus">Dancing Circus</button>
+                <button class="pattern-button" data-pattern="uniform-blob">Uniform Blob</button>
+                <button class="pattern-button" data-pattern="solar-convection">Solar Convection</button>
+                <button class="pattern-button" data-pattern="makes-me-dizzy">Makes Me Dizzy</button>
+                <button class="pattern-button" data-pattern="fractured">Fractured</button>
+            </div>
+        </div>
+        
+        <div class="info">
+            <strong>Instructions:</strong><br>
+            • Colors represent oscillator phases (rainbow wheel)<br>
+            • Brightness indicates phase velocity (activity)<br>
+            • Use mouse to rotate/zoom the view<br>
+            • Try different parameter combinations to see emergent patterns<br>
+            • <strong>J &gt; 0:</strong> particles with similar phases attract<br>
+            • <strong>J &lt; 0:</strong> particles with opposite phases attract<br>
+            • <strong>K &gt; 0:</strong> phases synchronize<br>
+            • <strong>K &lt; 0:</strong> phases desynchronize
+        </div>
+        
+        <div id="canvas-container" class="canvas-container">
+            <!-- GPU renderer canvas will be attached here -->
+        </div>
+    </div>
+    
+    <script type="module" src="src/swarmalators_app.ts"></script>
+</body>
+</html>
