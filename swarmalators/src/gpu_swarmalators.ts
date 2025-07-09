@@ -141,8 +141,8 @@ class GPUSwarmalators {
     this.globalParams = {
       J: 2.0,           // Strong coupling
       K: 0.3,           // Moderate synchronization strength
-      omega: 0.0,       // No natural frequency initially
-      naturalVelocity: 0.0, // No natural propulsion
+      omega: 2.0,       // No natural frequency initially
+      naturalVelocity: 10.0, // No natural propulsion
       dt: 0.14,         // Larger time step
       ...params
     };
@@ -162,7 +162,7 @@ class GPUSwarmalators {
       0.1,
       1000
     );
-    this.camera.position.set(0, 0, 10);
+    this.camera.position.set(0, 0, 5);
     this.camera.updateProjectionMatrix();
     
     // Initialize WebGPU asynchronously
