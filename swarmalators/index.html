@@ -271,6 +271,11 @@
         .drop-zone input {
             display: none;
         }
+
+        .quick-actions {
+            text-align: center;
+            margin: 15px 0;
+        }
     </style>
 </head>
 <body>
@@ -284,7 +289,11 @@
         <div id="canvas-container" class="canvas-container">
             <!-- GPU renderer canvas will be attached here -->
         </div>
-        
+
+        <div class="quick-actions">
+            <button id="randomize-matrices" class="species-button">Randomize All Interactions</button>
+        </div>
+
         <div class="save-load-section">
             <h3>Save & Load Configuration</h3>
             <div class="save-load-buttons">
@@ -362,17 +371,6 @@
                     <option value="5">5 Species</option>
                 </select>
                 <span class="info">Number of particle species (requires simulation reset)</span>
-            </div>
-            
-            <h3>Species Interactions</h3>
-            <div class="pattern-buttons">
-                <button class="species-button" data-species="symmetric-species">Symmetric Species</button>
-                <button class="species-button" data-species="predator-prey">Predator-Prey</button>
-                <button class="species-button" data-species="segregated-species">Segregated Species</button>
-                <button class="species-button" data-species="three-species-chain">3-Species Chain</button>
-                <button class="species-button" data-species="four-species-ecosystem">4-Species Ecosystem</button>
-                <button class="species-button" data-species="five-species-complex">5-Species Complex</button>
-                <button class="species-button" id="randomize-matrices">Randomize All Interactions</button>
             </div>
             
             <h3>Species Coupling Matrices</h3>
