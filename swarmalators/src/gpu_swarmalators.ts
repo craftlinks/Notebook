@@ -299,7 +299,7 @@ class GPUSwarmalators {
 
     // Particle scale inversely proportional to local density
     const densityScale = clamp(float(1.0).div(densityAttr.mul(5.0).add(1.0)), float(0.2), float(2.0));
-    const dynamicScale = clamp(float(0.05).mul(densityScale), float(0.01), float(0.15));
+    const dynamicScale = clamp(float(0.05).mul(densityScale).mul(2.0), float(0.011), float(0.165));
     material.scaleNode = dynamicScale;
     
     // Flatten coupling matrices for GPU
