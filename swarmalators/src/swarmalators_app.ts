@@ -3,41 +3,379 @@ import { GPUSwarmalators, type SwarmalatorParams, type SpeciesParams } from './g
 let swarmalators: GPUSwarmalators | null = null;
 let currentSwarmalatorId: string | null = null;
 
+// Configuration interface for save/load
+interface SwarmalatorConfig {
+  globalParams: SwarmalatorParams;
+  speciesParams: SpeciesParams;
+  particleCount: number;
+  timestamp: number;
+  version: string;
+}
+
+// Save/Load utility functions
+function saveConfigurationToPNG(): void {
+  if (!swarmalators) {
+    console.error('No swarmalators instance available');
+    return;
+  }
+
+  try {
+    // Get current configuration
+    const config: SwarmalatorConfig = {
+      globalParams: swarmalators.getParams(),
+      speciesParams: swarmalators.getSpeciesParams(),
+      particleCount: parseInt((document.getElementById('count-value') as HTMLInputElement).value),
+      timestamp: Date.now(),
+      version: '1.0'
+    };
+
+    // Get canvas from renderer
+    const canvas = (swarmalators as any).renderer?.domElement;
+    if (!canvas) {
+      console.error('Canvas not available');
+      return;
+    }
+
+    // Convert config to JSON and then to base64
+    const configJSON = JSON.stringify(config);
+    const configBase64 = btoa(configJSON);
+
+    // For WebGPU, we need to ensure we capture the current frame
+    // Force a render and then capture immediately
+    const captureCanvas = async () => {
+      try {
+        // Force a render to ensure the canvas has current content
+        if (swarmalators) {
+          const renderer = (swarmalators as any).renderer;
+          const scene = (swarmalators as any).scene;
+          const camera = (swarmalators as any).camera;
+          
+          // Force a render
+          renderer.render(scene, camera);
+          
+          // Wait for the render to complete
+          await new Promise(resolve => requestAnimationFrame(resolve));
+        }
+
+        // Try multiple methods to capture the canvas
+        let blob: Blob | null = null;
+        
+        // Method 1: Use convertToBlob if available (WebGPU)
+        if (typeof (canvas as any).convertToBlob === 'function') {
+          try {
+            blob = await (canvas as any).convertToBlob({ type: 'image/png' });
+          } catch (e) {
+            console.warn('convertToBlob failed:', e);
+          }
+        }
+        
+        // Method 2: Use toBlob (fallback)
+        if (!blob) {
+          blob = await new Promise<Blob | null>((resolve) => {
+            canvas.toBlob((blob: Blob | null) => resolve(blob), 'image/png');
+          });
+        }
+
+        // Method 3: Use toDataURL and convert to blob (last resort)
+        if (!blob) {
+          try {
+            const dataURL = canvas.toDataURL('image/png');
+            const response = await fetch(dataURL);
+            blob = await response.blob();
+          } catch (e) {
+            console.warn('toDataURL method failed:', e);
+          }
+        }
+
+        if (!blob) {
+          console.error('All canvas capture methods failed');
+          updateStatus('Failed to capture canvas content', 'error');
+          return;
+        }
+
+        // Create a new PNG with metadata
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const arrayBuffer = e.target?.result as ArrayBuffer;
+          const uint8Array = new Uint8Array(arrayBuffer);
+          
+          // Add PNG metadata chunk with our configuration
+          const modifiedPNG = addPNGMetadata(uint8Array, 'swarmalators_config', configBase64);
+          
+          // Create download link
+          const modifiedBlob = new Blob([modifiedPNG], { type: 'image/png' });
+          const url = URL.createObjectURL(modifiedBlob);
+          
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = `swarmalators_config_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.png`;
+          link.click();
+          
+          URL.revokeObjectURL(url);
+          updateStatus('Configuration saved to PNG', 'ready');
+        };
+        reader.readAsArrayBuffer(blob);
+      } catch (error) {
+        console.error('Error capturing canvas:', error);
+        updateStatus('Error capturing canvas', 'error');
+      }
+    };
+
+    // Call the async capture function
+    captureCanvas();
+    
+  } catch (error) {
+    console.error('Error saving configuration:', error);
+    updateStatus('Error saving configuration', 'error');
+  }
+}
+
+function loadConfigurationFromPNG(file: File): void {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const arrayBuffer = e.target?.result as ArrayBuffer;
+      const uint8Array = new Uint8Array(arrayBuffer);
+      
+      // Extract metadata from PNG
+      const configBase64 = extractPNGMetadata(uint8Array, 'swarmalators_config');
+      
+      if (!configBase64) {
+        updateStatus('No configuration found in PNG file', 'error');
+        return;
+      }
+
+      // Decode configuration
+      const configJSON = atob(configBase64);
+      const config: SwarmalatorConfig = JSON.parse(configJSON);
+      
+      // Apply configuration
+      applyConfiguration(config);
+      
+      updateStatus('Configuration loaded successfully', 'ready');
+    } catch (error) {
+      console.error('Error loading configuration:', error);
+      updateStatus('Error loading configuration', 'error');
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function addPNGMetadata(pngData: Uint8Array, keyword: string, text: string): Uint8Array {
+  // Find the end of the PNG header (after IHDR chunk)
+  let insertPosition = 8; // Skip PNG signature
+  
+  // Find IHDR chunk and skip it
+  while (insertPosition < pngData.length) {
+    const chunkLength = (pngData[insertPosition] << 24) | (pngData[insertPosition + 1] << 16) | 
+                      (pngData[insertPosition + 2] << 8) | pngData[insertPosition + 3];
+    const chunkType = String.fromCharCode(...pngData.slice(insertPosition + 4, insertPosition + 8));
+    
+    insertPosition += 8 + chunkLength + 4; // Skip length + type + data + CRC
+    
+    if (chunkType === 'IHDR') {
+      break;
+    }
+  }
+  
+  // Create tEXt chunk
+  const keywordBytes = new TextEncoder().encode(keyword);
+  const textBytes = new TextEncoder().encode(text);
+  const chunkData = new Uint8Array(keywordBytes.length + 1 + textBytes.length);
+  chunkData.set(keywordBytes, 0);
+  chunkData[keywordBytes.length] = 0; // null separator
+  chunkData.set(textBytes, keywordBytes.length + 1);
+  
+  // Calculate CRC32
+  const crc = calculateCRC32(new Uint8Array([...new TextEncoder().encode('tEXt'), ...chunkData]));
+  
+  // Create the chunk
+  const chunk = new Uint8Array(12 + chunkData.length);
+  const chunkLength = chunkData.length;
+  
+  // Length (4 bytes, big endian)
+  chunk[0] = (chunkLength >> 24) & 0xFF;
+  chunk[1] = (chunkLength >> 16) & 0xFF;
+  chunk[2] = (chunkLength >> 8) & 0xFF;
+  chunk[3] = chunkLength & 0xFF;
+  
+  // Type (4 bytes)
+  chunk.set(new TextEncoder().encode('tEXt'), 4);
+  
+  // Data
+  chunk.set(chunkData, 8);
+  
+  // CRC (4 bytes, big endian)
+  chunk[8 + chunkLength] = (crc >> 24) & 0xFF;
+  chunk[8 + chunkLength + 1] = (crc >> 16) & 0xFF;
+  chunk[8 + chunkLength + 2] = (crc >> 8) & 0xFF;
+  chunk[8 + chunkLength + 3] = crc & 0xFF;
+  
+  // Insert the chunk into the PNG data
+  const result = new Uint8Array(pngData.length + chunk.length);
+  result.set(pngData.slice(0, insertPosition), 0);
+  result.set(chunk, insertPosition);
+  result.set(pngData.slice(insertPosition), insertPosition + chunk.length);
+  
+  return result;
+}
+
+function extractPNGMetadata(pngData: Uint8Array, keyword: string): string | null {
+  let position = 8; // Skip PNG signature
+  
+  while (position < pngData.length) {
+    const chunkLength = (pngData[position] << 24) | (pngData[position + 1] << 16) | 
+                      (pngData[position + 2] << 8) | pngData[position + 3];
+    const chunkType = String.fromCharCode(...pngData.slice(position + 4, position + 8));
+    
+    if (chunkType === 'tEXt') {
+      const chunkData = pngData.slice(position + 8, position + 8 + chunkLength);
+      const nullIndex = chunkData.indexOf(0);
+      
+      if (nullIndex !== -1) {
+        const chunkKeyword = new TextDecoder().decode(chunkData.slice(0, nullIndex));
+        if (chunkKeyword === keyword) {
+          return new TextDecoder().decode(chunkData.slice(nullIndex + 1));
+        }
+      }
+    }
+    
+    position += 8 + chunkLength + 4; // Skip length + type + data + CRC
+    
+    if (chunkType === 'IEND') {
+      break;
+    }
+  }
+  
+  return null;
+}
+
+function calculateCRC32(data: Uint8Array): number {
+  const crcTable = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let j = 0; j < 8; j++) {
+      c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    }
+    crcTable[i] = c;
+  }
+  
+  let crc = 0xFFFFFFFF;
+  for (let i = 0; i < data.length; i++) {
+    crc = crcTable[(crc ^ data[i]) & 0xFF] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+function applyConfiguration(config: SwarmalatorConfig): void {
+  if (!swarmalators) {
+    console.error('No swarmalators instance available');
+    return;
+  }
+
+  try {
+    // Update global parameters
+    swarmalators.updateParams(config.globalParams);
+    
+    // Update species parameters
+    swarmalators.updateSpeciesParams(config.speciesParams);
+    
+    // Update UI controls
+    updateUIFromConfig(config);
+    
+    // Recreate swarmalators with new configuration
+    createSwarmalators(config.particleCount);
+    
+    console.log('Configuration applied successfully:', config);
+  } catch (error) {
+    console.error('Error applying configuration:', error);
+    updateStatus('Error applying configuration', 'error');
+  }
+}
+
+function updateUIFromConfig(config: SwarmalatorConfig): void {
+  // Update global parameter controls
+  const globalParams = config.globalParams;
+  Object.entries(globalParams).forEach(([param, value]) => {
+    const slider = document.getElementById(`${param}-slider`) as HTMLInputElement;
+    const valueInput = document.getElementById(`${param}-value`) as HTMLInputElement;
+    
+    if (slider && valueInput) {
+      slider.value = value.toString();
+      valueInput.value = value.toString();
+    }
+  });
+  
+  // Update particle count
+  const countSlider = document.getElementById('count-slider') as HTMLInputElement;
+  const countValue = document.getElementById('count-value') as HTMLInputElement;
+  if (countSlider && countValue) {
+    countSlider.value = config.particleCount.toString();
+    countValue.value = config.particleCount.toString();
+  }
+  
+  // Update species count selector
+  const speciesCountSelect = document.getElementById('species-count') as HTMLSelectElement;
+  if (speciesCountSelect) {
+    speciesCountSelect.value = config.speciesParams.numSpecies.toString();
+  }
+  
+  // Update matrix controls
+  updateMatrixControls();
+}
+
+function handleFileLoad(file: File): void {
+  // Check if file is PNG
+  if (!file.type.includes('image/png')) {
+    updateStatus('Please select a PNG file', 'error');
+    return;
+  }
+  
+  // Check file size (reasonable limit)
+  if (file.size > 50 * 1024 * 1024) { // 50MB limit
+    updateStatus('File too large (max 50MB)', 'error');
+    return;
+  }
+  
+  updateStatus('Loading configuration...', 'loading');
+  loadConfigurationFromPNG(file);
+}
+
 // Pattern presets based on the mathematical model
 const patternPresets: Record<string, Partial<SwarmalatorParams>> = {
   'rainbow-ring': {
-    J: 1.0,
+    J: 2.5,
     K: 0.0,
     omega: 0.0,
     dt: 0.05
   },
   'dancing-circus': {
-    J: 0.1,
-    K: -0.1,
+    J: 0.5,
+    K: -1.5,
     omega: 0.0,
     dt: 0.05
   },
   'uniform-blob': {
-    J: 0.1,
-    K: 1.0,
+    J: 0.5,
+    K: 3.0,
     omega: 0.0,
     dt: 0.05
   },
   'solar-convection': {
-    J: 0.1,
-    K: 1.0,
-    omega: 0.5,
+    J: 0.8,
+    K: 2.5,
+    omega: 1.2,
     dt: 0.05
   },
   'makes-me-dizzy': {
-    J: 1.0,
-    K: 0.1,
+    J: 3.0,
+    K: 0.5,
     omega: 0.0,
     dt: 0.05
   },
   'fractured': {
-    J: 1.0,
-    K: -0.1,
+    J: 2.0,
+    K: -2.0,
     omega: 0.0,
     dt: 0.05
   }
@@ -48,12 +386,12 @@ const speciesPresets: Record<string, Partial<SpeciesParams>> = {
   'predator-prey': {
     numSpecies: 2,
     JMatrix: [
-      [1.0, 0.3],  // Species 0 (red) - moderate attraction to species 1
-      [0.8, 1.0]   // Species 1 (green) - strong attraction to species 0
+      [2.0, 1.5],  // Species 0 (red) - strong attraction to species 1
+      [3.0, 2.5]   // Species 1 (green) - very strong attraction to species 0
     ],
     KMatrix: [
-      [0.5, 0.1],  // Species 0 - weak sync with species 1
-      [0.2, 0.8]   // Species 1 - strong internal sync
+      [1.5, -0.5],  // Species 0 - desync with species 1
+      [-1.0, 2.0]   // Species 1 - strong internal sync, desync with species 0
     ],
     speciesColors: ['#ff4444', '#44ff44'],
     speciesDistribution: [0.3, 0.7]
@@ -61,12 +399,12 @@ const speciesPresets: Record<string, Partial<SpeciesParams>> = {
   'symmetric-species': {
     numSpecies: 2,
     JMatrix: [
-      [1.0, 0.5],  // Symmetric coupling
-      [0.5, 1.0]
+      [2.5, 1.5],  // Stronger symmetric coupling
+      [1.5, 2.5]
     ],
     KMatrix: [
-      [0.8, 0.2],  // Symmetric phase coupling
-      [0.2, 0.8]
+      [2.0, 0.8],  // Stronger symmetric phase coupling
+      [0.8, 2.0]
     ],
     speciesColors: ['#ff4444', '#44ff44'],
     speciesDistribution: [0.5, 0.5]
@@ -74,12 +412,12 @@ const speciesPresets: Record<string, Partial<SpeciesParams>> = {
   'segregated-species': {
     numSpecies: 2,
     JMatrix: [
-      [1.5, -0.5],  // Species 0 repels species 1
-      [-0.5, 1.5]   // Species 1 repels species 0
+      [3.0, -2.0],  // Species 0 strongly repels species 1
+      [-2.0, 3.0]   // Species 1 strongly repels species 0
     ],
     KMatrix: [
-      [0.9, 0.0],   // No phase coupling between species
-      [0.0, 0.9]
+      [2.5, -1.5],   // Strong desync between species
+      [-1.5, 2.5]
     ],
     speciesColors: ['#ff4444', '#44ff44'],
     speciesDistribution: [0.5, 0.5]
@@ -261,6 +599,54 @@ function setupUI() {
       randomizeMatrices();
     });
   }
+  
+  // Save configuration button
+  const saveButton = document.getElementById('save-config-button');
+  if (saveButton) {
+    saveButton.addEventListener('click', () => {
+      saveConfigurationToPNG();
+    });
+  }
+  
+  // Load configuration drag and drop
+  const dropZone = document.getElementById('load-drop-zone');
+  const fileInput = document.getElementById('load-file-input') as HTMLInputElement;
+  
+  if (dropZone && fileInput) {
+    // Click to select file
+    dropZone.addEventListener('click', () => {
+      fileInput.click();
+    });
+    
+    // Handle file selection
+    fileInput.addEventListener('change', (e) => {
+      const files = (e.target as HTMLInputElement).files;
+      if (files && files.length > 0) {
+        handleFileLoad(files[0]);
+      }
+    });
+    
+    // Drag and drop handlers
+    dropZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropZone.classList.add('dragover');
+    });
+    
+    dropZone.addEventListener('dragleave', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('dragover');
+    });
+    
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('dragover');
+      
+      const files = e.dataTransfer?.files;
+      if (files && files.length > 0) {
+        handleFileLoad(files[0]);
+      }
+    });
+  }
 }
 
 function updateParameter(param: string, value: number) {
@@ -372,8 +758,8 @@ function generateMatrixControls() {
         const slider = document.createElement('input');
         slider.type = 'range';
         slider.id = `j-${i}-${j}`;
-        slider.min = '-2';
-        slider.max = '2';
+        slider.min = '-5';
+        slider.max = '5';
         slider.step = '0.1';
         slider.value = JMatrix[i][j].toString();
         
@@ -419,8 +805,8 @@ function generateMatrixControls() {
         const slider = document.createElement('input');
         slider.type = 'range';
         slider.id = `k-${i}-${j}`;
-        slider.min = '-2';
-        slider.max = '2';
+        slider.min = '-5';
+        slider.max = '5';
         slider.step = '0.1';
         slider.value = KMatrix[i][j].toString();
         
@@ -511,12 +897,12 @@ function randomizeMatrices() {
     for (let j = 0; j < numSpecies; j++) {
       if (i === j) {
         // Diagonal elements (self-interaction) - stronger and more positive
-        JMatrix[i][j] = Math.random() * 2.0 + 0.5;  // Range: [0.5, 2.5]
-        KMatrix[i][j] = Math.random() * 1.2 + 0.3;  // Range: [0.3, 1.5]
+        JMatrix[i][j] = Math.random() * 4.0 + 0.5;  // Range: [0.5, 4.5]
+        KMatrix[i][j] = Math.random() * 3.0 + 0.5;  // Range: [0.5, 3.5]
       } else {
-        // Off-diagonal elements (cross-species) - can be negative
-        JMatrix[i][j] = (Math.random() - 0.5) * 2.0;  // Range: [-1.0, 1.0]
-        KMatrix[i][j] = (Math.random() - 0.5) * 1.0;  // Range: [-0.5, 0.5]
+        // Off-diagonal elements (cross-species) - can be negative, more extreme
+        JMatrix[i][j] = (Math.random() - 0.5) * 6.0;  // Range: [-3.0, 3.0]
+        KMatrix[i][j] = (Math.random() - 0.5) * 4.0;  // Range: [-2.0, 2.0]
       }
     }
   }
@@ -560,6 +946,9 @@ async function createSwarmalators(count: number) {
     // Start animation
     swarmalators.startAnimation();
     
+    // Reset camera position for consistent view
+    swarmalators.resetCameraPosition();
+    
     updateStatus(`Created ${count} swarmalators`, 'ready');
   } catch (error) {
     console.error('Error creating swarmalators:', error);
@@ -574,6 +963,7 @@ async function resetSwarmalators() {
   
   try {
     await swarmalators.initializeSwarmalators();
+    swarmalators.resetCameraPosition();
     updateStatus('Swarmalators reset', 'ready');
   } catch (error) {
     console.error('Error resetting swarmalators:', error);

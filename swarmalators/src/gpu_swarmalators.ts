@@ -213,8 +213,11 @@ class GPUSwarmalators {
   }
   
   private async initializeWebGPU() {
-    this.renderer = new THREE.WebGPURenderer({ antialias: true });
-    this.renderer.setSize(1200, 800);
+    this.renderer = new THREE.WebGPURenderer({ 
+      antialias: true,
+      preserveDrawingBuffer: true  // Enable canvas capture
+    });
+    // this.renderer.setSize(1200, 800); // Size is now set dynamically in attachToDom
     this.renderer.setPixelRatio(window.devicePixelRatio);
     this.renderer.setClearColor(0x000000, 1);
     
@@ -536,26 +539,32 @@ class GPUSwarmalators {
       return;
     }
     
+    const targetContainer = container || document.body;
+
+    // Set renderer size based on the container for responsiveness
+    const width = targetContainer.clientWidth;
+    const aspect = this.worldWidth / this.worldHeight;
+    const height = width / aspect;
+    this.renderer.setSize(width, height);
+    this.camera.aspect = aspect;
+    this.camera.updateProjectionMatrix();
+
     const canvas = this.renderer.domElement;
-    canvas.style.border = '2px solid #00ff88';
-    canvas.style.marginTop = '20px';
     canvas.style.display = 'block';
     canvas.style.backgroundColor = '#000';
-    
-    const canvasContainer = document.createElement('div');
-    canvasContainer.style.textAlign = 'center';
-    canvasContainer.style.marginTop = '20px';
-    
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
+
     const title = document.createElement('h3');
     title.textContent = '🌀 GPU Swarmalators Visualization';
     title.style.color = '#00ff88';
     title.style.margin = '10px 0';
+    title.style.textAlign = 'center';
     
-    canvasContainer.appendChild(title);
-    canvasContainer.appendChild(canvas);
-    
-    const targetContainer = container || document.body;
-    targetContainer.appendChild(canvasContainer);
+    // Clear the container and append new elements directly
+    targetContainer.innerHTML = '';
+    targetContainer.appendChild(title);
+    targetContainer.appendChild(canvas);
     
     // Add orbit controls
     this.controls = new OrbitControls(this.camera, canvas);
@@ -748,6 +757,24 @@ class GPUSwarmalators {
    */
   getTotalParticleCount(): number {
     return Array.from(this.swarmalators.values()).reduce((sum, s) => sum + s.pointCount, 0);
+  }
+
+  /**
+   * Reset camera position to default
+   */
+  resetCameraPosition() {
+    if (this.camera) {
+      this.camera.position.set(0, 0, 5);
+      this.camera.lookAt(0, 0, 0);
+      this.camera.updateProjectionMatrix();
+    }
+    
+    if (this.controls) {
+      this.controls.target.set(0, 0, 0);
+      this.controls.update();
+    }
+    
+    console.log('Camera position reset to default');
   }
 
   /**

@@ -183,13 +183,11 @@
         }
         
         .canvas-container {
-            background: #111;
             border: 2px solid #00ff88;
             border-radius: 10px;
-            padding: 20px;
             margin-bottom: 20px;
-            box-shadow: 0 0 20px rgba(0, 255, 136, 0.3);
-            text-align: center;
+            overflow: hidden; /* Ensures canvas respects the border radius */
+            padding: 0;
         }
         
         .status {
@@ -213,6 +211,66 @@
             background: #331111;
             color: #ff4444;
         }
+        
+        .save-load-section {
+            background: #222;
+            border: 1px solid #00ff88;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .save-load-section h3 {
+            margin: 0 0 15px 0;
+            color: #00ff88;
+        }
+        
+        .save-load-buttons {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .save-button {
+            background: #00cc70;
+            color: #000;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background 0.3s ease;
+        }
+        
+        .save-button:hover {
+            background: #00aa60;
+        }
+        
+        .drop-zone {
+            border: 2px dashed #666;
+            border-radius: 8px;
+            padding: 30px;
+            text-align: center;
+            color: #888;
+            background: #111;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        
+        .drop-zone:hover {
+            border-color: #00ff88;
+            color: #00ff88;
+        }
+        
+        .drop-zone.dragover {
+            border-color: #00ff88;
+            background: #113311;
+            color: #00ff88;
+        }
+        
+        .drop-zone input {
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -227,19 +285,31 @@
             <!-- GPU renderer canvas will be attached here -->
         </div>
         
+        <div class="save-load-section">
+            <h3>Save & Load Configuration</h3>
+            <div class="save-load-buttons">
+                <button id="save-config-button" class="save-button">💾 Save Configuration</button>
+            </div>
+            <div class="drop-zone" id="load-drop-zone">
+                <input type="file" id="load-file-input" accept=".png" />
+                <p>📁 Drop PNG file here or click to load saved configuration</p>
+                <small>Drag and drop a PNG file containing simulation parameters</small>
+            </div>
+        </div>
+        
         <div class="controls">
             <h3>Swarmalator Parameters</h3>
             
             <div class="control-group">
                 <label for="J-slider">J Offset (Global Spatial Coupling):</label>
-                <input type="range" id="J-slider" min="-2" max="2" value="0" step="0.1">
+                <input type="range" id="J-slider" min="-5" max="5" value="0" step="0.1">
                 <input type="number" id="J-value" value="0" step="0.1">
                 <span class="info">Global offset added to all J matrix values</span>
             </div>
             
             <div class="control-group">
                 <label for="K-slider">K Offset (Global Phase Coupling):</label>
-                <input type="range" id="K-slider" min="-2" max="2" value="0" step="0.1">
+                <input type="range" id="K-slider" min="-5" max="5" value="0" step="0.1">
                 <input type="number" id="K-value" value="0" step="0.1">
                 <span class="info">Global offset added to all K matrix values</span>
             </div>
