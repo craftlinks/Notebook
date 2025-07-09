@@ -42,6 +42,7 @@ interface GPUSwarmalator {
   phaseVelocityBuffer: any; // TSL instancedArray - phase velocities [dθ/dt]
   naturalFreqBuffer: any;   // per-particle natural frequency ω_n
   speciesBuffer: any;       // NEW: per-particle species ID
+  densityBuffer: any;       // NEW: per-particle local density
   
   // Rendering
   mesh: THREE.InstancedMesh;
@@ -245,6 +246,7 @@ class GPUSwarmalators {
     const phaseVelocityBuffer = instancedArray(count, 'float');
     const naturalFreqBuffer = instancedArray(count, 'float');
     const speciesBuffer = instancedArray(count, 'uint');
+    const densityBuffer = instancedArray(count, 'float');
     
     // Create geometry and material
     const geometry = new THREE.PlaneGeometry(1, 1);
@@ -285,21 +287,19 @@ class GPUSwarmalators {
     })();
     
     // Dynamic alpha based on phase velocity (more active = brighter)
-    const phaseVelAttr = phaseVelocityBuffer.toAttribute();
-    const alpha = clamp(abs(phaseVelAttr).mul(5.0).add(0.3), float(0.1), float(1.0));
+    const densityAttr = densityBuffer.toAttribute();
 
-    // Radial glow falloff for soft circular sprites (borrowed from particle-lenia)
+    // Opacity: soft circular sprite with fixed base alpha
     const dist = length(uv().sub(vec2(0.5, 0.5)));
     const radialAlpha = clamp(float(1.0).sub(pow(dist.mul(2.0), 8.0)), float(0.0), float(1.0));
+    material.opacityNode = radialAlpha.mul(float(0.8));
 
-    // Combine activity-based brightness with radial glow
-    material.opacityNode = radialAlpha.mul(alpha);
-    
     // Position from buffer
     material.positionNode = positionBuffer.toAttribute();
-    
-    // Dynamic scale based on phase activity (brighter and larger when active)
-    const dynamicScale = clamp(abs(phaseVelAttr).mul(0.02).add(0.05), float(0.03), float(0.15));
+
+    // Particle scale inversely proportional to local density
+    const densityScale = clamp(float(1.0).div(densityAttr.mul(5.0).add(1.0)), float(0.2), float(2.0));
+    const dynamicScale = clamp(float(0.05).mul(densityScale), float(0.01), float(0.15));
     material.scaleNode = dynamicScale;
     
     // Flatten coupling matrices for GPU
@@ -336,6 +336,7 @@ class GPUSwarmalators {
       phaseVelocityBuffer,
       naturalFreqBuffer,
       speciesBuffer,
+      densityBuffer,
       mesh,
       material,
       params: paramUniforms,
@@ -365,6 +366,7 @@ class GPUSwarmalators {
       phaseVelocityBuffer,
       naturalFreqBuffer,
       speciesBuffer,
+      densityBuffer,
       params,
       speciesParams
     } = swarmalator;
@@ -386,6 +388,7 @@ class GPUSwarmalators {
       // Initialize force and phase coupling accumulators
       const force_acc = vec3(0.0, 0.0, 0.0).toVar();
       const phase_coupling_acc = float(0.0).toVar();
+      const density_acc = float(0.0).toVar();
       
       // Loop over all other particles
       Loop(uint(pointCount), ({ i: j }) => {
@@ -419,6 +422,12 @@ class GPUSwarmalators {
         // Calculate phase coupling with species-specific strength
         const coupling = phaseCoupling(phase_i, phase_j, distance, K_ij);
         phase_coupling_acc.addAssign(coupling);
+
+        // Accumulate density (count neighbors within radius)
+        const densityRadius = float(2.0);
+        If(distance.lessThan(densityRadius), () => {
+          density_acc.addAssign(1.0);
+        });
         
       });
       
@@ -426,6 +435,7 @@ class GPUSwarmalators {
       const N = float(pointCount).mul(0.89);
       force_acc.divAssign(N);
       phase_coupling_acc.divAssign(N);
+      density_acc.divAssign(float(10.0)); // simple normalization
       
       // In the original ODE the position derivative equals the force sum directly
       // (plus an optional natural propulsion velocity). We therefore *assign*
@@ -441,6 +451,7 @@ class GPUSwarmalators {
       // Write back updated velocities
       velocityBuffer.element(i).assign(vel_i);
       phaseVelocityBuffer.element(i).assign(phase_vel_i);
+      densityBuffer.element(i).assign(density_acc);
       
     })().compute(pointCount);
   }
@@ -490,7 +501,7 @@ class GPUSwarmalators {
    * Initialize particle positions and phases
    */
   createInitCompute(swarmalator: GPUSwarmalator) {
-    const { pointCount, positionBuffer, velocityBuffer, phaseBuffer, phaseVelocityBuffer, naturalFreqBuffer, speciesBuffer } = swarmalator;
+    const { pointCount, positionBuffer, velocityBuffer, phaseBuffer, phaseVelocityBuffer, naturalFreqBuffer, speciesBuffer, densityBuffer } = swarmalator;
     
     return Fn(() => {
       const i = instanceIndex;
@@ -525,6 +536,9 @@ class GPUSwarmalators {
       
       // Zero initial phase velocity
       phaseVelocityBuffer.element(i).assign(0.0);
+
+      // Zero initial density
+      densityBuffer.element(i).assign(0.0);
 
       // Random initial natural frequency [0.0, 2.0] - wide spread
       const randNaturalFreq = hash(instanceIndex.add(uint(161718))).mul(2.0);
