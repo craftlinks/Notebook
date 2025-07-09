@@ -142,7 +142,7 @@ class GPUSwarmalators {
       J: 2.0,           // Strong coupling
       K: 0.3,           // Moderate synchronization strength
       omega: 2.0,       // No natural frequency initially
-      naturalVelocity: 10.0, // No natural propulsion
+      naturalVelocity:  1.1, // No natural propulsion
       dt: 0.14,         // Larger time step
       ...params
     };
@@ -197,7 +197,7 @@ class GPUSwarmalators {
     const velocityBuffer = instancedArray(count, 'vec3');
     const phaseBuffer = instancedArray(count, 'float');
     const phaseVelocityBuffer = instancedArray(count, 'float');
-    const naturalFreqBuffer = instancedArray(count, 'float'); // NEW: per-particle natural frequency
+    const naturalFreqBuffer = instancedArray(count, 'float');
     
     // Create geometry and material
     const geometry = new THREE.PlaneGeometry(1, 1);
@@ -316,7 +316,7 @@ class GPUSwarmalators {
         
         // Calculate repulsive force (inverse–square) – always active, no scaling.
         const repulsive = repulsiveForce(dr, distance);
-        force_acc.addAssign(repulsive.mul(1.02)); // Strengthen repulsion for more spacing
+        force_acc.addAssign(repulsive.mul(1.0)); // Strengthen repulsion for more spacing
         
         // Calculate phase coupling
         const coupling = phaseCoupling(phase_i, phase_j, distance, params.K);
@@ -325,7 +325,7 @@ class GPUSwarmalators {
       });
       
       // Normalize forces by particle count
-      const N = float(pointCount);
+      const N = float(pointCount).mul(0.89);
       force_acc.divAssign(N);
       phase_coupling_acc.divAssign(N);
       
@@ -334,11 +334,11 @@ class GPUSwarmalators {
       // the computed force to the velocity buffer instead of integrating it
       // with inertia, damping or speed limits.
       const vel_i = velocityBuffer.element(i).toVar();
-      vel_i.assign(force_acc); // naturalVelocity assumed zero for now
+      vel_i.assign(force_acc.mul(params.naturalVelocity)); // naturalVelocity assumed zero for now
       
       // Update phase velocity (phase dynamics)
       const phase_vel_i = phaseVelocityBuffer.element(i).toVar();
-      phase_vel_i.assign(omega_i.add(phase_coupling_acc)); // NEW: use omega_i
+      phase_vel_i.assign(omega_i.add(phase_coupling_acc));
       
       // Write back updated velocities
       velocityBuffer.element(i).assign(vel_i);
