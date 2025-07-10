@@ -40,6 +40,18 @@ jobs:
           rm -rf public/tsl-guide
           cp -r tsl/dist public/tsl-guide
 
+      # Build the Swarmalators project and copy it into Astro's public directory
+      - name: Build Swarmalators project
+        run: |
+          bun install
+          bun run build
+        working-directory: ./swarmalators
+
+      - name: Copy Swarmalators project into public folder
+        run: |
+          rm -rf public/swarmalators
+          cp -r swarmalators/dist public/swarmalators
+
       # Build the main Astro site (outputs to ./dist)
       - name: Build Astro site
         run: bun run build
