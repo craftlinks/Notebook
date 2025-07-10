@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPU Swarmalators Test</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: 'Courier New', monospace;
+            background: #000;
+            color: #00ff88;
+        }
+        
+        h1 {
+            text-align: center;
+            color: #00ff88;
+            text-shadow: 0 0 10px #00ff88;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .controls {
+            background: #111;
+            border: 2px solid #00ff88;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 0 20px rgba(0, 255, 136, 0.3);
+        }
+        
+        .control-group {
+            margin-bottom: 15px;
+        }
+        
+        .control-group label {
+            display: inline-block;
+            width: 200px;
+            color: #00ff88;
+            font-weight: bold;
+        }
+        
+        .control-group input[type="range"] {
+            width: 200px;
+            margin-right: 10px;
+        }
+        
+        .control-group input[type="number"] {
+            width: 80px;
+            background: #222;
+            color: #00ff88;
+            border: 1px solid #00ff88;
+            padding: 5px;
+            border-radius: 3px;
+        }
+        
+        .control-group button {
+            background: #00ff88;
+            color: #000;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        
+        .control-group button:hover {
+            background: #00cc70;
+        }
+        
+        .control-group button:active {
+            background: #009955;
+        }
+        
+        .pattern-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .pattern-button {
+            background: #333;
+            color: #00ff88;
+            border: 2px solid #00ff88;
+            padding: 10px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.3s ease;
+        }
+        
+        .pattern-button:hover {
+            background: #00ff88;
+            color: #000;
+        }
+        
+        .species-button {
+            background: #333;
+            color: #ff8800;
+            border: 2px solid #ff8800;
+            padding: 10px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.3s ease;
+        }
+        
+        .species-button:hover {
+            background: #ff8800;
+            color: #000;
+        }
+        
+        .matrix-container {
+            display: flex;
+            gap: 20px;
+            margin-top: 15px;
+        }
+        
+        .matrix-display {
+            flex: 1;
+            background: #111;
+            border: 1px solid #666;
+            border-radius: 8px;
+            padding: 15px;
+        }
+        
+        .matrix-display h4 {
+            margin: 0 0 10px 0;
+            color: #00ff88;
+            text-align: center;
+        }
+        
+        .matrix-grid {
+            display: grid;
+            gap: 10px;
+        }
+        
+        .matrix-grid.species-1 { grid-template-columns: 1fr; }
+        .matrix-grid.species-2 { grid-template-columns: 1fr 1fr; }
+        .matrix-grid.species-3 { grid-template-columns: 1fr 1fr 1fr; }
+        .matrix-grid.species-4 { grid-template-columns: 1fr 1fr 1fr 1fr; }
+        .matrix-grid.species-5 { grid-template-columns: 1fr 1fr 1fr 1fr 1fr; }
+        
+        .matrix-cell {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        
+        .matrix-cell label {
+            font-size: 11px;
+            color: #ccc;
+            font-weight: bold;
+        }
+        
+        .matrix-cell input[type="range"] {
+            width: 100%;
+        }
+        
+        .matrix-cell input[type="number"] {
+            width: 60px;
+            background: #222;
+            color: #00ff88;
+            border: 1px solid #666;
+            padding: 3px;
+            border-radius: 3px;
+            font-size: 11px;
+        }
+        
+        .info {
+            background: #222;
+            border: 1px solid #00ff88;
+            border-radius: 5px;
+            padding: 10px;
+            margin-top: 10px;
+            font-size: 14px;
+        }
+
+        .intro {
+            background: #111;
+            border: 1px solid #00ff88;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 20px 0;
+            font-size: 16px;
+            line-height: 1.4;
+        }
+        
+        .canvas-container {
+            border: 2px solid #00ff88;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            overflow: hidden; /* Ensures canvas respects the border radius */
+            padding: 0;
+        }
+        
+        .status {
+            text-align: center;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+        
+        .status.loading {
+            background: #333;
+            color: #ffaa00;
+        }
+        
+        .status.ready {
+            background: #113311;
+            color: #00ff88;
+        }
+        
+        .status.error {
+            background: #331111;
+            color: #ff4444;
+        }
+        
+        .save-load-section {
+            background: #222;
+            border: 1px solid #00ff88;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .save-load-section h3 {
+            margin: 0 0 15px 0;
+            color: #00ff88;
+        }
+        
+        .save-load-buttons {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .save-button {
+            background: #00cc70;
+            color: #000;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background 0.3s ease;
+        }
+        
+        .save-button:hover {
+            background: #00aa60;
+        }
+        
+        .drop-zone {
+            border: 2px dashed #666;
+            border-radius: 8px;
+            padding: 30px;
+            text-align: center;
+            color: #888;
+            background: #111;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        
+        .drop-zone:hover {
+            border-color: #00ff88;
+            color: #00ff88;
+        }
+        
+        .drop-zone.dragover {
+            border-color: #00ff88;
+            background: #113311;
+            color: #00ff88;
+        }
+        
+        .drop-zone input {
+            display: none;
+        }
+
+        .quick-actions {
+            text-align: center;
+            margin: 15px 0;
+        }
+
+        .quick-actions > * {
+            margin: 0 5px;
+        }
+    </style>
+  <script type="module" crossorigin src="./assets/index-CnQGzjrQ.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-S2HHVyTk.css">
+</head>
+<body>
+    <div class="container">
+        <h1>GPU Swarmalators Visualization</h1>
+        
+        <div class="intro">
+            <p><strong>What are Swarmalators?</strong> Swarmalators are minimal agents that both <em>swarm</em> in space and <em>oscillate</em> in phase. Their spatial attraction/repulsion depends on phase difference while their phase dynamics depends on distance — a two-way coupling that leads to striking self-organized patterns.</p>
+            <p>The canonical model by O’Keeffe, Hong &amp; Strogatz (2017) couples position <span style="white-space: nowrap;">r<sub>i</sub></span> and phase <span style="white-space: nowrap;">θ<sub>i</sub></span> of each of the <span style="white-space: nowrap;">N</span> agents:</p>
+            <pre style="overflow-x:auto"><code>dr_i/dt = (1/N) Σ_{j ≠ i} (r_j − r_i)/|r_j − r_i| · [1 + J·cos(θ_j − θ_i)] − (r_j − r_i)/|r_j − r_i|²
+dθ_i/dt = ω_i + (K/N) Σ_{j ≠ i} sin(θ_j − θ_i) / |r_j − r_i|</code></pre>
+            <ul>
+                <li><strong>J</strong> &gt; 0: like-phased agents attract (J &lt; 0: opposite phases attract).</li>
+                <li><strong>K</strong> &gt; 0: phases synchronize (K &lt; 0: phases desynchronize).</li>
+            </ul>
+            <p>Our version leverages <a href="https://threejs.org/" target="_blank">Three.js</a> along with its <em>TSL</em> (Three&nbsp;Shader&nbsp;Language) compute shaders so that every one of the <span style="white-space: nowrap;">O(N²)</span> pairwise forces is evaluated in parallel on the GPU.  This enables real-time exploration with &gt;10&nbsp;k particles on commodity graphics cards.  We also generalize the original single-species model to <strong>up to five species</strong>: the spatial (<em>J</em>) and phase (<em>K</em>) couplings are stored in editable matrices <span style="white-space: nowrap;">J<sub>αβ</sub></span>, <span style="white-space: nowrap;">K<sub>αβ</sub></span> that let you tailor how species&nbsp;α interacts with species&nbsp;β.</p>
+            <p>By tuning these matrices—as well as the global offsets— the system exhibits rings, rotating clusters, convection-like flows and many other rich spatio-temporal states.</p>
+            <p><strong>References</strong></p>
+            <ul>
+                <li>O'Keeffe, K.P., Hong, H., &amp; Strogatz, S.H. (2017). “Oscillators that sync and swarm”, <em>Nature Communications</em> 8, 1504.</li>
+                <li><a href="https://www.complexity-explorables.org/explorables/swarmalators/" target="_blank">Complexity-Explorables: “Swarmalators – Oscillators that sync and swarm”</a></li>
+            </ul>
+        </div>
+        
+        <div id="status" class="status loading">
+            Initializing WebGPU renderer...
+        </div>
+        
+        <div id="canvas-container" class="canvas-container">
+            <!-- GPU renderer canvas will be attached here -->
+        </div>
+
+        <div class="quick-actions">
+            <button id="randomize-matrices" class="species-button">Randomize All Interactions</button>
+            <label for="species-count" style="color: #00ff88; font-weight: bold;">Species:</label>
+            <select id="species-count" style="background: #222; color: #00ff88; border: 1px solid #00ff88; padding: 5px; border-radius: 3px;">
+                <option value="1">1</option>
+                <option value="2" selected>2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
+            </select>
+        </div>
+
+        <div class="save-load-section">
+            <h3>Save & Load Configuration</h3>
+            <div class="save-load-buttons">
+                <button id="save-config-button" class="save-button">💾 Save Configuration</button>
+            </div>
+            <div class="drop-zone" id="load-drop-zone">
+                <input type="file" id="load-file-input" accept=".png" />
+                <p>📁 Drop PNG file here or click to load saved configuration</p>
+                <small>Drag and drop a PNG file containing simulation parameters</small>
+            </div>
+        </div>
+        
+        <div class="controls">
+            <h3>Swarmalator Parameters</h3>
+            
+            <div class="control-group">
+                <label for="J-slider">J Offset (Global Spatial Coupling):</label>
+                <input type="range" id="J-slider" min="-5" max="5" value="0" step="0.1">
+                <input type="number" id="J-value" value="0" step="0.1">
+                <span class="info">Global offset added to all J matrix values</span>
+            </div>
+            
+            <div class="control-group">
+                <label for="K-slider">K Offset (Global Phase Coupling):</label>
+                <input type="range" id="K-slider" min="-5" max="5" value="0" step="0.1">
+                <input type="number" id="K-value" value="0" step="0.1">
+                <span class="info">Global offset added to all K matrix values</span>
+            </div>
+            
+            <div class="control-group">
+                <label for="omega-slider">ω (Natural Frequency):</label>
+                <input type="range" id="omega-slider" min="-2" max="2" value="0" step="0.1">
+                <input type="number" id="omega-value" value="0" step="0.1">
+                <span class="info">Natural oscillation frequency</span>
+            </div>
+            
+            <div class="control-group">
+                <label for="dt-slider">dt (Time Step):</label>
+                <input type="range" id="dt-slider" min="0.05" max="0.5" value="0.14" step="0.01">
+                <input type="number" id="dt-value" value="0.14" step="0.01">
+                <span class="info">Simulation time step</span>
+            </div>
+            
+            <div class="control-group">
+                <label for="count-slider">Particle Count:</label>
+                <input type="range" id="count-slider" min="100" max="20000" value="1000" step="50">
+                <input type="number" id="count-value" value="1000" step="50">
+                <button id="recreate-button">Recreate</button>
+            </div>
+            
+            <div class="control-group">
+                <button id="start-button">Start</button>
+                <button id="stop-button">Stop</button>
+                <button id="reset-button">Reset</button>
+            </div>
+            
+            <h3>Preset Patterns</h3>
+            <div class="pattern-buttons">
+                <button class="pattern-button" data-pattern="rainbow-ring">Rainbow Ring</button>
+                <button class="pattern-button" data-pattern="dancing-circus">Dancing Circus</button>
+                <button class="pattern-button" data-pattern="uniform-blob">Uniform Blob</button>
+                <button class="pattern-button" data-pattern="solar-convection">Solar Convection</button>
+                <button class="pattern-button" data-pattern="makes-me-dizzy">Makes Me Dizzy</button>
+                <button class="pattern-button" data-pattern="fractured">Fractured</button>
+            </div>
+            
+            <h3>Species Coupling Matrices</h3>
+            <div class="matrix-container">
+                <div class="matrix-display">
+                    <h4>J Matrix (Spatial Coupling)</h4>
+                    <div class="matrix-grid" id="j-matrix">
+                        <!-- Matrix controls will be dynamically generated -->
+                    </div>
+                </div>
+                
+                <div class="matrix-display">
+                    <h4>K Matrix (Phase Coupling)</h4>
+                    <div class="matrix-grid" id="k-matrix">
+                        <!-- Matrix controls will be dynamically generated -->
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="info">
+            <strong>Instructions:</strong><br>
+            • Colors represent particle species (Red/Green/Blue/Yellow/Magenta) with phase brightness modulation<br>
+            • Species interact via coupling matrices (J, K) + global offsets<br>
+            • Use mouse to rotate/zoom the view<br>
+            • <strong>Species Count:</strong> Select 1-5 species (resets simulation)<br>
+            • <strong>Global Offsets:</strong> J and K sliders add to all matrix values<br>
+            • <strong>Matrix Controls:</strong> Set specific species-pair interactions<br>
+            • <strong>J &gt; 0:</strong> particles with similar phases attract<br>
+            • <strong>J &lt; 0:</strong> particles with opposite phases attract<br>
+            • <strong>K &gt; 0:</strong> phases synchronize<br>
+            • <strong>K &lt; 0:</strong> phases desynchronize<br>
+            • <strong>Species Presets:</strong> Load different interaction patterns
+        </div>
+        
+    </div>
+    
+</body>
+</html>
