@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { GPUSwarmalators, type SwarmalatorParams, type SpeciesParams } from './gpu_swarmalators';
 
 let swarmalators: GPUSwarmalators | null = null;

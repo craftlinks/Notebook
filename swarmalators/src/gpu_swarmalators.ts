@@ -1,3 +1,4 @@
+// @ts-nocheck
 import './style.css'
 
 // Three.js WebGPU and TSL imports

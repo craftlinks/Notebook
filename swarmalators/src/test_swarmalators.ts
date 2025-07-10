@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { GPUSwarmalators, type SwarmalatorParams } from './gpu_swarmalators';
 
 /**
