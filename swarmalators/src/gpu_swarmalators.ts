@@ -576,15 +576,15 @@ class GPUSwarmalators {
     canvas.style.width = '100%';
     canvas.style.height = '100%';
 
-    const title = document.createElement('h3');
-    title.textContent = '🌀 GPU Swarmalators Visualization';
-    title.style.color = '#00ff88';
-    title.style.margin = '10px 0';
-    title.style.textAlign = 'center';
+    // const title = document.createElement('h3');
+    // title.textContent = '🌀 GPU Swarmalators Visualization';
+    // title.style.color = '#00ff88';
+    // title.style.margin = '10px 0';
+    // title.style.textAlign = 'center';
     
     // Clear the container and append new elements directly
     targetContainer.innerHTML = '';
-    targetContainer.appendChild(title);
+    // targetContainer.appendChild(title);
     targetContainer.appendChild(canvas);
     
     // Add orbit controls

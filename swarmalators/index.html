@@ -181,6 +181,16 @@
             margin-top: 10px;
             font-size: 14px;
         }
+
+        .intro {
+            background: #111;
+            border: 1px solid #00ff88;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 20px 0;
+            font-size: 16px;
+            line-height: 1.4;
+        }
         
         .canvas-container {
             border: 2px solid #00ff88;
@@ -285,6 +295,24 @@
 <body>
     <div class="container">
         <h1>GPU Swarmalators Visualization</h1>
+        
+        <div class="intro">
+            <p><strong>What are Swarmalators?</strong> Swarmalators are minimal agents that both <em>swarm</em> in space and <em>oscillate</em> in phase. Their spatial attraction/repulsion depends on phase difference while their phase dynamics depends on distance — a two-way coupling that leads to striking self-organized patterns.</p>
+            <p>The canonical model by O’Keeffe, Hong &amp; Strogatz (2017) couples position <span style="white-space: nowrap;">r<sub>i</sub></span> and phase <span style="white-space: nowrap;">θ<sub>i</sub></span> of each of the <span style="white-space: nowrap;">N</span> agents:</p>
+            <pre style="overflow-x:auto"><code>dr_i/dt = (1/N) Σ_{j ≠ i} (r_j − r_i)/|r_j − r_i| · [1 + J·cos(θ_j − θ_i)] − (r_j − r_i)/|r_j − r_i|²
+dθ_i/dt = ω_i + (K/N) Σ_{j ≠ i} sin(θ_j − θ_i) / |r_j − r_i|</code></pre>
+            <ul>
+                <li><strong>J</strong> &gt; 0: like-phased agents attract (J &lt; 0: opposite phases attract).</li>
+                <li><strong>K</strong> &gt; 0: phases synchronize (K &lt; 0: phases desynchronize).</li>
+            </ul>
+            <p>Our version leverages <a href="https://threejs.org/" target="_blank">Three.js</a> along with its <em>TSL</em> (Three&nbsp;Shader&nbsp;Language) compute shaders so that every one of the <span style="white-space: nowrap;">O(N²)</span> pairwise forces is evaluated in parallel on the GPU.  This enables real-time exploration with &gt;10&nbsp;k particles on commodity graphics cards.  We also generalize the original single-species model to <strong>up to five species</strong>: the spatial (<em>J</em>) and phase (<em>K</em>) couplings are stored in editable matrices <span style="white-space: nowrap;">J<sub>αβ</sub></span>, <span style="white-space: nowrap;">K<sub>αβ</sub></span> that let you tailor how species&nbsp;α interacts with species&nbsp;β.</p>
+            <p>By tuning these matrices—as well as the global offsets— the system exhibits rings, rotating clusters, convection-like flows and many other rich spatio-temporal states.</p>
+            <p><strong>References</strong></p>
+            <ul>
+                <li>O'Keeffe, K.P., Hong, H., &amp; Strogatz, S.H. (2017). “Oscillators that sync and swarm”, <em>Nature Communications</em> 8, 1504.</li>
+                <li><a href="https://www.complexity-explorables.org/explorables/swarmalators/" target="_blank">Complexity-Explorables: “Swarmalators – Oscillators that sync and swarm”</a></li>
+            </ul>
+        </div>
         
         <div id="status" class="status loading">
             Initializing WebGPU renderer...
