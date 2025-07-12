@@ -123,23 +123,10 @@ const spatialForce = /*@__PURE__*/ Fn(([dr, distance, phaseI, phaseJ, J]) => {
   const phaseDiff = phaseJ.sub(phaseI);
   const modulation = float(1.0).add(J.mul(cos(phaseDiff)));
   
-  // Enforce minimum distance to prevent extreme forces
-  const safeDistance = max(distance, float(0.1));
-  
-  const attractive = dr.div(safeDistance).mul(modulation);
-  
-  // Stronger repulsive force but with distance limiting
-  const repulsive = dr.div(safeDistance.mul(safeDistance)).mul(0.5).negate();
-  
-  // Clamp total force magnitude to prevent jumping
-  const totalForce = attractive.add(repulsive);
-  const forceMag = length(totalForce);
-  const maxForce = float(2.0);
-  
-  return select(forceMag.greaterThan(maxForce), 
-    totalForce.div(forceMag).mul(maxForce), 
-    totalForce
-  );
+  // Pure O'Keeffe spatial interaction without extra guard-rails
+  const attractive = dr.div(distance).mul(modulation);
+  const repulsive = dr.div(distance.mul(distance)).negate();
+  return attractive.add(repulsive);
 });
 
 /**
@@ -149,9 +136,8 @@ const spatialForce = /*@__PURE__*/ Fn(([dr, distance, phaseI, phaseJ, J]) => {
  */
 const phaseCoupling = /*@__PURE__*/ Fn(([phaseI, phaseJ, distance, K, alpha]) => {
   const phaseDiff = phaseJ.sub(phaseI).sub(alpha);
-  // Avoid division by zero in extreme clustering - enforce minimum distance
-  const safeDist = max(distance, float(0.1));
-  return K.mul(sin(phaseDiff)).div(safeDist);
+  // Pure Kuramoto coupling – no distance guard other than the raw |r|
+  return K.mul(sin(phaseDiff)).div(distance);
 });
 
 /**
@@ -189,7 +175,7 @@ class GPUSwarmalators {
       K: 0.0,           // Global K offset (initially zero)
       omega: 1.2,       // Natural frequency for interesting dynamics
       alpha: 0.0,       // Phase lag initially zero
-      dt: 0.02,         // Balanced time step with force limiting
+      dt: 0.1,          // Default time step
       boundarySize: 6.0, // Default soft boundary size
       boundaryStrength: 0.8, // Default soft boundary strength
       ...params
@@ -449,35 +435,16 @@ class GPUSwarmalators {
       const N = float(pointCount);
       force_acc.divAssign(N);
       phase_coupling_acc.divAssign(N);
-      density_acc.divAssign(float(10.0)); // simple normalization
-      
-      // Apply forces with moderate amplification and velocity damping
+
+      // Directly use the force accumulator as the time-derivative of position
       const vel_i = velocityBuffer.element(i).toVar();
-      const currentVel = vel_i;
-      
-      // Apply damping to prevent runaway acceleration
-      const damping = float(0.95);
-      const dampedVel = currentVel.mul(damping);
-      
-      // Apply force with moderate amplification
-      const newVel = dampedVel.add(force_acc.mul(2.0));
-      
-      // Clamp velocity magnitude to prevent jumping
-      const velMag = length(newVel);
-      const maxVel = float(1.0);
-      const clampedVel = select(velMag.greaterThan(maxVel), 
-        newVel.div(velMag).mul(maxVel), 
-        newVel
-      );
-      
-      vel_i.assign(clampedVel);
-      
-      // Update phase velocity (phase dynamics)
-      // Use global omega parameter instead of per-particle natural frequency for consistency
+      vel_i.assign(force_acc);
+
+      // Phase derivative – faithful Kuramoto term (no extra scaling)
       const phase_vel_i = phaseVelocityBuffer.element(i).toVar();
-      phase_vel_i.assign(params.omega.add(phase_coupling_acc.mul(1.5))); // Moderate phase coupling
-      
-      // Write back updated velocities
+      phase_vel_i.assign(params.omega.add(phase_coupling_acc));
+
+      // Write back updated values
       velocityBuffer.element(i).assign(vel_i);
       phaseVelocityBuffer.element(i).assign(phase_vel_i);
       densityBuffer.element(i).assign(density_acc);
@@ -500,79 +467,31 @@ class GPUSwarmalators {
     
     return Fn(() => {
       const i = instanceIndex;
-      
+
       // Skip if beyond particle count
       If(i.greaterThanEqual(uint(pointCount)), () => {
         return;
       });
-      
-      // Update position with soft boundary conditions
+
+      // Fetch state
       const pos_i = positionBuffer.element(i).toVar();
-      const vel_i = velocityBuffer.element(i).toVar();
-      
-      // Apply soft boundary forces
-      const distanceFromCenter = length(pos_i);
-      const boundaryForce = vec3(0.0, 0.0, 0.0).toVar();
-      
-      // If particle is beyond boundary size, apply restoring force toward center
-      If(distanceFromCenter.greaterThan(params.boundarySize), () => {
-        // Safe normalization (avoid NaN when pos_i is near zero)
-        const lenPos = length(pos_i);
-        const invLen = select(lenPos.greaterThan(float(0.0001)), float(1.0).div(lenPos), float(0.0));
-        const forceDirection = pos_i.mul(invLen).mul(float(-1.0)); // Direction toward center (safe)
-        const excess = distanceFromCenter.sub(params.boundarySize);
-        const forceMagnitude = excess.mul(params.boundaryStrength).mul(float(2.0)); // Linear spring force
-        boundaryForce.assign(forceDirection.mul(forceMagnitude));
-      });
-      
-      // Special Z-axis constraints to keep particles within camera view
-      // Camera is at (0, 0, 10) looking at (0, 0, 0), so constrain Z more tightly
-      const zPos = pos_i.z;
-      const zVel = vel_i.z.toVar();
-      
-      // Hard constraint: keep Z between -6 and 6 (camera viewing range)
-      // If(zPos.greaterThan(float(6.0)), () => {
-      //   const zExcess = zPos.sub(float(6.0));
-      //   const zForce = zExcess.mul(params.boundaryStrength).mul(float(-4.0)); // Strong Z constraint
-      //   vel_i.z.assign(zVel.add(zForce.mul(params.dt)));
-      // });
-      
-      // If(zPos.lessThan(float(-6.0)), () => {
-      //   const zExcess = float(-6.0).sub(zPos);
-      //   const zForce = zExcess.mul(params.boundaryStrength).mul(float(4.0)); // Strong Z constraint
-      //   vel_i.z.assign(zVel.add(zForce.mul(params.dt)));
-      // });
-      
-      // Apply boundary force to velocity
-      vel_i.addAssign(boundaryForce.mul(params.dt));
-      
-      // Apply velocity damping near boundaries to stabilize particles
-      If(distanceFromCenter.greaterThan(params.boundarySize.mul(float(0.8))), () => {
-        const dampingFactor = float(0.95); // Slight damping
-        vel_i.mulAssign(dampingFactor);
-      });
-      
-      // Extra Z-velocity damping to prevent runaway Z movement
-      If(abs(zPos).greaterThan(float(4.0)), () => {
-        vel_i.z.mulAssign(float(0.9)); // Stronger Z damping
-      });
-      
-      // Update position
+      const vel_i = velocityBuffer.element(i); // velocity already equals dr/dt
+
+      // Update position – pure Euler step without any boundary forces or damping
       pos_i.addAssign(vel_i.mul(params.dt));
-      
-      // Update phase
+
+      // Phase update
       const phase_i = phaseBuffer.element(i).toVar();
       const phase_vel_i = phaseVelocityBuffer.element(i);
       phase_i.addAssign(phase_vel_i.mul(params.dt));
-      
-      // Wrap phase to [0, 2π]
+
+      // Wrap phase into [0, 2π]
       phase_i.assign(phase_i.mod(PI.mul(2.0)));
-      
-      // Write back updated state
+
+      // Write back
       positionBuffer.element(i).assign(pos_i);
-      velocityBuffer.element(i).assign(vel_i);
       phaseBuffer.element(i).assign(phase_i);
-      
+
     })().compute(pointCount);
   }
   
