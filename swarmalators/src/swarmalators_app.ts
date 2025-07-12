@@ -418,12 +418,12 @@ const speciesPresets: Record<string, Partial<SpeciesParams>> = {
   'symmetric-species': {
     numSpecies: 2,
     JMatrix: [
-      [2.5, 1.5],  // Stronger symmetric coupling
-      [1.5, 2.5]
+      [1.4, 0.6],
+      [-1.0405, 0.6]
     ],
     KMatrix: [
-      [2.0, 0.8],  // Stronger symmetric phase coupling
-      [0.8, 2.0]
+      [-1.6, -0.1],
+      [2.4, -0.3]
     ],
     speciesColors: ['#ff4444', '#44ff44'],
     speciesDistribution: [0.5, 0.5]
@@ -1042,7 +1042,7 @@ function getCurrentParams(): Partial<SwarmalatorParams> {
   const boundarySize = parseFloat((document.getElementById('boundarySize-value') as HTMLInputElement).value);
   const boundaryStrength = parseFloat((document.getElementById('boundaryStrength-value') as HTMLInputElement).value);
   
-  return { J, K, omega, dt, boundarySize, boundaryStrength, naturalVelocity: 1.0 };
+  return { J, K, omega, dt, boundarySize, boundaryStrength };
 }
 
 async function initApplication() {

@@ -17,7 +17,6 @@ export interface SwarmalatorParams {
   J: number;        // Coupling strength between spatial and phase dynamics (global fallback)
   K: number;        // Synchronization strength (global fallback)
   omega: number;    // Natural frequency
-  naturalVelocity: number; // Natural propulsion velocity (v_n in equations)
   alpha: number;    // Phase lag parameter in phase coupling
   dt: number;       // Time step
   boundarySize: number;    // Soft boundary size (particles gently pushed back when beyond this)
@@ -44,9 +43,8 @@ interface GPUSwarmalator {
   velocityBuffer: any;    // TSL instancedArray - particle velocities [vx,vy,vz]
   phaseBuffer: any;       // TSL instancedArray - oscillator phases [θ]
   phaseVelocityBuffer: any; // TSL instancedArray - phase velocities [dθ/dt]
-  naturalFreqBuffer: any;   // per-particle natural frequency ω_n
-  speciesBuffer: any;       // NEW: per-particle species ID
-  densityBuffer: any;       // NEW: per-particle local density
+  speciesBuffer: any;       // per-particle species ID
+  densityBuffer: any;       // local density
   
   // Rendering
   mesh: THREE.InstancedMesh;
@@ -57,7 +55,6 @@ interface GPUSwarmalator {
     J: any;                // Fallback J (scalar)
     K: any;                // Fallback K (scalar)
     omega: any;
-    naturalVelocity: any;
     alpha: any;
     dt: any;
     boundarySize: any;
@@ -188,11 +185,10 @@ class GPUSwarmalators {
   constructor(params?: Partial<SwarmalatorParams>, speciesParams?: Partial<SpeciesParams>) {
     // Default swarmalator parameters (J and K are now global offsets)
     this.globalParams = {
-      J: 0.8,           // Global J offset (solar-convection pattern)
-      K: 2.5,           // Global K offset (solar-convection pattern)
+      J: 0.0,           // Global J offset (initially zero)
+      K: 0.0,           // Global K offset (initially zero)
       omega: 1.2,       // Natural frequency for interesting dynamics
-      naturalVelocity: 1.0, // Not used for scaling anymore
-      alpha: 0.8,       // Phase lag for swirling patterns
+      alpha: 0.0,       // Phase lag initially zero
       dt: 0.02,         // Balanced time step with force limiting
       boundarySize: 6.0, // Default soft boundary size
       boundaryStrength: 0.8, // Default soft boundary strength
@@ -203,12 +199,12 @@ class GPUSwarmalators {
     this.speciesParams = {
       numSpecies: 2,
       JMatrix: [
-        [1.0, 0.5],  // Species 0 to [0, 1]
-        [0.5, 1.0]   // Species 1 to [0, 1]
+        [1.4, 0.6],
+        [-1.0405, 0.6]
       ],
       KMatrix: [
-        [0.8, 0.2],  // Species 0 to [0, 1]
-        [0.2, 0.8]   // Species 1 to [0, 1]
+        [-1.6, -0.1],
+        [2.4, -0.3]
       ],
       speciesColors: ['#ff4444', '#44ff44', '#4444ff', '#ffff44', '#ff44ff'],
       speciesDistribution: [0.5, 0.5],
@@ -268,7 +264,6 @@ class GPUSwarmalators {
     const velocityBuffer = instancedArray(count, 'vec3');
     const phaseBuffer = instancedArray(count, 'float');
     const phaseVelocityBuffer = instancedArray(count, 'float');
-    const naturalFreqBuffer = instancedArray(count, 'float');
     const speciesBuffer = instancedArray(count, 'uint');
     const densityBuffer = instancedArray(count, 'float');
     
@@ -335,7 +330,6 @@ class GPUSwarmalators {
       J: uniform(finalParams.J),
       K: uniform(finalParams.K),
       omega: uniform(finalParams.omega),
-      naturalVelocity: uniform(finalParams.naturalVelocity),
       alpha: uniform(finalParams.alpha),
       dt: uniform(finalParams.dt),
       boundarySize: uniform(finalParams.boundarySize),
@@ -361,7 +355,6 @@ class GPUSwarmalators {
       velocityBuffer,
       phaseBuffer,
       phaseVelocityBuffer,
-      naturalFreqBuffer,
       speciesBuffer,
       densityBuffer,
       mesh,
@@ -391,7 +384,6 @@ class GPUSwarmalators {
       velocityBuffer, 
       phaseBuffer, 
       phaseVelocityBuffer,
-      naturalFreqBuffer,
       speciesBuffer,
       densityBuffer,
       params,
@@ -409,7 +401,6 @@ class GPUSwarmalators {
       // Get current particle state
       const pos_i = positionBuffer.element(i).toVar();
       const phase_i = phaseBuffer.element(i).toVar();
-      const omega_i = naturalFreqBuffer.element(i).toVar();
       const species_i = speciesBuffer.element(i).toVar();
       
       // Initialize force and phase coupling accumulators
@@ -589,7 +580,7 @@ class GPUSwarmalators {
    * Initialize particle positions and phases
    */
   createInitCompute(swarmalator: GPUSwarmalator) {
-    const { pointCount, positionBuffer, velocityBuffer, phaseBuffer, phaseVelocityBuffer, naturalFreqBuffer, speciesBuffer, densityBuffer } = swarmalator;
+    const { pointCount, positionBuffer, velocityBuffer, phaseBuffer, phaseVelocityBuffer, speciesBuffer, densityBuffer } = swarmalator;
     
     return Fn(() => {
       const i = instanceIndex;
@@ -627,9 +618,6 @@ class GPUSwarmalators {
 
       // Zero initial density
       densityBuffer.element(i).assign(0.0);
-
-      // Set consistent natural frequency (using global omega parameter)
-      naturalFreqBuffer.element(i).assign(0.0);
       
       // Assign species based on distribution (simple: alternate between species for now)
       const species = uint(hash(instanceIndex.add(uint(192021))).mul(float(this.speciesParams.numSpecies)));
@@ -764,7 +752,6 @@ class GPUSwarmalators {
       if (newParams.J !== undefined) swarmalator.params.J.value = newParams.J;
       if (newParams.K !== undefined) swarmalator.params.K.value = newParams.K;
       if (newParams.omega !== undefined) swarmalator.params.omega.value = newParams.omega;
-      if (newParams.naturalVelocity !== undefined) swarmalator.params.naturalVelocity.value = newParams.naturalVelocity;
       if (newParams.alpha !== undefined) swarmalator.params.alpha.value = newParams.alpha;
       if (newParams.dt !== undefined) swarmalator.params.dt.value = newParams.dt;
       if (newParams.boundarySize !== undefined) swarmalator.params.boundarySize.value = newParams.boundarySize;
