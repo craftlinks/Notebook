@@ -348,36 +348,42 @@ const patternPresets: Record<string, Partial<SwarmalatorParams>> = {
     J: 2.5,
     K: 0.0,
     omega: 0.0,
+    alpha: 0.0,
     dt: 0.05
   },
   'dancing-circus': {
     J: 0.5,
     K: -1.5,
     omega: 0.0,
+    alpha: 0.5,
     dt: 0.05
   },
   'uniform-blob': {
     J: 0.5,
     K: 3.0,
     omega: 0.0,
+    alpha: 0.1,
     dt: 0.05
   },
   'solar-convection': {
     J: 0.8,
     K: 2.5,
     omega: 1.2,
+    alpha: 0.8,
     dt: 0.05
   },
   'makes-me-dizzy': {
     J: 3.0,
     K: 0.5,
     omega: 0.0,
+    alpha: 1.2,
     dt: 0.05
   },
   'fractured': {
     J: 2.0,
     K: -2.0,
     omega: 0.0,
+    alpha: -0.7,
     dt: 0.05
   }
 };
@@ -486,7 +492,7 @@ function updateStatus(message: string, type: 'loading' | 'ready' | 'error') {
 
 function setupUI() {
   // Parameter sliders
-  const parameterIds = ['J', 'K', 'omega', 'dt'];
+  const parameterIds = ['J', 'K', 'omega', 'alpha', 'dt'];
   
   parameterIds.forEach(param => {
     const slider = document.getElementById(`${param}-slider`) as HTMLInputElement;

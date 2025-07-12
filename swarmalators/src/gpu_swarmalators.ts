@@ -18,6 +18,7 @@ export interface SwarmalatorParams {
   K: number;        // Synchronization strength (global fallback)
   omega: number;    // Natural frequency
   naturalVelocity: number; // Natural propulsion velocity (v_n in equations)
+  alpha: number;    // Phase lag parameter in phase coupling
   dt: number;       // Time step
 }
 
@@ -55,6 +56,7 @@ interface GPUSwarmalator {
     K: any;                // Fallback K (scalar)
     omega: any;
     naturalVelocity: any;
+    alpha: any;
     dt: any;
   };
   
@@ -131,11 +133,12 @@ const repulsiveForce = /*@__PURE__*/ Fn(([dr, distance]) => {
 });
 
 /**
- * Calculate phase coupling force (Kuramoto-like)
- * dθ/dt = ω + (K/N) * Σ sin(θ_j - θ_i) / |r_j - r_i|
+ * Calculate phase coupling force (Kuramoto-like) with lag alpha
+ * dθ/dt = ω + (K/N) * Σ sin(θ_j - θ_i + alpha) / |r_j - r_i|
+ * alpha is the phase lag parameter
  */
-const phaseCoupling = /*@__PURE__*/ Fn(([phaseI, phaseJ, distance, K]) => {
-  const phaseDiff = phaseJ.sub(phaseI);
+const phaseCoupling = /*@__PURE__*/ Fn(([phaseI, phaseJ, distance, K, alpha]) => {
+  const phaseDiff = phaseJ.sub(phaseI).add(alpha);
   return K.mul(sin(phaseDiff)).div(distance);
 });
 
@@ -172,6 +175,7 @@ class GPUSwarmalators {
       K: 0.0,           // Global K offset (starts at 0) 
       omega: 2.0,       // No natural frequency initially
       naturalVelocity:  1.1, // No natural propulsion
+      alpha: 0.25,      // Default phase lag
       dt: 0.14,         // Larger time step
       ...params
     };
@@ -313,6 +317,7 @@ class GPUSwarmalators {
       K: uniform(finalParams.K),
       omega: uniform(finalParams.omega),
       naturalVelocity: uniform(finalParams.naturalVelocity),
+      alpha: uniform(finalParams.alpha),
       dt: uniform(finalParams.dt)
     };
     
@@ -421,7 +426,7 @@ class GPUSwarmalators {
         force_acc.addAssign(repulsive.mul(1.0)); // Strengthen repulsion for more spacing
         
         // Calculate phase coupling with species-specific strength
-        const coupling = phaseCoupling(phase_i, phase_j, distance, K_ij);
+        const coupling = phaseCoupling(phase_i, phase_j, distance, K_ij, params.alpha);
         phase_coupling_acc.addAssign(coupling);
 
         // Accumulate density (count neighbors within radius)
@@ -682,6 +687,7 @@ class GPUSwarmalators {
       if (newParams.K !== undefined) swarmalator.params.K.value = newParams.K;
       if (newParams.omega !== undefined) swarmalator.params.omega.value = newParams.omega;
       if (newParams.naturalVelocity !== undefined) swarmalator.params.naturalVelocity.value = newParams.naturalVelocity;
+      if (newParams.alpha !== undefined) swarmalator.params.alpha.value = newParams.alpha;
       if (newParams.dt !== undefined) swarmalator.params.dt.value = newParams.dt;
     }
   }
