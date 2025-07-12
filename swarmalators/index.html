@@ -351,36 +351,36 @@ dθ_i/dt = ω_i + (K/N) Σ_{j ≠ i} sin(θ_j − θ_i) / |r_j − r_i|</code></
             
             <div class="control-group">
                 <label for="J-slider">J Offset (Global Spatial Coupling):</label>
-                <input type="range" id="J-slider" min="-5" max="5" value="0" step="0.1">
-                <input type="number" id="J-value" value="0" step="0.1">
+                <input type="range" id="J-slider" min="-5" max="5" value="0.8" step="0.1">
+                <input type="number" id="J-value" value="0.8" step="0.1">
                 <span class="info">Global offset added to all J matrix values</span>
             </div>
             
             <div class="control-group">
                 <label for="K-slider">K Offset (Global Phase Coupling):</label>
-                <input type="range" id="K-slider" min="-5" max="5" value="0" step="0.1">
-                <input type="number" id="K-value" value="0" step="0.1">
+                <input type="range" id="K-slider" min="-5" max="5" value="2.5" step="0.1">
+                <input type="number" id="K-value" value="2.5" step="0.1">
                 <span class="info">Global offset added to all K matrix values</span>
             </div>
             
             <div class="control-group">
                 <label for="omega-slider">ω (Natural Frequency):</label>
-                <input type="range" id="omega-slider" min="-2" max="2" value="0" step="0.1">
-                <input type="number" id="omega-value" value="0" step="0.1">
+                <input type="range" id="omega-slider" min="-2" max="2" value="1.2" step="0.1">
+                <input type="number" id="omega-value" value="1.2" step="0.1">
                 <span class="info">Natural oscillation frequency</span>
             </div>
             
             <div class="control-group">
                 <label for="alpha-slider">α (Phase Lag):</label>
-                <input type="range" id="alpha-slider" min="-1.57" max="1.57" value="0.25" step="0.05">
-                <input type="number" id="alpha-value" value="0.25" step="0.05">
+                <input type="range" id="alpha-slider" min="-1.57" max="1.57" value="0.8" step="0.05">
+                <input type="number" id="alpha-value" value="0.8" step="0.05">
                 <span class="info">Phase lag in Kuramoto coupling (radians)</span>
             </div>
             
             <div class="control-group">
                 <label for="dt-slider">dt (Time Step):</label>
-                <input type="range" id="dt-slider" min="0.05" max="0.5" value="0.14" step="0.01">
-                <input type="number" id="dt-value" value="0.14" step="0.01">
+                <input type="range" id="dt-slider" min="0.001" max="0.1" value="0.02" step="0.001">
+                <input type="number" id="dt-value" value="0.02" step="0.001">
                 <span class="info">Simulation time step</span>
             </div>
             

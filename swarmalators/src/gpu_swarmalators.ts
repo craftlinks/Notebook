@@ -114,31 +114,40 @@ const phaseToColor = /*@__PURE__*/ Fn(([phase]) => {
 });
 
 /**
- * Calculate attractive force modulated by phase difference
- * F_attraction = (1 + J*cos(θ_j - θ_i)) * (r_j - r_i) / |r_j - r_i|
+ * Calculate combined spatial force (attractive + repulsive)
+ * F_ij = (r_j - r_i)/|r_j - r_i| * [1 + J*cos(θ_j - θ_i)] - (r_j - r_i)/|r_j - r_i|²
+ * This matches the original O'Keeffe equation but with force limiting for stability
  */
-const attractiveForce = /*@__PURE__*/ Fn(([dr, distance, phaseI, phaseJ, J]) => {
+const spatialForce = /*@__PURE__*/ Fn(([dr, distance, phaseI, phaseJ, J]) => {
   const phaseDiff = phaseJ.sub(phaseI);
   const modulation = float(1.0).add(J.mul(cos(phaseDiff)));
-  return dr.div(distance).mul(modulation);
-});
-
-/**
- * Calculate repulsive force (inverse square law)
- * F_repulsion = -(r_j - r_i) / |r_j - r_i|^2
- */
-const repulsiveForce = /*@__PURE__*/ Fn(([dr, distance]) => {
-  const distanceSq = distance.mul(distance);
-  return dr.div(distanceSq).negate();
+  
+  // Enforce minimum distance to prevent extreme forces
+  const safeDistance = max(distance, float(0.1));
+  
+  const attractive = dr.div(safeDistance).mul(modulation);
+  
+  // Stronger repulsive force but with distance limiting
+  const repulsive = dr.div(safeDistance.mul(safeDistance)).mul(0.5).negate();
+  
+  // Clamp total force magnitude to prevent jumping
+  const totalForce = attractive.add(repulsive);
+  const forceMag = length(totalForce);
+  const maxForce = float(2.0);
+  
+  return select(forceMag.greaterThan(maxForce), 
+    totalForce.div(forceMag).mul(maxForce), 
+    totalForce
+  );
 });
 
 /**
  * Calculate phase coupling force (Kuramoto-like) with lag alpha
- * dθ/dt = ω + (K/N) * Σ sin(θ_j - θ_i + alpha) / |r_j - r_i|
+ * dθ/dt = ω + (K/N) * Σ sin(θ_j - θ_i - alpha) / |r_j - r_i|
  * alpha is the phase lag parameter
  */
 const phaseCoupling = /*@__PURE__*/ Fn(([phaseI, phaseJ, distance, K, alpha]) => {
-  const phaseDiff = phaseJ.sub(phaseI).add(alpha);
+  const phaseDiff = phaseJ.sub(phaseI).sub(alpha);
   return K.mul(sin(phaseDiff)).div(distance);
 });
 
@@ -171,12 +180,12 @@ class GPUSwarmalators {
   constructor(params?: Partial<SwarmalatorParams>, speciesParams?: Partial<SpeciesParams>) {
     // Default swarmalator parameters (J and K are now global offsets)
     this.globalParams = {
-      J: 0.0,           // Global J offset (starts at 0)
-      K: 0.0,           // Global K offset (starts at 0) 
-      omega: 2.0,       // No natural frequency initially
-      naturalVelocity:  1.1, // No natural propulsion
-      alpha: 0.25,      // Default phase lag
-      dt: 0.14,         // Larger time step
+      J: 0.8,           // Global J offset (solar-convection pattern)
+      K: 2.5,           // Global K offset (solar-convection pattern)
+      omega: 1.2,       // Natural frequency for interesting dynamics
+      naturalVelocity: 1.0, // Not used for scaling anymore
+      alpha: 0.8,       // Phase lag for swirling patterns
+      dt: 0.02,         // Balanced time step with force limiting
       ...params
     };
     
@@ -411,19 +420,15 @@ class GPUSwarmalators {
         
         // Calculate distance vector and magnitude
         const dr = pos_j.sub(pos_i).toVar();
-        const distance = length(dr).add(1e-6).toVar(); // Add small epsilon to avoid division by zero
+        const distance = length(dr).toVar(); // Distance handled in force calculation
         
         // Get species-specific coupling parameters with global offsets
         const J_ij = getSpeciesCoupling(speciesParams.JMatrix, species_i, species_j, speciesParams.numSpecies, params.J);
         const K_ij = getSpeciesCoupling(speciesParams.KMatrix, species_i, species_j, speciesParams.numSpecies, params.K);
         
-        // Calculate attractive force (modulated by phase difference and species coupling)
-        const attractive = attractiveForce(dr, distance, phase_i, phase_j, J_ij);
-        force_acc.addAssign(attractive);
-        
-        // Calculate repulsive force (inverse–square) – always active, no scaling.
-        const repulsive = repulsiveForce(dr, distance);
-        force_acc.addAssign(repulsive.mul(1.0)); // Strengthen repulsion for more spacing
+        // Calculate combined spatial force (attractive + repulsive)
+        const spatial = spatialForce(dr, distance, phase_i, phase_j, J_ij);
+        force_acc.addAssign(spatial);
         
         // Calculate phase coupling with species-specific strength
         const coupling = phaseCoupling(phase_i, phase_j, distance, K_ij, params.alpha);
@@ -437,22 +442,37 @@ class GPUSwarmalators {
         
       });
       
-      // Normalize forces by particle count
-      const N = float(pointCount).mul(0.89);
+      // Normalize forces by particle count (as in original O'Keeffe equations)
+      const N = float(pointCount);
       force_acc.divAssign(N);
       phase_coupling_acc.divAssign(N);
       density_acc.divAssign(float(10.0)); // simple normalization
       
-      // In the original ODE the position derivative equals the force sum directly
-      // (plus an optional natural propulsion velocity). We therefore *assign*
-      // the computed force to the velocity buffer instead of integrating it
-      // with inertia, damping or speed limits.
+      // Apply forces with moderate amplification and velocity damping
       const vel_i = velocityBuffer.element(i).toVar();
-      vel_i.assign(force_acc.mul(params.naturalVelocity)); // naturalVelocity assumed zero for now
+      const currentVel = vel_i;
+      
+      // Apply damping to prevent runaway acceleration
+      const damping = float(0.95);
+      const dampedVel = currentVel.mul(damping);
+      
+      // Apply force with moderate amplification
+      const newVel = dampedVel.add(force_acc.mul(2.0));
+      
+      // Clamp velocity magnitude to prevent jumping
+      const velMag = length(newVel);
+      const maxVel = float(1.0);
+      const clampedVel = select(velMag.greaterThan(maxVel), 
+        newVel.div(velMag).mul(maxVel), 
+        newVel
+      );
+      
+      vel_i.assign(clampedVel);
       
       // Update phase velocity (phase dynamics)
+      // Use global omega parameter instead of per-particle natural frequency for consistency
       const phase_vel_i = phaseVelocityBuffer.element(i).toVar();
-      phase_vel_i.assign(omega_i.add(phase_coupling_acc));
+      phase_vel_i.assign(params.omega.add(phase_coupling_acc.mul(1.5))); // Moderate phase coupling
       
       // Write back updated velocities
       velocityBuffer.element(i).assign(vel_i);
@@ -517,19 +537,19 @@ class GPUSwarmalators {
         return;
       });
       
-      // Random position in world bounds
+      // Random position in world bounds (balanced clustering)
       const randX = hash(instanceIndex.add(uint(42))).mul(2.0).sub(1.0);
       const randY = hash(instanceIndex.add(uint(123))).mul(2.0).sub(1.0);
       const randZ = hash(instanceIndex.add(uint(456))).mul(2.0).sub(1.0);
       
-      const clusterSize = 10.0;
+      const clusterSize = 2.0; // Moderate cluster size to prevent overcrowding
       const posX = randX.mul(clusterSize);
       const posY = randY.mul(clusterSize);
       const posZ = randZ.mul(0.1); // Keep mostly 2D
       
       positionBuffer.element(i).assign(vec3(posX, posY, posZ));
       
-      // Random initial velocity
+      // Random initial velocity (moderate energy)
       const velX = hash(instanceIndex.add(uint(789))).mul(2.0).sub(1.0).mul(0.1);
       const velY = hash(instanceIndex.add(uint(101112))).mul(2.0).sub(1.0).mul(0.1);
       const velZ = float(0.0);
@@ -546,9 +566,8 @@ class GPUSwarmalators {
       // Zero initial density
       densityBuffer.element(i).assign(0.0);
 
-      // Random initial natural frequency [0.0, 2.0] - wide spread
-      const randNaturalFreq = hash(instanceIndex.add(uint(161718))).mul(2.0);
-      naturalFreqBuffer.element(i).assign(randNaturalFreq);
+      // Set consistent natural frequency (using global omega parameter)
+      naturalFreqBuffer.element(i).assign(0.0);
       
       // Assign species based on distribution (simple: alternate between species for now)
       const species = uint(hash(instanceIndex.add(uint(192021))).mul(float(this.speciesParams.numSpecies)));

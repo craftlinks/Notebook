@@ -349,42 +349,42 @@ const patternPresets: Record<string, Partial<SwarmalatorParams>> = {
     K: 0.0,
     omega: 0.0,
     alpha: 0.0,
-    dt: 0.05
+    dt: 0.005
   },
   'dancing-circus': {
     J: 0.5,
     K: -1.5,
     omega: 0.0,
     alpha: 0.5,
-    dt: 0.05
+    dt: 0.01
   },
   'uniform-blob': {
     J: 0.5,
     K: 3.0,
     omega: 0.0,
     alpha: 0.1,
-    dt: 0.05
+    dt: 0.01
   },
   'solar-convection': {
     J: 0.8,
     K: 2.5,
     omega: 1.2,
     alpha: 0.8,
-    dt: 0.05
+    dt: 0.02
   },
   'makes-me-dizzy': {
     J: 3.0,
     K: 0.5,
     omega: 0.0,
     alpha: 1.2,
-    dt: 0.05
+    dt: 0.005
   },
   'fractured': {
     J: 2.0,
     K: -2.0,
     omega: 0.0,
     alpha: -0.7,
-    dt: 0.05
+    dt: 0.01
   }
 };
 
@@ -1049,7 +1049,7 @@ async function initApplication() {
     }
     
     // Create initial swarmalators
-    await createSwarmalators(1000);
+    await createSwarmalators(3500);
     
     // Initialize matrix controls with current values
     generateMatrixControls();
