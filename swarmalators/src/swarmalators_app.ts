@@ -349,42 +349,54 @@ const patternPresets: Record<string, Partial<SwarmalatorParams>> = {
     K: 0.0,
     omega: 0.0,
     alpha: 0.0,
-    dt: 0.005
+    dt: 0.005,
+    boundarySize: 8.0,
+    boundaryStrength: 0.6
   },
   'dancing-circus': {
     J: 0.5,
     K: -1.5,
     omega: 0.0,
     alpha: 0.5,
-    dt: 0.01
+    dt: 0.01,
+    boundarySize: 6.0,
+    boundaryStrength: 0.8
   },
   'uniform-blob': {
     J: 0.5,
     K: 3.0,
     omega: 0.0,
     alpha: 0.1,
-    dt: 0.01
+    dt: 0.01,
+    boundarySize: 4.0,
+    boundaryStrength: 1.0
   },
   'solar-convection': {
     J: 0.8,
     K: 2.5,
     omega: 1.2,
     alpha: 0.8,
-    dt: 0.02
+    dt: 0.02,
+    boundarySize: 6.0,
+    boundaryStrength: 0.8
   },
   'makes-me-dizzy': {
     J: 3.0,
     K: 0.5,
     omega: 0.0,
     alpha: 1.2,
-    dt: 0.005
+    dt: 0.005,
+    boundarySize: 8.0,
+    boundaryStrength: 0.4
   },
   'fractured': {
     J: 2.0,
     K: -2.0,
     omega: 0.0,
     alpha: -0.7,
-    dt: 0.01
+    dt: 0.01,
+    boundarySize: 6.0,
+    boundaryStrength: 0.8
   }
 };
 
@@ -492,7 +504,7 @@ function updateStatus(message: string, type: 'loading' | 'ready' | 'error') {
 
 function setupUI() {
   // Parameter sliders
-  const parameterIds = ['J', 'K', 'omega', 'alpha', 'dt'];
+  const parameterIds = ['J', 'K', 'omega', 'alpha', 'dt', 'boundarySize', 'boundaryStrength'];
   
   parameterIds.forEach(param => {
     const slider = document.getElementById(`${param}-slider`) as HTMLInputElement;
@@ -531,6 +543,7 @@ function setupUI() {
   const stopButton = document.getElementById('stop-button');
   const resetButton = document.getElementById('reset-button');
   const recreateButton = document.getElementById('recreate-button');
+  const cameraFollowCheckbox = document.getElementById('camera-follow') as HTMLInputElement;
   
   if (startButton) {
     startButton.addEventListener('click', () => {
@@ -562,6 +575,14 @@ function setupUI() {
     recreateButton.addEventListener('click', async () => {
       const count = parseInt(countValue.value);
       await createSwarmalators(count);
+    });
+  }
+
+  if (cameraFollowCheckbox) {
+    cameraFollowCheckbox.addEventListener('change', () => {
+      if (swarmalators) {
+        swarmalators.setCameraFollowing(cameraFollowCheckbox.checked);
+      }
     });
   }
   
@@ -1018,8 +1039,10 @@ function getCurrentParams(): Partial<SwarmalatorParams> {
   const K = parseFloat((document.getElementById('K-value') as HTMLInputElement).value);
   const omega = parseFloat((document.getElementById('omega-value') as HTMLInputElement).value);
   const dt = parseFloat((document.getElementById('dt-value') as HTMLInputElement).value);
+  const boundarySize = parseFloat((document.getElementById('boundarySize-value') as HTMLInputElement).value);
+  const boundaryStrength = parseFloat((document.getElementById('boundaryStrength-value') as HTMLInputElement).value);
   
-  return { J, K, omega, dt };
+  return { J, K, omega, dt, boundarySize, boundaryStrength, naturalVelocity: 1.0 };
 }
 
 async function initApplication() {

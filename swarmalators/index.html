@@ -385,9 +385,23 @@ dθ_i/dt = ω_i + (K/N) Σ_{j ≠ i} sin(θ_j − θ_i) / |r_j − r_i|</code></
             </div>
             
             <div class="control-group">
+                <label for="boundarySize-slider">Boundary Size:</label>
+                <input type="range" id="boundarySize-slider" min="1" max="15" value="6.0" step="0.1">
+                <input type="number" id="boundarySize-value" value="6.0" step="0.1">
+                <span class="info">Soft boundary radius (particles gently pushed back beyond this)</span>
+            </div>
+            
+            <div class="control-group">
+                <label for="boundaryStrength-slider">Boundary Strength:</label>
+                <input type="range" id="boundaryStrength-slider" min="0" max="2" value="0.8" step="0.1">
+                <input type="number" id="boundaryStrength-value" value="0.8" step="0.1">
+                <span class="info">Strength of boundary force (0 = no boundaries, 2 = strong)</span>
+            </div>
+            
+            <div class="control-group">
                 <label for="count-slider">Particle Count:</label>
-                <input type="range" id="count-slider" min="100" max="20000" value="1000" step="50">
-                <input type="number" id="count-value" value="1000" step="50">
+                <input type="range" id="count-slider" min="100" max="20000" value="3500" step="50">
+                <input type="number" id="count-value" value="3500" step="50">
                 <button id="recreate-button">Recreate</button>
             </div>
             
@@ -395,6 +409,14 @@ dθ_i/dt = ω_i + (K/N) Σ_{j ≠ i} sin(θ_j − θ_i) / |r_j − r_i|</code></
                 <button id="start-button">Start</button>
                 <button id="stop-button">Stop</button>
                 <button id="reset-button">Reset</button>
+            </div>
+            
+            <div class="control-group">
+                <label>
+                    <input type="checkbox" id="camera-follow" style="margin-right: 10px;">
+                    Auto-follow particles (camera tracks particle cloud)
+                </label>
+                <span class="info">Enable to automatically adjust camera distance based on particle spread</span>
             </div>
             
             <h3>Preset Patterns</h3>

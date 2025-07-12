@@ -20,6 +20,8 @@ export interface SwarmalatorParams {
   naturalVelocity: number; // Natural propulsion velocity (v_n in equations)
   alpha: number;    // Phase lag parameter in phase coupling
   dt: number;       // Time step
+  boundarySize: number;    // Soft boundary size (particles gently pushed back when beyond this)
+  boundaryStrength: number; // Strength of boundary force (0 = no boundaries, 1 = strong)
 }
 
 // Species-based coupling parameters (supports up to 5 species)
@@ -58,6 +60,8 @@ interface GPUSwarmalator {
     naturalVelocity: any;
     alpha: any;
     dt: any;
+    boundarySize: any;
+    boundaryStrength: any;
   };
   
   // Species parameters
@@ -148,7 +152,9 @@ const spatialForce = /*@__PURE__*/ Fn(([dr, distance, phaseI, phaseJ, J]) => {
  */
 const phaseCoupling = /*@__PURE__*/ Fn(([phaseI, phaseJ, distance, K, alpha]) => {
   const phaseDiff = phaseJ.sub(phaseI).sub(alpha);
-  return K.mul(sin(phaseDiff)).div(distance);
+  // Avoid division by zero in extreme clustering - enforce minimum distance
+  const safeDist = max(distance, float(0.1));
+  return K.mul(sin(phaseDiff)).div(safeDist);
 });
 
 /**
@@ -176,6 +182,8 @@ class GPUSwarmalators {
   private animationId: number | null = null;
   private globalParams: SwarmalatorParams;
   private speciesParams: SpeciesParams;
+  private cameraFollowsParticles: boolean = false;
+  private lastCenterOfMass: THREE.Vector3 = new THREE.Vector3();
   
   constructor(params?: Partial<SwarmalatorParams>, speciesParams?: Partial<SpeciesParams>) {
     // Default swarmalator parameters (J and K are now global offsets)
@@ -186,6 +194,8 @@ class GPUSwarmalators {
       naturalVelocity: 1.0, // Not used for scaling anymore
       alpha: 0.8,       // Phase lag for swirling patterns
       dt: 0.02,         // Balanced time step with force limiting
+      boundarySize: 6.0, // Default soft boundary size
+      boundaryStrength: 0.8, // Default soft boundary strength
       ...params
     };
     
@@ -215,12 +225,12 @@ class GPUSwarmalators {
     this.worldDepth = 20;
     
     this.camera = new THREE.PerspectiveCamera(
-      75,
+      90,  // Wider field of view to see more particles
       this.worldWidth / this.worldHeight,
       0.1,
       1000
     );
-    this.camera.position.set(0, 0, 5);
+    this.camera.position.set(0, 0, 10);
     this.camera.updateProjectionMatrix();
     
     // Initialize WebGPU asynchronously
@@ -327,7 +337,9 @@ class GPUSwarmalators {
       omega: uniform(finalParams.omega),
       naturalVelocity: uniform(finalParams.naturalVelocity),
       alpha: uniform(finalParams.alpha),
-      dt: uniform(finalParams.dt)
+      dt: uniform(finalParams.dt),
+      boundarySize: uniform(finalParams.boundarySize),
+      boundaryStrength: uniform(finalParams.boundaryStrength)
     };
     
     // Create species uniform parameters
@@ -503,9 +515,58 @@ class GPUSwarmalators {
         return;
       });
       
-      // Update position (no boundary wrapping – infinite plane)
+      // Update position with soft boundary conditions
       const pos_i = positionBuffer.element(i).toVar();
-      const vel_i = velocityBuffer.element(i);
+      const vel_i = velocityBuffer.element(i).toVar();
+      
+      // Apply soft boundary forces
+      const distanceFromCenter = length(pos_i);
+      const boundaryForce = vec3(0.0, 0.0, 0.0).toVar();
+      
+      // If particle is beyond boundary size, apply restoring force toward center
+      If(distanceFromCenter.greaterThan(params.boundarySize), () => {
+        // Safe normalization (avoid NaN when pos_i is near zero)
+        const lenPos = length(pos_i);
+        const invLen = select(lenPos.greaterThan(float(0.0001)), float(1.0).div(lenPos), float(0.0));
+        const forceDirection = pos_i.mul(invLen).mul(float(-1.0)); // Direction toward center (safe)
+        const excess = distanceFromCenter.sub(params.boundarySize);
+        const forceMagnitude = excess.mul(params.boundaryStrength).mul(float(2.0)); // Linear spring force
+        boundaryForce.assign(forceDirection.mul(forceMagnitude));
+      });
+      
+      // Special Z-axis constraints to keep particles within camera view
+      // Camera is at (0, 0, 10) looking at (0, 0, 0), so constrain Z more tightly
+      const zPos = pos_i.z;
+      const zVel = vel_i.z.toVar();
+      
+      // Hard constraint: keep Z between -6 and 6 (camera viewing range)
+      // If(zPos.greaterThan(float(6.0)), () => {
+      //   const zExcess = zPos.sub(float(6.0));
+      //   const zForce = zExcess.mul(params.boundaryStrength).mul(float(-4.0)); // Strong Z constraint
+      //   vel_i.z.assign(zVel.add(zForce.mul(params.dt)));
+      // });
+      
+      // If(zPos.lessThan(float(-6.0)), () => {
+      //   const zExcess = float(-6.0).sub(zPos);
+      //   const zForce = zExcess.mul(params.boundaryStrength).mul(float(4.0)); // Strong Z constraint
+      //   vel_i.z.assign(zVel.add(zForce.mul(params.dt)));
+      // });
+      
+      // Apply boundary force to velocity
+      vel_i.addAssign(boundaryForce.mul(params.dt));
+      
+      // Apply velocity damping near boundaries to stabilize particles
+      If(distanceFromCenter.greaterThan(params.boundarySize.mul(float(0.8))), () => {
+        const dampingFactor = float(0.95); // Slight damping
+        vel_i.mulAssign(dampingFactor);
+      });
+      
+      // Extra Z-velocity damping to prevent runaway Z movement
+      If(abs(zPos).greaterThan(float(4.0)), () => {
+        vel_i.z.mulAssign(float(0.9)); // Stronger Z damping
+      });
+      
+      // Update position
       pos_i.addAssign(vel_i.mul(params.dt));
       
       // Update phase
@@ -518,6 +579,7 @@ class GPUSwarmalators {
       
       // Write back updated state
       positionBuffer.element(i).assign(pos_i);
+      velocityBuffer.element(i).assign(vel_i);
       phaseBuffer.element(i).assign(phase_i);
       
     })().compute(pointCount);
@@ -600,12 +662,6 @@ class GPUSwarmalators {
     canvas.style.backgroundColor = '#000';
     canvas.style.width = '100%';
     canvas.style.height = '100%';
-
-    // const title = document.createElement('h3');
-    // title.textContent = '🌀 GPU Swarmalators Visualization';
-    // title.style.color = '#00ff88';
-    // title.style.margin = '10px 0';
-    // title.style.textAlign = 'center';
     
     // Clear the container and append new elements directly
     targetContainer.innerHTML = '';
@@ -616,10 +672,10 @@ class GPUSwarmalators {
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.05;
-    this.controls.zoomSpeed = 0.6;
-    this.controls.minDistance = 0.5;
-    this.controls.maxDistance = 100;
-    this.controls.target.set(0, 0, 0);
+    this.controls.zoomSpeed = 2;
+    // this.controls.minDistance = 1.0;    // Prevent zooming too close
+    // this.controls.maxDistance = 25.0;   // Prevent zooming too far
+    // this.controls.target.set(0, 0, 0);
     this.controls.update();
     
     console.log('GPU Swarmalators renderer attached to DOM');
@@ -671,6 +727,9 @@ class GPUSwarmalators {
         }
       }
       
+      // Update camera tracking
+      this.updateCameraTracking();
+      
       // Update controls
       if (this.controls) {
         this.controls.update();
@@ -708,6 +767,8 @@ class GPUSwarmalators {
       if (newParams.naturalVelocity !== undefined) swarmalator.params.naturalVelocity.value = newParams.naturalVelocity;
       if (newParams.alpha !== undefined) swarmalator.params.alpha.value = newParams.alpha;
       if (newParams.dt !== undefined) swarmalator.params.dt.value = newParams.dt;
+      if (newParams.boundarySize !== undefined) swarmalator.params.boundarySize.value = newParams.boundarySize;
+      if (newParams.boundaryStrength !== undefined) swarmalator.params.boundaryStrength.value = newParams.boundaryStrength;
     }
   }
   
@@ -811,7 +872,7 @@ class GPUSwarmalators {
    */
   resetCameraPosition() {
     if (this.camera) {
-      this.camera.position.set(0, 0, 5);
+      this.camera.position.set(0, 0, 2);
       this.camera.lookAt(0, 0, 0);
       this.camera.updateProjectionMatrix();
     }
@@ -822,6 +883,49 @@ class GPUSwarmalators {
     }
     
     console.log('Camera position reset to default');
+  }
+
+  /**
+   * Enable or disable camera following the particle center of mass
+   */
+  setCameraFollowing(enabled: boolean) {
+    this.cameraFollowsParticles = enabled;
+    console.log(`Camera following particles: ${enabled}`);
+  }
+
+  /**
+   * Update camera to follow particle center of mass (simplified approach)
+   */
+  private updateCameraTracking() {
+    if (!this.cameraFollowsParticles || this.swarmalators.size === 0) {
+      return;
+    }
+
+    // Simple approach: keep camera at a reasonable distance to view the particle cloud
+    // This is a heuristic since reading GPU data back to CPU would be expensive
+    
+    const currentTarget = this.controls?.target || new THREE.Vector3(0, 0, 0);
+    const currentDistance = this.camera.position.distanceTo(currentTarget);
+    
+    // Keep camera at a good viewing distance (not too close, not too far)
+    const idealDistance = 2.0; // Fixed reasonable distance
+    const minDistance = 1.0;
+    const maxDistance = 18.0;
+    
+    // Only adjust if we're outside the reasonable range
+    if (currentDistance < minDistance || currentDistance > maxDistance) {
+      // Smoothly interpolate camera position
+      const direction = this.camera.position.clone().sub(currentTarget).normalize();
+      const targetDistance = Math.max(minDistance, Math.min(maxDistance, idealDistance));
+      const newPosition = currentTarget.clone().add(direction.multiplyScalar(targetDistance));
+      
+      // Smooth transition
+      this.camera.position.lerp(newPosition, 0.05);
+      
+      if (this.controls) {
+        this.controls.update();
+      }
+    }
   }
 
   /**
