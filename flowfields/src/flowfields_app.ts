@@ -43,6 +43,7 @@ class FlowFieldSystem {
     private particleCount = 32768; // Reduce for debugging
     private gridSize = 32;
     private trailLength = 16; // Reduce for debugging
+    private timeUniform!: any;
     
     // Grid properties
     /*
@@ -84,6 +85,8 @@ class FlowFieldSystem {
     private async init(canvas: HTMLCanvasElement): Promise<void> {
         await this.initRenderer(canvas);
         this.initScene();
+
+        this.timeUniform = uniform(0.0);
         
         // Initial particle buffer creation (only needs to happen once)
         this.positionBuffer = instancedArray(this.particleCount, 'vec2');
@@ -143,7 +146,7 @@ class FlowFieldSystem {
             )
         );
 
-        this.tslSystem = generateTSL(this.equationSystem, normalizedPosition);
+        this.tslSystem = generateTSL(this.equationSystem, normalizedPosition, this.timeUniform);
         this.uiUniforms = this.tslSystem.uniforms;
 
         // 2. Update the UI with the new system's info
@@ -638,6 +641,9 @@ class FlowFieldSystem {
     */
     
     public async update(): Promise<void> {
+        // Update time
+        this.timeUniform.value += 1/60;
+
         // Update particles
         if (this.updateCompute) {
             try {

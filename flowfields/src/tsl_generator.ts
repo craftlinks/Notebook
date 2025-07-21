@@ -89,8 +89,20 @@ function parseExpression(expression: string, scope: Record<string, ShaderNodeObj
         else if (char === '(') level--;
 
         if (level === 0 && (char === '+' || char === '-')) {
-            const left = parseExpression(expression.substring(0, i), scope);
-            const right = parseExpression(expression.substring(i + 1), scope);
+            const leftExpr = expression.substring(0, i);
+            const rightExpr = expression.substring(i + 1);
+
+            if (rightExpr.trim() === '') throw new Error(`Expression ends with an operator: "${expression}"`);
+
+            // If left is empty, it's a unary operator
+            if (leftExpr.trim() === '') {
+                const right = parseExpression(rightExpr, scope);
+                return char === '-' ? sub(float(0), right) : right;
+            }
+
+            // Otherwise, it's a binary operator
+            const left = parseExpression(leftExpr, scope);
+            const right = parseExpression(rightExpr, scope);
             return char === '+' ? add(left, right) : sub(left, right);
         }
     }
@@ -103,8 +115,15 @@ function parseExpression(expression: string, scope: Record<string, ShaderNodeObj
         else if (char === '(') level--;
 
         if (level === 0 && (char === '*' || char === '/')) {
-            const left = parseExpression(expression.substring(0, i), scope);
-            const right = parseExpression(expression.substring(i + 1), scope);
+            const leftExpr = expression.substring(0, i);
+            const rightExpr = expression.substring(i + 1);
+
+            if (leftExpr.trim() === '' || rightExpr.trim() === '') {
+                throw new Error(`Invalid use of operator '${char}' in expression: "${expression}"`);
+            }
+            
+            const left = parseExpression(leftExpr, scope);
+            const right = parseExpression(rightExpr, scope);
             return char === '*' ? mul(left, right) : div(left, right);
         }
     }
@@ -157,7 +176,8 @@ function parseExpression(expression: string, scope: Record<string, ShaderNodeObj
  */
 export function generateTSL(
     system: EquationSystem, 
-    normalizedPosition: ShaderNodeObject<any>
+    normalizedPosition: ShaderNodeObject<any>,
+    time: ShaderNodeObject<any>
 ): GeneratedTSL {
     
     const uiUniforms: UIUniforms = {};
@@ -185,6 +205,7 @@ export function generateTSL(
     // 2. Add base variables (x, y) to the scope.
     scope['x'] = normalizedPosition.x;
     scope['y'] = normalizedPosition.y;
+    scope['time'] = time;
 
     // 3. Define intermediate variables if they exist and add them to the scope.
     if (system.variables) {

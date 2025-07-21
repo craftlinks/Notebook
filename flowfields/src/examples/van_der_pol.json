@@ -1,0 +1,15 @@
+{
+    "name": "Van der Pol Oscillator",
+    "description": "A non-conservative oscillator with non-linear damping.",
+    "parameters": {
+      "mu": { "initial": 1.0, "min": 0.0, "max": 5.0, "description": "Damping coefficient" }
+    },
+    "equations": {
+      "dx_dt": "y",
+      "dy_dt": "mu * (1.0 - x*x) * y - x"
+    },
+    "config": {
+      "velocity_scale": 1.0,
+      "smoothing_factor": 0.1
+    }
+} 

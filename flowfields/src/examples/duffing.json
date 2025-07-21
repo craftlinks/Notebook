@@ -1,0 +1,19 @@
+{
+    "name": "Duffing Oscillator",
+    "description": "A model of a damped, driven oscillator with a non-linear spring.",
+    "parameters": {
+      "alpha": { "initial": 1.0, "min": -2.0, "max": 2.0 },
+      "beta": { "initial": -1.0, "min": -2.0, "max": 2.0 },
+      "delta": { "initial": 0.2, "min": 0.0, "max": 1.0 },
+      "gamma": { "initial": 0.3, "min": 0.0, "max": 1.0 },
+      "omega": { "initial": 1.0, "min": 0.0, "max": 2.0 }
+    },
+    "equations": {
+      "dx_dt": "y",
+      "dy_dt": "-delta*y - alpha*x - beta*x*x*x + gamma*cos(omega*time)"
+    },
+    "config": {
+      "velocity_scale": 1.0,
+      "smoothing_factor": 0.1
+    }
+} 

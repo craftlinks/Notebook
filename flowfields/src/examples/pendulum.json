@@ -1,0 +1,19 @@
+{
+    "name": "Damped, Driven Pendulum",
+    "description": "A classic model of a pendulum with damping and a periodic driving force.",
+    "parameters": {
+      "g": { "initial": 9.8, "min": 0.0, "max": 20.0, "description": "Gravity" },
+      "l": { "initial": 1.0, "min": 0.1, "max": 5.0, "description": "Length" },
+      "b": { "initial": 0.5, "min": 0.0, "max": 2.0, "description": "Damping" },
+      "drive_amp": { "initial": 1.2, "min": 0.0, "max": 2.0, "description": "Drive Amplitude" },
+      "drive_freq": { "initial": 0.667, "min": 0.1, "max": 2.0, "description": "Drive Frequency" }
+    },
+    "equations": {
+      "dx_dt": "y",
+      "dy_dt": "(-g/l) * sin(x) - b * y + drive_amp * cos(drive_freq * time)"
+    },
+    "config": {
+      "velocity_scale": 1.0,
+      "smoothing_factor": 0.1
+    }
+} 
