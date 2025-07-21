@@ -39,7 +39,7 @@ class FlowFieldSystem {
     
     private particleCount = 32768; // Reduce for debugging
     private gridSize = 32;
-    private trailLength = 64; // Reduce for debugging
+    private trailLength = 32; // Reduce for debugging
     
     // Grid properties
     private gridResolution = 64; // Increased from 32
@@ -166,8 +166,22 @@ class FlowFieldSystem {
             // Always update age and movement first
             age.addAssign(deltaTime);
             
-            // Continue movement regardless of fade state (so trails flow naturally off screen)
-            const flowVel = vec2(sin(position.y), sin(position.x));
+            // Van der Pol oscillator flow field
+            // dx/dt = y
+            // dy/dt = μ(1 - x²)y - x
+            const x = position.x.div(float(this.gridSize * 0.5)); // Normalize to [-1, 1] range
+            const y = position.y.div(float(this.gridSize * 0.5));
+            
+            // Van der Pol parameter - vary spatially for interesting patterns
+            const mu = float(0.5).add(sin(x.mul(2)).mul(sin(y.mul(2))).mul(0.3)); // μ varies from 0.2 to 0.8
+            
+            // Van der Pol equations
+            const dx_dt = y;
+            const dy_dt = mu.mul(float(1).sub(x.mul(x))).mul(y).sub(x);
+            
+            // Scale the flow field to reasonable speed
+            const flowVel = vec2(dx_dt, dy_dt).mul(float(this.gridSize * 0.25));
+            
             velocity.assign(mix(velocity, flowVel, float(0.1))); // Smoothly update velocity
             position.addAssign(velocity.mul(deltaTime));
             
@@ -268,20 +282,28 @@ class FlowFieldSystem {
             
             // If particle was just reset (counter < 2), clear trail and start fresh
             If(resetCounter.lessThan(uint(2)), () => {
-                // Reset trail metadata - head at 0, length at 0 initially
-                this.trailMetaBuffer.element(metaIndex).assign(uint(0));
-                this.trailMetaBuffer.element(metaIndex.add(uint(1))).assign(uint(0)); // Start with length 0
-                
-                // Clear all positions in trail buffer first
-                Loop(uint(this.trailLength), ({ i }) => {
-                    const clearIndex = trailStart.add(mul(i, uint(2)));
-                    this.trailPositionsBuffer.element(clearIndex).assign(float(-9999));
-                    this.trailPositionsBuffer.element(clearIndex.add(uint(1))).assign(float(-9999));
+                // On the very first frame of a reset (counter is 0), clear the whole trail
+                If(resetCounter.equals(uint(0)), () => {
+                    Loop(uint(this.trailLength), ({ i }) => {
+                        const clearIndex = trailStart.add(mul(i, uint(2)));
+                        this.trailPositionsBuffer.element(clearIndex).assign(float(-9999));
+                        this.trailPositionsBuffer.element(clearIndex.add(uint(1))).assign(float(-9999));
+                    });
                 });
-            });
-            
-            // Only add current position if not fading (when fading, let existing trail remain)
-            If(fadeTimer.lessThanEqual(0), () => {
+                
+                // For the first two frames, manage the trail start carefully
+                // Store current position at head
+                const headIndex = resetCounter; // 0 on first frame, 1 on second
+                const writeIndex = trailStart.add(mul(headIndex, uint(2)));
+                this.trailPositionsBuffer.element(writeIndex).assign(currentPos.x);
+                this.trailPositionsBuffer.element(writeIndex.add(uint(1))).assign(currentPos.y);
+                
+                // Set head and length directly
+                this.trailMetaBuffer.element(metaIndex).assign(headIndex.add(uint(1))); // Next write pos
+                this.trailMetaBuffer.element(metaIndex.add(uint(1))).assign(headIndex.add(uint(1))); // Length
+                
+            }).Else(() => {
+                // Always add a new point unless the particle was just reset
                 const headIndex = this.trailMetaBuffer.element(metaIndex);
                 const currentLength = this.trailMetaBuffer.element(metaIndex.add(uint(1)));
                 
@@ -383,6 +405,15 @@ class FlowFieldSystem {
                 const endX   = this.trailPositionsBuffer.element(endPosIndex);
                 const endY   = this.trailPositionsBuffer.element(endPosIndex.add(uint(1)));
                     
+                // First, check if either point is invalid. If so, hide the segment immediately.
+                const isInvalid = startX.lessThanEqual(float(-9000)).or(endX.lessThanEqual(float(-9000)));
+
+                If(isInvalid, () => {
+                     // Hide segment
+                     linePositionsBuffer.element(idx).assign(vec3(-9999, -9999, 0));
+                     lineVectorsBuffer.element(idx).assign(vec3(0, 0, 0));
+                     lineColorsBuffer.element(idx).assign(vec4(0, 0, 0, 0));
+                }).Else(()=> {
                     // Calculate line center and vector
                     const centerX = startX.add(endX).mul(0.5);
                     const centerY = startY.add(endY).mul(0.5);
@@ -391,13 +422,10 @@ class FlowFieldSystem {
                     const vecLength = length(vec2(vecX, vecY));
                     
                     // Skip segments that are too long (likely connecting across respawn)
-                    // Also skip segments connecting to cleared positions (-9999)
                     const maxReasonableLength = float(2.0); // Adjust this threshold
                     const isReasonableLength = vecLength.lessThan(maxReasonableLength);
-                    const isValidPosition = startX.greaterThan(float(-9000)).and(startY.greaterThan(float(-9000)))
-                        .and(endX.greaterThan(float(-9000))).and(endY.greaterThan(float(-9000)));
                     
-                    If(isReasonableLength.and(isValidPosition), () => {
+                    If(isReasonableLength, () => {
                         // Set line data for reasonable segments with valid positions
                         linePositionsBuffer.element(idx).assign(vec3(centerX, centerY, float(0)));
                         lineVectorsBuffer.element(idx).assign(vec3(vecX, vecY, vecLength));
@@ -422,8 +450,7 @@ class FlowFieldSystem {
                         lineVectorsBuffer.element(idx).assign(vec3(0, 0, 0));
                         lineColorsBuffer.element(idx).assign(vec4(0, 0, 0, 0));
                     });
-                // (no additional validity check needed here – later logic already
-                // filters unreasonable or cleared positions)
+                });
             }).Else(() => {
                 // Hide segment
                 linePositionsBuffer.element(idx).assign(vec3(-9999, -9999, 0));
@@ -507,8 +534,21 @@ class FlowFieldSystem {
             // Position is static already stored; fetch position from buffer
             const pos = this.gridPositionBuffer.element(idx);
 
-            // Flow field equations: vx = sin(y), vy = sin(x) (match particle logic)
-            const flow = vec2(sin(pos.y), sin(pos.x));
+            // Van der Pol oscillator flow field (same as particles)
+            // dx/dt = y
+            // dy/dt = μ(1 - x²)y - x
+            const x = pos.x.div(float(this.gridSize * 0.5)); // Normalize to [-1, 1] range
+            const y = pos.y.div(float(this.gridSize * 0.5));
+            
+            // Van der Pol parameter - vary spatially for interesting patterns
+            const mu = float(0.5).add(sin(x.mul(2)).mul(sin(y.mul(2))).mul(0.3)); // μ varies from 0.2 to 0.8
+            
+            // Van der Pol equations
+            const dx_dt = y;
+            const dy_dt = mu.mul(float(1).sub(x.mul(x))).mul(y).sub(x);
+            
+            // Scale the flow field to reasonable magnitude for visualization
+            const flow = vec2(dx_dt, dy_dt).mul(float(0.25));
 
             this.gridVectorBuffer.element(idx).assign(flow);
         });
