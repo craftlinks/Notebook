@@ -52,6 +52,18 @@ jobs:
           rm -rf public/swarmalators
           cp -r swarmalators/dist public/swarmalators
 
+      # Build the flowfields project and copy it into Astro's public directory
+      - name: Build Flowfields project
+        run: |
+          bun install
+          bun run build
+        working-directory: ./flowfields
+
+      - name: Copy Flowfields project into public folder
+        run: |
+          rm -rf public/flowfields
+          cp -r flowfields/dist public/flowfields
+
       # Build the main Astro site (outputs to ./dist)
       - name: Build Astro site
         run: bun run build
