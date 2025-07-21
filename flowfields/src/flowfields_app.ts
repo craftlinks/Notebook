@@ -13,18 +13,14 @@ import {
     mix,
     color,
     uint,
-    int,
     mod,
     mul,
     atan,
     If,
-    normalize,
-    attribute,
     select,
     floor,
     max,
     min,
-    clamp,
     Loop,
     uniform
 } from 'three/tsl';
@@ -41,15 +37,17 @@ class FlowFieldSystem {
     
     private particleCount = 32768; // Reduce for debugging
     private gridSize = 32;
-    private trailLength = 32; // Reduce for debugging
+    private trailLength = 16; // Reduce for debugging
     
     // Grid properties
+    /*
     private gridResolution = 64; // Increased from 32
     private gridCount = this.gridResolution * this.gridResolution;
     private gridPositionBuffer!: any;
     private gridVectorBuffer!: any;
     private gridMesh!: THREE.InstancedMesh;
     private gridUpdateCompute!: any;
+    */
     
     // Particle properties
     private positionBuffer!: any;
@@ -75,7 +73,7 @@ class FlowFieldSystem {
         this.initScene();
         this.initParticles();
         this.initTrailSystem();
-        this.initGridVectors();
+        // this.initGridVectors();
     }
     
     private async initRenderer(canvas: HTMLCanvasElement): Promise<void> {
@@ -125,30 +123,21 @@ class FlowFieldSystem {
             const velocity = this.velocityBuffer.element(instanceIndex);
             const life = this.lifeBuffer.element(instanceIndex);
             
-            // Random initial position with better hash spreading
-            const spawnWidth = float(this.gridSize * 0.5).mul(this.aspectUniform);
-            const spawnHeight = float(this.gridSize * 0.5);
-            const randomPos = vec2(
-                hash(instanceIndex.mul(uint(97)).add(uint(seedX))).mul(2).sub(1).mul(spawnWidth),
-                hash(instanceIndex.mul(uint(103)).add(uint(seedY))).mul(2).sub(1).mul(spawnHeight)
-            );
-            
-            position.assign(randomPos);
+            // Assign random lifetime. This will be used when the particle spawns.
+            const maxLife = hash(instanceIndex.mul(uint(109)).add(uint(seedLife))).mul(15).add(3); // 3-18 seconds
+
+            // Assign a random spawn delay (e.g., up to 10 seconds)
+            // We store this as a negative age. The particle will spawn when age crosses 0.
+            const spawnDelay = hash(instanceIndex.mul(uint(113)).add(uint(seedAge))).mul(10.0);
+            life.assign(vec2(spawnDelay.negate(), maxLife));
+
+            // Start particles off-screen. They will be positioned on spawn.
+            position.assign(vec2(-9999, -9999));
             velocity.assign(vec2(0, 0));
 
-            // Assign random lifetime with better distribution to prevent clustering
-            const maxLife = hash(instanceIndex.mul(uint(109)).add(uint(seedLife))).mul(15).add(3); // 3-18 seconds (wider range)
-            
-            // Start with a more varied random age to spread out initial deaths
-            const ageRatio = hash(instanceIndex.mul(uint(113)).add(uint(seedAge)));
-            const age = ageRatio.mul(ageRatio).mul(maxLife); // Quadratic distribution (more young particles)
-            life.assign(vec2(age, maxLife));
-            
-            // Initialize reset counter (start at 10 so trail starts immediately)
-            this.resetFlagBuffer.element(instanceIndex).assign(uint(10));
-            
-            // Initialize fade timer (0 = no fade)
-            this.fadeTimerBuffer.element(instanceIndex).assign(float(0));
+            // Initialize reset counter and fade timer.
+            this.resetFlagBuffer.element(instanceIndex).assign(uint(10)); // Not resetting
+            this.fadeTimerBuffer.element(instanceIndex).assign(float(0)); // Not fading
         });
         
         const initCompute = init().compute(this.particleCount);
@@ -166,77 +155,117 @@ class FlowFieldSystem {
             const age = life.x;
             const maxLife = life.y;
 
-            // Increment reset counter (how many frames since reset)
-            resetCounter.assign(resetCounter.add(uint(1)).min(uint(10)));
-
-            // Always update age and movement first
+            // Always update age first. This also serves as the spawn countdown.
             age.addAssign(deltaTime);
-            
-            // Van der Pol oscillator flow field
-            // dx/dt = y
-            // dy/dt = μ(1 - x²)y - x
-            const x = position.x.div(float(this.gridSize * 0.5)); // Normalize to [-1, 1] range
-            const y = position.y.div(float(this.gridSize * 0.5));
-            
-            // Van der Pol parameter - vary spatially for interesting patterns
-            const mu = float(0.5).add(sin(x.mul(2)).mul(sin(y.mul(2))).mul(0.3)); // μ varies from 0.2 to 0.8
-            
-            // Van der Pol equations
-            const dx_dt = y;
-            const dy_dt = mu.mul(float(1).sub(x.mul(x))).mul(y).sub(x);
-            
-            // Scale the flow field to reasonable speed
-            const flowVel = vec2(dx_dt, dy_dt).mul(float(this.gridSize * 0.25));
-            
-            velocity.assign(mix(velocity, flowVel, float(0.1))); // Smoothly update velocity
-            position.addAssign(velocity.mul(deltaTime));
-            
-            // Handle fading logic
-            If(fadeTimer.greaterThan(0), () => {
-                // Particle is fading - continue moving but increment fade timer
-                fadeTimer.addAssign(deltaTime);
-                
-                // If fade is complete, reset the particle
-                If(fadeTimer.greaterThanEqual(fadeTime), () => {
-                    // Use better hash inputs to prevent reset clustering
-                    // Mix instanceIndex with multiple varying factors
-                    const resetSeed = instanceIndex.mul(uint(127)).add(uint(floor(fadeTimer.mul(1000)))).add(uint(resetCounter));
-                    
+
+            // Check if particle is active (age is positive)
+            If(age.greaterThanEqual(0), () => {
+
+                // Check if the particle just spawned in this frame
+                const prevAge = age.sub(deltaTime);
+                If(prevAge.lessThan(0), () => {
+                    // ==> This is the first frame the particle is active.
+                    // Initialize its position and state.
                     const spawnWidth = float(this.gridSize * 0.5).mul(this.aspectUniform);
                     const spawnHeight = float(this.gridSize * 0.5);
+                    
+                    // Use a hash based on current state to ensure variety
+                    const spawnSeed = instanceIndex.mul(uint(149)).add(uint(floor(age.mul(1000))));
+                    
                     const newPos = vec2(
-                        hash(resetSeed.add(uint(31))).mul(2).sub(1).mul(spawnWidth),
-                        hash(resetSeed.add(uint(37))).mul(2).sub(1).mul(spawnHeight)
+                        hash(spawnSeed.add(uint(97))).mul(2).sub(1).mul(spawnWidth),
+                        hash(spawnSeed.add(uint(103))).mul(2).sub(1).mul(spawnHeight)
                     );
+                    
                     position.assign(newPos);
-                    velocity.assign(vec2(0,0));
-                    age.assign(0);
+                    velocity.assign(vec2(0, 0));
+                    age.assign(0); // Reset age to 0 to start its life
                     
-                    // Reset new lifetime with better distribution
-                    const newMaxLife = hash(resetSeed.add(uint(41))).mul(15).add(3); // Match init range
-                    life.y.assign(newMaxLife);
-                    
-                    // Reset counter to 0 (just reset)
+                    // Reset trail system for this particle
                     resetCounter.assign(uint(0));
+                });
+
+                // Increment reset counter (how many frames since reset)
+                resetCounter.assign(resetCounter.add(uint(1)).min(uint(10)));
+                
+                // Glycolytic oscillator (Higgins-Selkov model)
+                // dx/dt = -x + a*y + x^2*y
+                // dy/dt = b - a*y - x^2*y
+                const x_pos = position.x.div(float(this.gridSize * 0.5)); // Normalize to [-1, 1] range
+                const y_pos = position.y.div(float(this.gridSize * 0.5));
+                
+                // Map position to positive concentration values. The model requires x, y > 0.
+                const x = x_pos.add(1.0).mul(0.5); 
+                const y = y_pos.add(1.0).mul(0.5); 
+                
+                // Parameters for the Higgins-Selkov model
+                const a = float(0.8);
+                // Let b vary spatially for more interesting patterns
+                const b = float(0.6)
+
+                // Higgins-Selkov equations
+                const commonTerm = a.mul(y).add(x.mul(x).mul(y));
+                const dx_dt = x.negate().add(commonTerm);
+                const dy_dt = b.sub(commonTerm);
+                
+                // Scale the flow field to a reasonable speed
+                const flowVel = vec2(dx_dt, dy_dt).mul(2.0);
+                
+                velocity.assign(mix(velocity, flowVel, float(0.1))); // Smoothly update velocity
+                position.addAssign(velocity.mul(deltaTime));
+                
+                // Handle fading logic
+                If(fadeTimer.greaterThan(0), () => {
+                    // Particle is fading - continue moving but increment fade timer
+                    fadeTimer.addAssign(deltaTime);
                     
-                    // Stop fading
-                    fadeTimer.assign(float(0));
+                    // If fade is complete, reset the particle
+                    If(fadeTimer.greaterThanEqual(fadeTime), () => {
+                        // Use better hash inputs to prevent reset clustering
+                        // Mix instanceIndex with multiple varying factors
+                        const resetSeed = instanceIndex.mul(uint(127)).add(uint(floor(fadeTimer.mul(1000)))).add(uint(resetCounter));
+                        
+                        const spawnWidth = float(this.gridSize * 0.5).mul(this.aspectUniform);
+                        const spawnHeight = float(this.gridSize * 0.5);
+                        const newPos = vec2(
+                            hash(resetSeed.add(uint(31))).mul(2).sub(1).mul(spawnWidth),
+                            hash(resetSeed.add(uint(37))).mul(2).sub(1).mul(spawnHeight)
+                        );
+                        position.assign(newPos);
+                        velocity.assign(vec2(0,0));
+                        age.assign(0);
+                        
+                        // Reset new lifetime with better distribution
+                        const newMaxLife = hash(resetSeed.add(uint(41))).mul(15).add(3); // Match init range
+                        life.y.assign(newMaxLife);
+                        
+                        // Reset counter to 0 (just reset)
+                        resetCounter.assign(uint(0));
+                        
+                        // Stop fading
+                        fadeTimer.assign(float(0));
+                    });
+                }).Else(() => {
+                    // Not currently fading - check if we should start fading
+                    const halfSizeX = float(this.gridSize * 0.5).mul(this.aspectUniform);
+                    const halfSizeY = float(this.gridSize * 0.5);
+                    const farOutOfBounds = position.x.abs().greaterThan(halfSizeX.mul(1.2)).or(position.y.abs().greaterThan(halfSizeY.mul(1.2)));
+                    
+                    // Add some randomness to death timing to prevent synchronized fading
+                    const deathThreshold = hash(instanceIndex.mul(uint(139))).mul(0.5).add(0.8); // 0.8-1.3 multiplier
+                    const adjustedMaxLife = maxLife.mul(deathThreshold);
+                    
+                    // Start fade if particle is dead or well beyond bounds (give some buffer to let it move off screen)
+                    const shouldStartFade = age.greaterThan(adjustedMaxLife).or(farOutOfBounds);
+                    If(shouldStartFade, () => {
+                        fadeTimer.assign(float(0.01)); // Start fade (small value > 0)
+                    });
                 });
+
             }).Else(() => {
-                // Not currently fading - check if we should start fading
-                const halfSizeX = float(this.gridSize * 0.5).mul(this.aspectUniform);
-                const halfSizeY = float(this.gridSize * 0.5);
-                const farOutOfBounds = position.x.abs().greaterThan(halfSizeX.mul(1.2)).or(position.y.abs().greaterThan(halfSizeY.mul(1.2)));
-                
-                // Add some randomness to death timing to prevent synchronized fading
-                const deathThreshold = hash(instanceIndex.mul(uint(139))).mul(0.5).add(0.8); // 0.8-1.3 multiplier
-                const adjustedMaxLife = maxLife.mul(deathThreshold);
-                
-                // Start fade if particle is dead or well beyond bounds (give some buffer to let it move off screen)
-                const shouldStartFade = age.greaterThan(adjustedMaxLife).or(farOutOfBounds);
-                If(shouldStartFade, () => {
-                    fadeTimer.assign(float(0.01)); // Start fade (small value > 0)
-                });
+                // Particle is not yet spawned (age < 0).
+                // Ensure it stays hidden. This is defensive.
+                position.assign(vec2(-9999, -9999));
             });
         });
         
@@ -499,6 +528,7 @@ class FlowFieldSystem {
         this.scene.add(this.trailMesh);
     }
 
+    /*
     // ===========================
     // Grid Vector Visualization
     // ===========================
@@ -543,21 +573,28 @@ class FlowFieldSystem {
             // Position is static already stored; fetch position from buffer
             const pos = this.gridPositionBuffer.element(idx);
 
-            // Van der Pol oscillator flow field (same as particles)
-            // dx/dt = y
-            // dy/dt = μ(1 - x²)y - x
-            const x = pos.x.div(float(this.gridSize * 0.5)); // Normalize to [-1, 1] range
-            const y = pos.y.div(float(this.gridSize * 0.5));
+            // Glycolytic oscillator (Higgins-Selkov model)
+            // dx/dt = -x + a*y + x^2*y
+            // dy/dt = b - a*y - x^2*y
+            const x_pos = pos.x.div(float(this.gridSize * 0.5)); // Normalize to [-1, 1] range
+            const y_pos = pos.y.div(float(this.gridSize * 0.5));
             
-            // Van der Pol parameter - vary spatially for interesting patterns
-            const mu = float(0.5).add(sin(x.mul(2)).mul(sin(y.mul(2))).mul(0.3)); // μ varies from 0.2 to 0.8
+            // Map position to positive concentration values. The model requires x, y > 0.
+            const x = x_pos.add(1.5).mul(1.5); // Approx [0.75, 3.75]
+            const y = y_pos.add(1.5).mul(1.5); // Approx [0.75, 3.75]
             
-            // Van der Pol equations
-            const dx_dt = y;
-            const dy_dt = mu.mul(float(1).sub(x.mul(x))).mul(y).sub(x);
+            // Parameters for the Higgins-Selkov model
+            const a = float(0.1);
+            // Let b vary spatially for more interesting patterns
+            const b = float(0.6).add(sin(x_pos.mul(Math.PI)).mul(sin(y_pos.mul(Math.PI))).mul(0.5)); // b in [0.1, 1.1]
+
+            // Higgins-Selkov equations
+            const commonTerm = a.mul(y).add(x.mul(x).mul(y));
+            const dx_dt = x.negate().add(commonTerm);
+            const dy_dt = b.sub(commonTerm);
             
             // Scale the flow field to reasonable magnitude for visualization
-            const flow = vec2(dx_dt, dy_dt).mul(float(0.25));
+            const flow = vec2(dx_dt, dy_dt).mul(0.25);
 
             this.gridVectorBuffer.element(idx).assign(flow);
         });
@@ -602,6 +639,7 @@ class FlowFieldSystem {
         this.gridMesh = new THREE.InstancedMesh(geometry, material, this.gridCount);
         this.scene.add(this.gridMesh);
     }
+    */
     
     public async update(): Promise<void> {
         // Update particles
@@ -631,6 +669,7 @@ class FlowFieldSystem {
             }
         }
 
+        /*
         // Update grid vectors each frame
         if (this.gridUpdateCompute) {
             try {
@@ -639,6 +678,7 @@ class FlowFieldSystem {
                 console.error('Grid compute error:', error);
             }
         }
+        */
         
         try {
             await this.renderer.renderAsync(this.scene, this.camera);
