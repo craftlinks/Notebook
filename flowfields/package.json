@@ -14,7 +14,8 @@
   },
   "dependencies": {
     "@types/three": "^0.177.0",
+    "jszip": "^3.10.1",
     "three": "^0.177.0",
-    "jszip": "^3.10.1"
+    "vite-plugin-static-copy": "^3.1.1"
   }
 }

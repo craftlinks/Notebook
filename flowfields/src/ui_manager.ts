@@ -74,15 +74,16 @@ export class UIManager {
      */
     private async populateSelector(): Promise<void> {
         // Vite-specific feature to find all .json files in the examples directory
-        const modules = import.meta.glob('/src/examples/*.json');
+        const modules = import.meta.glob('/public/examples/*.json');
 
         for (const path in modules) {
-            // e.g., "/src/examples/lotka_volterra.json" -> "Lotka Volterra"
+            // e.g., "/public/examples/lotka_volterra.json" -> "Lotka Volterra"
             const fileName = path.split('/').pop()?.replace('.json', '');
             const displayName = fileName?.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ') || path;
 
             const option = document.createElement('option');
-            option.value = path; // The path is the URL
+            // Path will be like /public/examples/dejong.json, we want examples/dejong.json
+            option.value = path.substring('/public/'.length);
             option.textContent = displayName;
             this.equationSelectEl.appendChild(option);
         }
