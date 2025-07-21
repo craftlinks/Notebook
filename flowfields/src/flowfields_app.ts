@@ -40,20 +40,10 @@ class FlowFieldSystem {
     private camera!: THREE.OrthographicCamera;
     private aspectUniform!: any;
     
-    private particleCount = 32768; // Reduce for debugging
+    private particleCount = 32768;
     private gridSize = 32;
-    private trailLength = 24; // Reduce for debugging
+    private trailLength = 24;
     private timeUniform!: any;
-    
-    // Grid properties
-    /*
-    private gridResolution = 64; // Increased from 32
-    private gridCount = this.gridResolution * this.gridResolution;
-    private gridPositionBuffer!: any;
-    private gridVectorBuffer!: any;
-    private gridMesh!: THREE.InstancedMesh;
-    private gridUpdateCompute!: any;
-    */
     
     // Particle properties
     private positionBuffer!: any;
@@ -134,8 +124,6 @@ class FlowFieldSystem {
      * @param url - The URL of the equation file to load.
      */
     public async loadAndReinitializeSystem(url: string): Promise<void> {
-        console.log(`Loading new system from: ${url}`);
-        
         // 1. Load, Parse, and Generate
         this.equationSystem = await loadEquationSystem(url);
         
@@ -154,8 +142,6 @@ class FlowFieldSystem {
 
         // 3. Re-initialize particle state (resets particles to new random positions)
         await this.initParticles();
-
-        console.log("System re-initialization complete.");
     }
 
     private async initParticles(): Promise<void> {
@@ -365,12 +351,6 @@ class FlowFieldSystem {
 
         // Create trail visualization
         this.createTrailVisualization();
-        
-        console.log(`Trail system initialized:
-        - Particles: ${this.particleCount}
-        - Trail length: ${this.trailLength}
-        - Total trail points: ${this.particleCount * this.trailLength}
-        - Trail positions buffer size: ${this.particleCount * this.trailLength * 2}`);
     }
 
     private createTrailVisualization(): void {
@@ -526,119 +506,6 @@ class FlowFieldSystem {
         this.trailMesh = new THREE.InstancedMesh(geometry, material, maxLineSegments);
         this.scene.add(this.trailMesh);
     }
-
-    /*
-    // ===========================
-    // Grid Vector Visualization
-    // ===========================
-    private initGridVectors(): void {
-        // Create buffers for grid positions and vectors
-        this.gridPositionBuffer = instancedArray(this.gridCount, 'vec2');
-        this.gridVectorBuffer = instancedArray(this.gridCount, 'vec2');
-
-        // Compute shader to initialize grid positions and vectors
-        const gridInit = Fn(() => {
-            const idx = instanceIndex;
-            
-
-            const res = uint(this.gridResolution);
-            const xIdx = idx.mod(res).toFloat();
-            const yIdx = idx.div(res).toFloat();
-
-            const halfSize = float(this.gridSize * 0.5);
-            const gridSizeF = float(this.gridSize);
-            const resF = float(this.gridResolution);
-
-            // Center grid points in their cells
-            const posX = xIdx.toFloat().add(0.5).div(resF).mul(gridSizeF).sub(halfSize);
-            const posY = yIdx.toFloat().add(0.5).div(resF).mul(gridSizeF).sub(halfSize);
-
-            // Assign position
-            this.gridPositionBuffer.element(idx).assign(vec2(posX, posY));
-
-            // Flow field vector: v = (sin(y), sin(x))
-            const vx = sin(posY);
-            const vy = sin(posX);
-            this.gridVectorBuffer.element(idx).assign(vec2(vx, vy));
-        });
-
-        const gridInitCompute = gridInit().compute(this.gridCount);
-        this.renderer.computeAsync(gridInitCompute);
-
-        // Create compute shader to update vectors each frame (keeps grid arrows synced with flow equation)
-        const gridUpdate = Fn(() => {
-            const idx = instanceIndex;
-
-            // Position is static already stored; fetch position from buffer
-            const pos = this.gridPositionBuffer.element(idx);
-
-            // Lotka-Volterra predator-prey model
-            // dx/dt = alpha * x - beta * x * y  (prey)
-            // dy/dt = delta * x * y - gamma * y (predators)
-            const x_pos = pos.x.div(float(this.gridSize * 0.5)); // Normalize to [-1, 1] range
-            const y_pos = pos.y.div(float(this.gridSize * 0.5));
-            
-            // Map position to positive population values (prey, predators)
-            const prey = x_pos.add(1.0).mul(2.0);
-            const predators = y_pos.add(1.0).mul(2.0);
-            
-            // Lotka-Volterra parameters
-            const alpha = float(1.0);
-            const beta = float(0.5);
-            const delta = float(0.5);
-            const gamma = float(2.0);
-
-            // Lotka-Volterra equations
-            const dx_dt = prey.mul(alpha).sub(beta.mul(prey).mul(predators));
-            const dy_dt = delta.mul(prey).mul(predators).sub(gamma.mul(predators));
-            
-            // Scale the flow field to reasonable magnitude for visualization
-            const flow = vec2(dx_dt, dy_dt).mul(0.25);
-
-            this.gridVectorBuffer.element(idx).assign(flow);
-        });
-
-        this.gridUpdateCompute = gridUpdate().compute(this.gridCount);
-
-        // Create arrow geometry (simple elongated quad)
-        const arrowWidth = 1;
-        const arrowHeight = 0.05; // Increased from 0.02 for better visibility
-        const geometry = new THREE.PlaneGeometry(arrowWidth, arrowHeight);
-
-        const material = new THREE.SpriteNodeMaterial({
-            transparent: true,
-            depthWrite: false,
-            blending: THREE.AdditiveBlending
-        });
-
-        // Position from buffer
-        material.positionNode = this.gridPositionBuffer.toAttribute();
-
-        // Rotation based on vector direction
-        material.rotationNode = Fn(() => {
-            const vec = this.gridVectorBuffer.toAttribute();
-            return atan(vec.y, vec.x);
-        })();
-
-        // Scale: based on vector magnitude (increased for better visibility)
-        material.scaleNode = Fn(() => {
-            const vec = this.gridVectorBuffer.toAttribute();
-            const mag = length(vec);
-            return mag.mul(0.15).add(0.1); // Increased from 0.04 and 0.02
-        })();
-
-        // Color: blue to orange based on angle
-        material.colorNode = Fn(() => {
-            const vec = this.gridVectorBuffer.toAttribute();
-            const ang = atan(vec.y, vec.x).add(float(Math.PI)).div(float(Math.PI * 2)); // 0-1
-            return vec4(mix(color('#0066ff'), color('#ff6600'), ang), 1.0); // Full opacity
-        })();
-
-        // Create instanced mesh
-        this.gridMesh = new THREE.InstancedMesh(geometry, material, this.gridCount);
-        this.scene.add(this.gridMesh);
-    }
-    */
     
     public async update(): Promise<void> {
         // Update time
@@ -670,17 +537,6 @@ class FlowFieldSystem {
                 console.error('Trail point compute error:', error);
             }
         }
-
-        /*
-        // Update grid vectors each frame
-        if (this.gridUpdateCompute) {
-            try {
-                await this.renderer.computeAsync(this.gridUpdateCompute);
-            } catch (error) {
-                console.error('Grid compute error:', error);
-            }
-        }
-        */
         
         try {
             await this.renderer.renderAsync(this.scene, this.camera);

@@ -60,38 +60,4 @@ export async function loadEquationSystem(url: string): Promise<EquationSystem> {
         console.error(`Error loading or parsing equation file from ${url}:`, error);
         throw error;
     }
-}
-
-/**
- * Example usage:
- * 
- * async function main() {
- *     try {
- *         const deJong = await loadEquationSystem('/src/examples/dejong.json');
- *         console.log('Loaded system:', deJong);
- * 
- *         // Later, you would pass this object to a TSL code generator
- *         // const tslCode = generateTSL(deJong);
- * 
- *     } catch (error) {
- *         console.error('Failed to load equation system.');
- *     }
- * }
- * 
- * // main();
- */
-
-export async function testParser() {
-    console.log('--- Running Parser Test ---');
-    try {
-        const deJong = await loadEquationSystem('/src/examples/dejong.json');
-        console.log('Successfully loaded De Jong Attractor:', deJong);
-
-        const lotkaVolterra = await loadEquationSystem('/src/examples/lotka_volterra.json');
-        console.log('Successfully loaded Lotka-Volterra:', lotkaVolterra);
-
-    } catch (error) {
-        console.error('Parser test failed:', error);
-    }
-    console.log('--- Parser Test Complete ---');
 } 
