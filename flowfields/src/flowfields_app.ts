@@ -37,9 +37,9 @@ class FlowFieldSystem {
     private scene!: THREE.Scene;
     private camera!: THREE.OrthographicCamera;
     
-    private particleCount = 1024; // Reduce for debugging
+    private particleCount = 8192; // Reduce for debugging
     private gridSize = 32;
-    private trailLength = 16; // Reduce for debugging
+    private trailLength = 64; // Reduce for debugging
     
     // Grid properties
     private gridResolution = 64; // Increased from 32
@@ -53,6 +53,7 @@ class FlowFieldSystem {
     private positionBuffer!: any;
     private velocityBuffer!: any;
     private lifeBuffer!: any;
+    private resetFlagBuffer!: any;
     private updateCompute!: any;
     
     // Trail system
@@ -104,6 +105,7 @@ class FlowFieldSystem {
         this.positionBuffer = instancedArray(this.particleCount, 'vec2');
         this.velocityBuffer = instancedArray(this.particleCount, 'vec2');
         this.lifeBuffer = instancedArray(this.particleCount, 'vec2'); // x: age, y: maxLife
+        this.resetFlagBuffer = instancedArray(this.particleCount, 'uint'); // frames since reset (0 = just reset)
         
         // Initialize particles
         const init = Fn(() => {
@@ -124,6 +126,9 @@ class FlowFieldSystem {
             const maxLife = hash(instanceIndex.add(uint(3))).mul(10).add(5); // 5-15 seconds
             const age = hash(instanceIndex.add(uint(4))).mul(maxLife); // Start with a random age
             life.assign(vec2(age, maxLife));
+            
+            // Initialize reset counter (start at 10 so trail starts immediately)
+            this.resetFlagBuffer.element(instanceIndex).assign(uint(10));
         });
         
         const initCompute = init().compute(this.particleCount);
@@ -133,10 +138,14 @@ class FlowFieldSystem {
             const position = this.positionBuffer.element(instanceIndex);
             const velocity = this.velocityBuffer.element(instanceIndex);
             const life = this.lifeBuffer.element(instanceIndex);
+            const resetCounter = this.resetFlagBuffer.element(instanceIndex);
             
             const deltaTime = float(1/60);
             const age = life.x;
             const maxLife = life.y;
+
+            // Increment reset counter (how many frames since reset)
+            resetCounter.assign(resetCounter.add(uint(1)).min(uint(10)));
 
             age.addAssign(deltaTime);
 
@@ -159,27 +168,15 @@ class FlowFieldSystem {
                 const newMaxLife = hash(instanceIndex.add(uint(3)).add(age)).mul(10).add(5);
                 life.y.assign(newMaxLife);
                 
-                // Clear trail buffer to prevent long lines
-                const trailStart = mul(instanceIndex, uint(this.trailLength * 2));
-                const metaIndex = mul(instanceIndex, uint(2));
-                
-                // Reset trail metadata
-                this.trailMetaBuffer.element(metaIndex).assign(uint(0));
-                this.trailMetaBuffer.element(metaIndex.add(uint(1))).assign(uint(0));
-                
-                // Clear all positions in this particle's trail buffer
-                Loop(uint(this.trailLength), ({ i }) => {
-                    const clearIndex = trailStart.add(mul(i, uint(2)));
-                    this.trailPositionsBuffer.element(clearIndex).assign(float(-9999));
-                    this.trailPositionsBuffer.element(clearIndex.add(uint(1))).assign(float(-9999));
-                });
+                // Reset counter to 0 (just reset)
+                resetCounter.assign(uint(0));
             });
 
             // Flow field equations: vx = sin(y), vy = sin(x)
             const flowVel = vec2(sin(position.y), sin(position.x));
             velocity.assign(mix(velocity, flowVel, float(0.1))); // Smoothly update velocity
             
-            // Update position
+            // Always update position (removed the skip condition)
             position.addAssign(velocity.mul(deltaTime));
         });
         
@@ -226,18 +223,30 @@ class FlowFieldSystem {
             
             // Get particle data
             const currentPos = this.positionBuffer.element(particleId);
-            const life = this.lifeBuffer.element(particleId);
-            const age = life.x;
+            const resetCounter = this.resetFlagBuffer.element(particleId);
             
-            // Calculate buffer indices for this particle
-            const trailStart = mul(particleId, uint(this.trailLength * 2)); // Start of this particle's trail data
-            const metaIndex = mul(particleId, uint(2)); // Position in meta buffer
+            const trailStart = mul(particleId, uint(this.trailLength * 2));
+            const metaIndex = mul(particleId, uint(2));
             
-            // Get head index and current length
+            // If particle was just reset (counter < 2), clear trail and start fresh
+            If(resetCounter.lessThan(uint(2)), () => {
+                // Reset trail metadata - head at 0, length at 0 initially
+                this.trailMetaBuffer.element(metaIndex).assign(uint(0));
+                this.trailMetaBuffer.element(metaIndex.add(uint(1))).assign(uint(0)); // Start with length 0
+                
+                // Clear all positions in trail buffer first
+                Loop(uint(this.trailLength), ({ i }) => {
+                    const clearIndex = trailStart.add(mul(i, uint(2)));
+                    this.trailPositionsBuffer.element(clearIndex).assign(float(-9999));
+                    this.trailPositionsBuffer.element(clearIndex.add(uint(1))).assign(float(-9999));
+                });
+                
+                // Don't set any positions yet - let the normal update logic handle the first position
+            });
+            
+            // Always add current position to ring buffer (whether just reset or not)
             const headIndex = this.trailMetaBuffer.element(metaIndex);
             const currentLength = this.trailMetaBuffer.element(metaIndex.add(uint(1)));
-            
-            // Note: Trail clearing is now handled in the particle update when reset occurs
             
             // Calculate position in ring buffer to write new position
             const writeIndex = trailStart.add(mul(headIndex, uint(2))); // *2 because x,y per position
@@ -298,41 +307,72 @@ class FlowFieldSystem {
             const headIndex = this.trailMetaBuffer.element(metaIndex);
             const currentLength = this.trailMetaBuffer.element(metaIndex.add(uint(1)));
             
-            // Check if this segment should be visible (need at least 2 points)
-            const isValidSegment = segmentId.lessThan(currentLength.sub(uint(1)));
+            // Check if this segment should be visible
+            // Need at least 2 points (currentLength >= 2) and segmentId must be within valid range
+            const hasEnoughPoints = currentLength.greaterThanEqual(uint(2));
+            const segmentInRange = segmentId.lessThan(currentLength.sub(uint(1)));
+            const isValidSegment = hasEnoughPoints.and(segmentInRange);
             
             If(isValidSegment, () => {
                 // Get start and end point indices in ring buffer
                 const trailStart = mul(particleId, uint(this.trailLength * 2));
                 
-                // Start point (older)
-                const startRingIndex = mod(headIndex.sub(segmentId).sub(uint(1)).add(uint(this.trailLength)), uint(this.trailLength));
+                // Determine chronological indices in the ring buffer without
+                // relying on negative offsets (which caused head-to-tail jumps).
+                // `headIndex` points to the NEXT slot that will be written.
+                // The oldest valid point therefore is:
+                //     oldest = (headIndex + trailLength - currentLength) % trailLength
+                const oldestIndex = mod(
+                    headIndex.add(uint(this.trailLength)).sub(currentLength),
+                    uint(this.trailLength)
+                );
+
+                // Build the segment by connecting consecutive points:
+                //   segmentId == 0  -> (oldest, oldest + 1)
+                //   segmentId == 1  -> (oldest + 1, oldest + 2)  … etc.
+                const startRingIndex = mod(oldestIndex.add(segmentId), uint(this.trailLength));
+                const endRingIndex   = mod(startRingIndex.add(uint(1)), uint(this.trailLength));
+
                 const startPosIndex = trailStart.add(mul(startRingIndex, uint(2)));
+                const endPosIndex   = trailStart.add(mul(endRingIndex,   uint(2)));
+
                 const startX = this.trailPositionsBuffer.element(startPosIndex);
                 const startY = this.trailPositionsBuffer.element(startPosIndex.add(uint(1)));
-                
-                // End point (newer)
-                const endRingIndex = mod(headIndex.sub(segmentId).add(uint(this.trailLength)), uint(this.trailLength));
-                const endPosIndex = trailStart.add(mul(endRingIndex, uint(2)));
-                const endX = this.trailPositionsBuffer.element(endPosIndex);
-                const endY = this.trailPositionsBuffer.element(endPosIndex.add(uint(1)));
-                
-                // Calculate line center and vector
-                const centerX = startX.add(endX).mul(0.5);
-                const centerY = startY.add(endY).mul(0.5);
-                const vecX = endX.sub(startX);
-                const vecY = endY.sub(startY);
-                const vecLength = length(vec2(vecX, vecY));
-                
-                // Set line data
-                linePositionsBuffer.element(idx).assign(vec3(centerX, centerY, float(0)));
-                lineVectorsBuffer.element(idx).assign(vec3(vecX, vecY, vecLength));
-                
-                // Set color with fade (newer segments brighter)
-                const fadeRatio = float(segmentId).div(max(float(currentLength), float(1)));
-                const alpha = mix(float(0.2), float(0.9), fadeRatio);
-                const baseColor = mix(color('#0066ff'), color('#ff6600'), fadeRatio);
-                lineColorsBuffer.element(idx).assign(vec4(baseColor, alpha));
+                const endX   = this.trailPositionsBuffer.element(endPosIndex);
+                const endY   = this.trailPositionsBuffer.element(endPosIndex.add(uint(1)));
+                    
+                    // Calculate line center and vector
+                    const centerX = startX.add(endX).mul(0.5);
+                    const centerY = startY.add(endY).mul(0.5);
+                    const vecX = endX.sub(startX);
+                    const vecY = endY.sub(startY);
+                    const vecLength = length(vec2(vecX, vecY));
+                    
+                    // Skip segments that are too long (likely connecting across respawn)
+                    // Also skip segments connecting to cleared positions (-9999)
+                    const maxReasonableLength = float(2.0); // Adjust this threshold
+                    const isReasonableLength = vecLength.lessThan(maxReasonableLength);
+                    const isValidPosition = startX.greaterThan(float(-9000)).and(startY.greaterThan(float(-9000)))
+                        .and(endX.greaterThan(float(-9000))).and(endY.greaterThan(float(-9000)));
+                    
+                    If(isReasonableLength.and(isValidPosition), () => {
+                        // Set line data for reasonable segments with valid positions
+                        linePositionsBuffer.element(idx).assign(vec3(centerX, centerY, float(0)));
+                        lineVectorsBuffer.element(idx).assign(vec3(vecX, vecY, vecLength));
+                        
+                        // Set color with fade (newer segments brighter)
+                        const fadeRatio = float(segmentId).div(max(float(currentLength), float(1)));
+                        const alpha = mix(float(0.2), float(0.9), fadeRatio);
+                        const baseColor = mix(color('#0066ff'), color('#ff6600'), fadeRatio);
+                        lineColorsBuffer.element(idx).assign(vec4(baseColor, alpha));
+                    }).Else(() => {
+                        // Hide unreasonable or invalid segments
+                        linePositionsBuffer.element(idx).assign(vec3(-9999, -9999, 0));
+                        lineVectorsBuffer.element(idx).assign(vec3(0, 0, 0));
+                        lineColorsBuffer.element(idx).assign(vec4(0, 0, 0, 0));
+                    });
+                // (no additional validity check needed here – later logic already
+                // filters unreasonable or cleared positions)
             }).Else(() => {
                 // Hide segment
                 linePositionsBuffer.element(idx).assign(vec3(-9999, -9999, 0));
