@@ -109,24 +109,33 @@ class FlowFieldSystem {
         this.resetFlagBuffer = instancedArray(this.particleCount, 'uint'); // frames since reset (0 = just reset)
         this.fadeTimerBuffer = instancedArray(this.particleCount, 'float'); // fade timer for trails (0 = no fade, >0 = fading)
         
+        // Generate random seeds at compile time to break index patterns
+        const seedX = Math.floor(Math.random() * 0xffffff);
+        const seedY = Math.floor(Math.random() * 0xffffff);
+        const seedLife = Math.floor(Math.random() * 0xffffff);
+        const seedAge = Math.floor(Math.random() * 0xffffff);
+        
         // Initialize particles
         const init = Fn(() => {
             const position = this.positionBuffer.element(instanceIndex);
             const velocity = this.velocityBuffer.element(instanceIndex);
             const life = this.lifeBuffer.element(instanceIndex);
             
-            // Random initial position
+            // Random initial position with better hash spreading
             const randomPos = vec2(
-                hash(instanceIndex.add(uint(1))).mul(2).sub(1).mul(this.gridSize * 0.5),
-                hash(instanceIndex.add(uint(2))).mul(2).sub(1).mul(this.gridSize * 0.5)
+                hash(instanceIndex.mul(uint(97)).add(uint(seedX))).mul(2).sub(1).mul(this.gridSize * 0.5),
+                hash(instanceIndex.mul(uint(103)).add(uint(seedY))).mul(2).sub(1).mul(this.gridSize * 0.5)
             );
             
             position.assign(randomPos);
             velocity.assign(vec2(0, 0));
 
-            // Assign random lifetime
-            const maxLife = hash(instanceIndex.add(uint(3))).mul(10).add(5); // 5-15 seconds
-            const age = hash(instanceIndex.add(uint(4))).mul(maxLife); // Start with a random age
+            // Assign random lifetime with better distribution to prevent clustering
+            const maxLife = hash(instanceIndex.mul(uint(109)).add(uint(seedLife))).mul(15).add(3); // 3-18 seconds (wider range)
+            
+            // Start with a more varied random age to spread out initial deaths
+            const ageRatio = hash(instanceIndex.mul(uint(113)).add(uint(seedAge)));
+            const age = ageRatio.mul(ageRatio).mul(maxLife); // Quadratic distribution (more young particles)
             life.assign(vec2(age, maxLife));
             
             // Initialize reset counter (start at 10 so trail starts immediately)
@@ -169,16 +178,20 @@ class FlowFieldSystem {
                 
                 // If fade is complete, reset the particle
                 If(fadeTimer.greaterThanEqual(fadeTime), () => {
+                    // Use better hash inputs to prevent reset clustering
+                    // Mix instanceIndex with multiple varying factors
+                    const resetSeed = instanceIndex.mul(uint(127)).add(uint(floor(fadeTimer.mul(1000)))).add(uint(resetCounter));
+                    
                     const newPos = vec2(
-                        hash(instanceIndex.add(uint(1)).add(fadeTimer)).mul(2).sub(1).mul(this.gridSize * 0.5),
-                        hash(instanceIndex.add(uint(2)).add(fadeTimer)).mul(2).sub(1).mul(this.gridSize * 0.5)
+                        hash(resetSeed.add(uint(31))).mul(2).sub(1).mul(this.gridSize * 0.5),
+                        hash(resetSeed.add(uint(37))).mul(2).sub(1).mul(this.gridSize * 0.5)
                     );
                     position.assign(newPos);
                     velocity.assign(vec2(0,0));
                     age.assign(0);
                     
-                    // Reset new lifetime
-                    const newMaxLife = hash(instanceIndex.add(uint(3)).add(fadeTimer)).mul(10).add(5);
+                    // Reset new lifetime with better distribution
+                    const newMaxLife = hash(resetSeed.add(uint(41))).mul(15).add(3); // Match init range
                     life.y.assign(newMaxLife);
                     
                     // Reset counter to 0 (just reset)
@@ -192,8 +205,12 @@ class FlowFieldSystem {
                 const halfSize = float(this.gridSize * 0.5);
                 const farOutOfBounds = position.x.abs().greaterThan(halfSize.mul(1.2)).or(position.y.abs().greaterThan(halfSize.mul(1.2)));
                 
+                // Add some randomness to death timing to prevent synchronized fading
+                const deathThreshold = hash(instanceIndex.mul(uint(139))).mul(0.5).add(0.8); // 0.8-1.3 multiplier
+                const adjustedMaxLife = maxLife.mul(deathThreshold);
+                
                 // Start fade if particle is dead or well beyond bounds (give some buffer to let it move off screen)
-                const shouldStartFade = age.greaterThan(maxLife).or(farOutOfBounds);
+                const shouldStartFade = age.greaterThan(adjustedMaxLife).or(farOutOfBounds);
                 If(shouldStartFade, () => {
                     fadeTimer.assign(float(0.01)); // Start fade (small value > 0)
                 });
