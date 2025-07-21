@@ -154,8 +154,17 @@ class FlowFieldSystem {
             // Increment reset counter (how many frames since reset)
             resetCounter.assign(resetCounter.add(uint(1)).min(uint(10)));
 
-            // Update fade timer if fading
+            // Always update age and movement first
+            age.addAssign(deltaTime);
+            
+            // Continue movement regardless of fade state (so trails flow naturally off screen)
+            const flowVel = vec2(sin(position.y), sin(position.x));
+            velocity.assign(mix(velocity, flowVel, float(0.1))); // Smoothly update velocity
+            position.addAssign(velocity.mul(deltaTime));
+            
+            // Handle fading logic
             If(fadeTimer.greaterThan(0), () => {
+                // Particle is fading - continue moving but increment fade timer
                 fadeTimer.addAssign(deltaTime);
                 
                 // If fade is complete, reset the particle
@@ -179,24 +188,14 @@ class FlowFieldSystem {
                     fadeTimer.assign(float(0));
                 });
             }).Else(() => {
-                // Normal particle behavior when not fading
-                age.addAssign(deltaTime);
-
-                // Check bounds first - start fade if out of bounds
+                // Not currently fading - check if we should start fading
                 const halfSize = float(this.gridSize * 0.5);
-                const outOfBounds = position.x.abs().greaterThan(halfSize).or(position.y.abs().greaterThan(halfSize));
-
-                // Start fade if particle is dead or out of bounds
-                const shouldStartFade = age.greaterThan(maxLife).or(outOfBounds);
+                const farOutOfBounds = position.x.abs().greaterThan(halfSize.mul(1.2)).or(position.y.abs().greaterThan(halfSize.mul(1.2)));
+                
+                // Start fade if particle is dead or well beyond bounds (give some buffer to let it move off screen)
+                const shouldStartFade = age.greaterThan(maxLife).or(farOutOfBounds);
                 If(shouldStartFade, () => {
                     fadeTimer.assign(float(0.01)); // Start fade (small value > 0)
-                }).Else(() => {
-                    // Normal flow field behavior
-                    const flowVel = vec2(sin(position.y), sin(position.x));
-                    velocity.assign(mix(velocity, flowVel, float(0.1))); // Smoothly update velocity
-                    
-                    // Update position
-                    position.addAssign(velocity.mul(deltaTime));
                 });
             });
         });
