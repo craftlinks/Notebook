@@ -42,7 +42,7 @@ class FlowFieldSystem {
     
     private particleCount = 32768; // Reduce for debugging
     private gridSize = 32;
-    private trailLength = 16; // Reduce for debugging
+    private trailLength = 24; // Reduce for debugging
     private timeUniform!: any;
     
     // Grid properties

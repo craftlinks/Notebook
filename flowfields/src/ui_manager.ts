@@ -12,6 +12,9 @@ export class UIManager {
     private dxDtDisplayEl: HTMLElement;
     private dyDtDisplayEl: HTMLElement;
     private slidersContainerEl: HTMLElement;
+    private uiPanelEl: HTMLElement;
+    private toggleButtonEl: HTMLButtonElement;
+    private uiContentEl: HTMLElement;
 
     constructor() {
         // Find all the necessary DOM elements
@@ -21,10 +24,31 @@ export class UIManager {
         this.dxDtDisplayEl = document.getElementById('dx_dt_display')!;
         this.dyDtDisplayEl = document.getElementById('dy_dt_display')!;
         this.slidersContainerEl = document.getElementById('sliders-container')!;
+        this.uiPanelEl = document.getElementById('ui-panel')!;
+        this.toggleButtonEl = document.getElementById('ui-toggle-button') as HTMLButtonElement;
+        this.uiContentEl = document.getElementById('ui-content')!;
 
-        if (!this.equationNameEl || !this.slidersContainerEl || !this.equationSelectEl) {
+        if (!this.equationNameEl || !this.slidersContainerEl || !this.equationSelectEl || !this.uiPanelEl || !this.toggleButtonEl || !this.uiContentEl) {
             throw new Error('Required UI elements not found in the DOM.');
         }
+
+        this.setupEventListeners();
+    }
+
+    /**
+     * Sets up the event listeners for the UI, including the toggle button.
+     */
+    private setupEventListeners(): void {
+        this.toggleButtonEl.addEventListener('click', () => this.togglePanel());
+    }
+    
+    /**
+     * Toggles the visibility of the UI content.
+     */
+    private togglePanel(): void {
+        this.uiPanelEl.classList.toggle('folded');
+        const isFolded = this.uiPanelEl.classList.contains('folded');
+        this.toggleButtonEl.textContent = isFolded ? 'Show Panel' : 'Hide Panel';
     }
 
     /**

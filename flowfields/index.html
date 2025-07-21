@@ -34,6 +34,34 @@
             z-index: 10;
         }
 
+        #ui-toggle-button {
+            width: 100%;
+            background-color: #334455;
+            color: white;
+            border: none;
+            padding: 8px;
+            cursor: pointer;
+            text-align: center;
+            margin-bottom: 10px;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: bold;
+        }
+
+        #ui-content {
+            transition: max-height 0.3s ease-in-out, opacity 0.2s ease-in-out;
+            max-height: 1000px; /* Sufficiently large value */
+            overflow: hidden;
+            opacity: 1;
+        }
+
+        #ui-panel.folded #ui-content {
+            max-height: 0;
+            opacity: 0;
+            margin-top: -10px; /* To collapse margin */
+        }
+
+
         #system-selector {
             margin-bottom: 15px;
         }
@@ -102,22 +130,25 @@
 </head>
 <body>
     <div id="ui-panel">
-        <div id="system-selector">
-            <h3>Dynamical System</h3>
-            <select id="equation-select"></select>
-        </div>
-        <div id="equation-info">
-            <h2 id="equation-name">Loading...</h2>
-            <p id="equation-description"></p>
-        </div>
-        <div id="equation-display">
-            <h3>Equations</h3>
-            <div id="dx_dt_display"></div>
-            <div id="dy_dt_display"></div>
-        </div>
-        <div id="parameter-controls">
-            <h3>Parameters</h3>
-            <div id="sliders-container"></div>
+        <button id="ui-toggle-button">Hide Panel</button>
+        <div id="ui-content">
+            <div id="system-selector">
+                <h3>Dynamical System</h3>
+                <select id="equation-select"></select>
+            </div>
+            <div id="equation-info">
+                <h2 id="equation-name">Loading...</h2>
+                <p id="equation-description"></p>
+            </div>
+            <div id="equation-display">
+                <h3>Equations</h3>
+                <div id="dx_dt_display"></div>
+                <div id="dy_dt_display"></div>
+            </div>
+            <div id="parameter-controls">
+                <h3>Parameters</h3>
+                <div id="sliders-container"></div>
+            </div>
         </div>
     </div>
     <script type="module" src="/src/flowfields_app.ts"></script>
