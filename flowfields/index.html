@@ -34,6 +34,21 @@
             z-index: 10;
         }
 
+        #system-selector {
+            margin-bottom: 15px;
+        }
+
+        #system-selector select {
+            width: 100%;
+            padding: 8px;
+            background: #112233;
+            color: #eee;
+            border: 1px solid #334455;
+            border-radius: 4px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
         h1, h2, h3 {
             margin: 0 0 10px 0;
             padding: 0;
@@ -87,6 +102,10 @@
 </head>
 <body>
     <div id="ui-panel">
+        <div id="system-selector">
+            <h3>Dynamical System</h3>
+            <select id="equation-select"></select>
+        </div>
         <div id="equation-info">
             <h2 id="equation-name">Loading...</h2>
             <p id="equation-description"></p>

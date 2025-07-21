@@ -2,26 +2,53 @@
 import type { EquationSystem } from './parser';
 import type { UIUniforms } from './tsl_generator';
 
+// A map of display names to their file URLs
+const EQUATION_FILES: Record<string, string> = {
+    "Lotka-Volterra": "/src/examples/lotka_volterra.json",
+    "De Jong Attractor": "/src/examples/dejong.json",
+};
+
 /**
  * Manages the HTML UI panel, displaying equation info and parameter controls.
  */
 export class UIManager {
+    private equationSelectEl: HTMLSelectElement;
     private equationNameEl: HTMLElement;
     private equationDescriptionEl: HTMLElement;
     private dxDtDisplayEl: HTMLElement;
     private dyDtDisplayEl: HTMLElement;
     private slidersContainerEl: HTMLElement;
 
-    constructor() {
+    constructor(onSystemChange: (url: string) => void) {
         // Find all the necessary DOM elements
+        this.equationSelectEl = document.getElementById('equation-select') as HTMLSelectElement;
         this.equationNameEl = document.getElementById('equation-name')!;
         this.equationDescriptionEl = document.getElementById('equation-description')!;
         this.dxDtDisplayEl = document.getElementById('dx_dt_display')!;
         this.dyDtDisplayEl = document.getElementById('dy_dt_display')!;
         this.slidersContainerEl = document.getElementById('sliders-container')!;
 
-        if (!this.equationNameEl || !this.slidersContainerEl) {
+        if (!this.equationNameEl || !this.slidersContainerEl || !this.equationSelectEl) {
             throw new Error('Required UI elements not found in the DOM.');
+        }
+
+        // Populate the dropdown and set up the event listener
+        this.populateSelector();
+        this.equationSelectEl.addEventListener('change', (event) => {
+            const url = (event.target as HTMLSelectElement).value;
+            onSystemChange(url);
+        });
+    }
+
+    /**
+     * Populates the equation selector dropdown with the available files.
+     */
+    private populateSelector(): void {
+        for (const name in EQUATION_FILES) {
+            const option = document.createElement('option');
+            option.value = EQUATION_FILES[name];
+            option.textContent = name;
+            this.equationSelectEl.appendChild(option);
         }
     }
 

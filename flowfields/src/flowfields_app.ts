@@ -76,20 +76,26 @@ class FlowFieldSystem {
     private trailMesh!: THREE.InstancedMesh;
     
     constructor(canvas: HTMLCanvasElement) {
+        // Pass the reinitialization function to the UI Manager
+        this.uiManager = new UIManager(this.loadAndReinitializeSystem.bind(this));
         this.init(canvas);
-        this.uiManager = new UIManager();
     }
     
     private async init(canvas: HTMLCanvasElement): Promise<void> {
         await this.initRenderer(canvas);
         this.initScene();
-        this.initParticles();
-        this.initTrailSystem();
-        // this.initGridVectors();
         
-        // --- TEST PARSER ---
-        // await testParser(); We know this works now.
-        // ---------------------
+        // Initial particle buffer creation (only needs to happen once)
+        this.positionBuffer = instancedArray(this.particleCount, 'vec2');
+        this.velocityBuffer = instancedArray(this.particleCount, 'vec2');
+        this.lifeBuffer = instancedArray(this.particleCount, 'vec2');
+        this.resetFlagBuffer = instancedArray(this.particleCount, 'uint');
+        this.fadeTimerBuffer = instancedArray(this.particleCount, 'float');
+
+        // Load the default system
+        await this.loadAndReinitializeSystem("/src/examples/lotka_volterra.json");
+        
+        this.initTrailSystem();
     }
     
     private async initRenderer(canvas: HTMLCanvasElement): Promise<void> {
@@ -119,27 +125,17 @@ class FlowFieldSystem {
         this.camera.position.z = 10;
     }
     
-    private async initParticles(): Promise<void> {
-        // =============================================================
-        // Initialize Particle Buffers
-        // =============================================================
+    /**
+     * Loads a new equation file, regenerates TSL, and rebuilds the compute shader.
+     * This is the core of the dynamic system switching.
+     * @param url - The URL of the equation file to load.
+     */
+    public async loadAndReinitializeSystem(url: string): Promise<void> {
+        console.log(`Loading new system from: ${url}`);
         
-        // Create buffers for basic particle data
-        this.positionBuffer = instancedArray(this.particleCount, 'vec2');
-        this.velocityBuffer = instancedArray(this.particleCount, 'vec2');
-        this.lifeBuffer = instancedArray(this.particleCount, 'vec2'); // x: age, y: maxLife
-        this.resetFlagBuffer = instancedArray(this.particleCount, 'uint'); // frames since reset (0 = just reset)
-        this.fadeTimerBuffer = instancedArray(this.particleCount, 'float'); // fade timer for trails (0 = no fade, >0 = fading)
-
-        // =============================================================
-        // Load, Parse, and Generate the Equation System
-        // =============================================================
-
-        // 1. Load the desired equation file.
-        // We'll start with Lotka-Volterra. This can be made selectable later.
-        this.equationSystem = await loadEquationSystem('/src/examples/lotka_volterra.json');
+        // 1. Load, Parse, and Generate
+        this.equationSystem = await loadEquationSystem(url);
         
-        // Define the normalized position node that will be passed to the generator.
         const normalizedPosition = this.positionBuffer.element(instanceIndex).div(
             vec2(
                 float(this.gridSize * 0.5).mul(this.aspectUniform),
@@ -147,23 +143,23 @@ class FlowFieldSystem {
             )
         );
 
-        // 2. Generate the TSL compute function and uniforms.
         this.tslSystem = generateTSL(this.equationSystem, normalizedPosition);
-        this.uiUniforms = this.tslSystem.uniforms; // Store for future UI controls
+        this.uiUniforms = this.tslSystem.uniforms;
 
-        // 3. Create the UI for the loaded system
+        // 2. Update the UI with the new system's info
         this.uiManager.createUIForSystem(this.equationSystem, this.uiUniforms);
 
-        console.log("Successfully generated TSL for:", this.equationSystem.name);
-        console.log("Generated Uniforms:", this.uiUniforms);
-        
-        // =============================================================
-        // Initialize Particle State (using a compute shader)
-        // =============================================================
-        
+        // 3. Re-initialize particle state (resets particles to new random positions)
+        await this.initParticles();
+
+        console.log("System re-initialization complete.");
+    }
+
+    private async initParticles(): Promise<void> {
+        // This function now just resets the state of existing buffers.
+        // The buffers themselves are created once in init().
+
         // Generate random seeds at compile time to break index patterns
-        const seedX = Math.floor(Math.random() * 0xffffff);
-        const seedY = Math.floor(Math.random() * 0xffffff);
         const seedLife = Math.floor(Math.random() * 0xffffff);
         const seedAge = Math.floor(Math.random() * 0xffffff);
         
@@ -176,23 +172,22 @@ class FlowFieldSystem {
             // Assign random lifetime. This will be used when the particle spawns.
             const maxLife = hash(instanceIndex.mul(uint(109)).add(uint(seedLife))).mul(15).add(3); // 3-18 seconds
 
-            // Assign a random spawn delay (e.g., up to 10 seconds)
-            // We store this as a negative age. The particle will spawn when age crosses 0.
+            // Assign a random spawn delay
             const spawnDelay = hash(instanceIndex.mul(uint(113)).add(uint(seedAge))).mul(10.0);
             life.assign(vec2(spawnDelay.negate(), maxLife));
 
-            // Start particles off-screen. They will be positioned on spawn.
+            // Start particles off-screen
             position.assign(vec2(-9999, -9999));
             velocity.assign(vec2(0, 0));
 
-            // Initialize reset counter and fade timer.
-            this.resetFlagBuffer.element(instanceIndex).assign(uint(10)); // Not resetting
-            this.fadeTimerBuffer.element(instanceIndex).assign(float(0)); // Not fading
+            // Initialize reset counter and fade timer
+            this.resetFlagBuffer.element(instanceIndex).assign(uint(10));
+            this.fadeTimerBuffer.element(instanceIndex).assign(float(0));
         });
         
         const initCompute = init().compute(this.particleCount);
         
-        // Update compute shader
+        // Rebuild the main update compute shader with the new TSL function
         const update = Fn(() => {
             const position = this.positionBuffer.element(instanceIndex);
             const velocity = this.velocityBuffer.element(instanceIndex);
@@ -201,72 +196,44 @@ class FlowFieldSystem {
             const fadeTimer = this.fadeTimerBuffer.element(instanceIndex);
             
             const deltaTime = float(1/60);
-            const fadeTime = float(2.0); // 2 seconds fade duration
+            const fadeTime = float(2.0);
             const age = life.x;
             const maxLife = life.y;
 
-            // Always update age first. This also serves as the spawn countdown.
             age.addAssign(deltaTime);
 
-            // Check if particle is active (age is positive)
             If(age.greaterThanEqual(0), () => {
 
-                // Check if the particle just spawned in this frame
                 const prevAge = age.sub(deltaTime);
                 If(prevAge.lessThan(0), () => {
-                    // ==> This is the first frame the particle is active.
-                    // Initialize its position and state.
                     const spawnWidth = float(this.gridSize * 0.5).mul(this.aspectUniform);
                     const spawnHeight = float(this.gridSize * 0.5);
-                    
-                    // Use a hash based on current state to ensure variety
                     const spawnSeed = instanceIndex.mul(uint(149)).add(uint(floor(age.mul(1000))));
-                    
                     const newPos = vec2(
                         hash(spawnSeed.add(uint(97))).mul(2).sub(1).mul(spawnWidth),
                         hash(spawnSeed.add(uint(103))).mul(2).sub(1).mul(spawnHeight)
                     );
-                    
                     position.assign(newPos);
                     velocity.assign(vec2(0, 0));
-                    age.assign(0); // Reset age to 0 to start its life
-                    
-                    // Reset trail system for this particle
+                    age.assign(0);
                     resetCounter.assign(uint(0));
                 });
 
-                // Increment reset counter (how many frames since reset)
                 resetCounter.assign(resetCounter.add(uint(1)).min(uint(10)));
                 
-                // ===============================================================
                 // DYNAMICALLY GENERATED FLOW FIELD
-                // ===============================================================
-                
-                // Call the dynamically generated TSL function to get the flow vector.
                 const flowVector = this.tslSystem.computeFn();
-
-                // Get config from the loaded system, with defaults.
                 const velocityScale = float(this.tslSystem.config?.velocity_scale ?? 1.0);
                 const smoothing = float(this.tslSystem.config?.smoothing_factor ?? 0.1);
-
-                // Scale the flow field and smoothly update velocity
                 const flowVel = flowVector.mul(velocityScale);
                 velocity.assign(mix(velocity, flowVel, smoothing));
                 position.addAssign(velocity.mul(deltaTime));
                 
-                // ===============================================================
-                
-                // Handle fading logic
+                // Fading logic...
                 If(fadeTimer.greaterThan(0), () => {
-                    // Particle is fading - continue moving but increment fade timer
                     fadeTimer.addAssign(deltaTime);
-                    
-                    // If fade is complete, reset the particle
                     If(fadeTimer.greaterThanEqual(fadeTime), () => {
-                        // Use better hash inputs to prevent reset clustering
-                        // Mix instanceIndex with multiple varying factors
                         const resetSeed = instanceIndex.mul(uint(127)).add(uint(floor(fadeTimer.mul(1000)))).add(uint(resetCounter));
-                        
                         const spawnWidth = float(this.gridSize * 0.5).mul(this.aspectUniform);
                         const spawnHeight = float(this.gridSize * 0.5);
                         const newPos = vec2(
@@ -276,45 +243,32 @@ class FlowFieldSystem {
                         position.assign(newPos);
                         velocity.assign(vec2(0,0));
                         age.assign(0);
-                        
-                        // Reset new lifetime with better distribution
-                        const newMaxLife = hash(resetSeed.add(uint(41))).mul(15).add(3); // Match init range
+                        const newMaxLife = hash(resetSeed.add(uint(41))).mul(15).add(3);
                         life.y.assign(newMaxLife);
-                        
-                        // Reset counter to 0 (just reset)
                         resetCounter.assign(uint(0));
-                        
-                        // Stop fading
                         fadeTimer.assign(float(0));
                     });
                 }).Else(() => {
-                    // Not currently fading - check if we should start fading
                     const halfSizeX = float(this.gridSize * 0.5).mul(this.aspectUniform);
                     const halfSizeY = float(this.gridSize * 0.5);
                     const farOutOfBounds = position.x.abs().greaterThan(halfSizeX.mul(1.2)).or(position.y.abs().greaterThan(halfSizeY.mul(1.2)));
-                    
-                    // Add some randomness to death timing to prevent synchronized fading
-                    const deathThreshold = hash(instanceIndex.mul(uint(139))).mul(0.5).add(0.8); // 0.8-1.3 multiplier
+                    const deathThreshold = hash(instanceIndex.mul(uint(139))).mul(0.5).add(0.8);
                     const adjustedMaxLife = maxLife.mul(deathThreshold);
-                    
-                    // Start fade if particle is dead or well beyond bounds (give some buffer to let it move off screen)
                     const shouldStartFade = age.greaterThan(adjustedMaxLife).or(farOutOfBounds);
                     If(shouldStartFade, () => {
-                        fadeTimer.assign(float(0.01)); // Start fade (small value > 0)
+                        fadeTimer.assign(float(0.01));
                     });
                 });
 
             }).Else(() => {
-                // Particle is not yet spawned (age < 0).
-                // Ensure it stays hidden. This is defensive.
                 position.assign(vec2(-9999, -9999));
             });
         });
         
         this.updateCompute = update().compute(this.particleCount);
         
-        // Initialize
-        this.renderer.computeAsync(initCompute);
+        // Execute the initialization compute shader
+        await this.renderer.computeAsync(initCompute);
     }
 
     // ===========================
