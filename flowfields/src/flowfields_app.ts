@@ -76,8 +76,8 @@ class FlowFieldSystem {
     private trailMesh!: THREE.InstancedMesh;
     
     constructor(canvas: HTMLCanvasElement) {
-        // Pass the reinitialization function to the UI Manager
-        this.uiManager = new UIManager(this.loadAndReinitializeSystem.bind(this));
+        // Create the UI Manager
+        this.uiManager = new UIManager();
         this.init(canvas);
     }
     
@@ -92,8 +92,8 @@ class FlowFieldSystem {
         this.resetFlagBuffer = instancedArray(this.particleCount, 'uint');
         this.fadeTimerBuffer = instancedArray(this.particleCount, 'float');
 
-        // Load the default system
-        await this.loadAndReinitializeSystem("/src/examples/lotka_volterra.json");
+        // Initialize the UI, which will trigger the first system load
+        await this.uiManager.initialize(this.loadAndReinitializeSystem.bind(this));
         
         this.initTrailSystem();
     }

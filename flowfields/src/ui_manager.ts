@@ -2,12 +2,6 @@
 import type { EquationSystem } from './parser';
 import type { UIUniforms } from './tsl_generator';
 
-// A map of display names to their file URLs
-const EQUATION_FILES: Record<string, string> = {
-    "Lotka-Volterra": "/src/examples/lotka_volterra.json",
-    "De Jong Attractor": "/src/examples/dejong.json",
-};
-
 /**
  * Manages the HTML UI panel, displaying equation info and parameter controls.
  */
@@ -19,7 +13,7 @@ export class UIManager {
     private dyDtDisplayEl: HTMLElement;
     private slidersContainerEl: HTMLElement;
 
-    constructor(onSystemChange: (url: string) => void) {
+    constructor() {
         // Find all the necessary DOM elements
         this.equationSelectEl = document.getElementById('equation-select') as HTMLSelectElement;
         this.equationNameEl = document.getElementById('equation-name')!;
@@ -31,23 +25,41 @@ export class UIManager {
         if (!this.equationNameEl || !this.slidersContainerEl || !this.equationSelectEl) {
             throw new Error('Required UI elements not found in the DOM.');
         }
+    }
 
-        // Populate the dropdown and set up the event listener
-        this.populateSelector();
+    /**
+     * Initializes the UI, populates the selector, and sets up event listeners.
+     * @param onSystemChange - Callback function to trigger when a new system is selected.
+     */
+    public async initialize(onSystemChange: (url: string) => void): Promise<void> {
+        await this.populateSelector();
+        
         this.equationSelectEl.addEventListener('change', (event) => {
             const url = (event.target as HTMLSelectElement).value;
             onSystemChange(url);
         });
+
+        // Trigger the initial load with the first item in the list
+        if (this.equationSelectEl.options.length > 0) {
+            onSystemChange(this.equationSelectEl.options[0].value);
+        }
     }
 
     /**
-     * Populates the equation selector dropdown with the available files.
+     * Populates the equation selector dropdown by dynamically finding files.
      */
-    private populateSelector(): void {
-        for (const name in EQUATION_FILES) {
+    private async populateSelector(): Promise<void> {
+        // Vite-specific feature to find all .json files in the examples directory
+        const modules = import.meta.glob('/src/examples/*.json');
+
+        for (const path in modules) {
+            // e.g., "/src/examples/lotka_volterra.json" -> "Lotka Volterra"
+            const fileName = path.split('/').pop()?.replace('.json', '');
+            const displayName = fileName?.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ') || path;
+
             const option = document.createElement('option');
-            option.value = EQUATION_FILES[name];
-            option.textContent = name;
+            option.value = path; // The path is the URL
+            option.textContent = displayName;
             this.equationSelectEl.appendChild(option);
         }
     }
