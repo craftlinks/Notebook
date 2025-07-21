@@ -37,7 +37,7 @@ class FlowFieldSystem {
     private scene!: THREE.Scene;
     private camera!: THREE.OrthographicCamera;
     
-    private particleCount = 8192; // Reduce for debugging
+    private particleCount = 32768; // Reduce for debugging
     private gridSize = 32;
     private trailLength = 64; // Reduce for debugging
     
@@ -54,6 +54,7 @@ class FlowFieldSystem {
     private velocityBuffer!: any;
     private lifeBuffer!: any;
     private resetFlagBuffer!: any;
+    private fadeTimerBuffer!: any; // Timer for trail fading when particle resets
     private updateCompute!: any;
     
     // Trail system
@@ -106,6 +107,7 @@ class FlowFieldSystem {
         this.velocityBuffer = instancedArray(this.particleCount, 'vec2');
         this.lifeBuffer = instancedArray(this.particleCount, 'vec2'); // x: age, y: maxLife
         this.resetFlagBuffer = instancedArray(this.particleCount, 'uint'); // frames since reset (0 = just reset)
+        this.fadeTimerBuffer = instancedArray(this.particleCount, 'float'); // fade timer for trails (0 = no fade, >0 = fading)
         
         // Initialize particles
         const init = Fn(() => {
@@ -129,6 +131,9 @@ class FlowFieldSystem {
             
             // Initialize reset counter (start at 10 so trail starts immediately)
             this.resetFlagBuffer.element(instanceIndex).assign(uint(10));
+            
+            // Initialize fade timer (0 = no fade)
+            this.fadeTimerBuffer.element(instanceIndex).assign(float(0));
         });
         
         const initCompute = init().compute(this.particleCount);
@@ -139,45 +144,61 @@ class FlowFieldSystem {
             const velocity = this.velocityBuffer.element(instanceIndex);
             const life = this.lifeBuffer.element(instanceIndex);
             const resetCounter = this.resetFlagBuffer.element(instanceIndex);
+            const fadeTimer = this.fadeTimerBuffer.element(instanceIndex);
             
             const deltaTime = float(1/60);
+            const fadeTime = float(2.0); // 2 seconds fade duration
             const age = life.x;
             const maxLife = life.y;
 
             // Increment reset counter (how many frames since reset)
             resetCounter.assign(resetCounter.add(uint(1)).min(uint(10)));
 
-            age.addAssign(deltaTime);
-
-            // Check bounds first - respawn if out of bounds
-            const halfSize = float(this.gridSize * 0.5);
-            const outOfBounds = position.x.abs().greaterThan(halfSize).or(position.y.abs().greaterThan(halfSize));
-
-            // Reset particle if it's dead or out of bounds
-            const shouldReset = age.greaterThan(maxLife).or(outOfBounds);
-            If(shouldReset, () => {
-                const newPos = vec2(
-                    hash(instanceIndex.add(uint(1)).add(age)).mul(2).sub(1).mul(this.gridSize * 0.5),
-                    hash(instanceIndex.add(uint(2)).add(age)).mul(2).sub(1).mul(this.gridSize * 0.5)
-                );
-                position.assign(newPos);
-                velocity.assign(vec2(0,0));
-                age.assign(0);
+            // Update fade timer if fading
+            If(fadeTimer.greaterThan(0), () => {
+                fadeTimer.addAssign(deltaTime);
                 
-                // Reset new lifetime
-                const newMaxLife = hash(instanceIndex.add(uint(3)).add(age)).mul(10).add(5);
-                life.y.assign(newMaxLife);
-                
-                // Reset counter to 0 (just reset)
-                resetCounter.assign(uint(0));
+                // If fade is complete, reset the particle
+                If(fadeTimer.greaterThanEqual(fadeTime), () => {
+                    const newPos = vec2(
+                        hash(instanceIndex.add(uint(1)).add(fadeTimer)).mul(2).sub(1).mul(this.gridSize * 0.5),
+                        hash(instanceIndex.add(uint(2)).add(fadeTimer)).mul(2).sub(1).mul(this.gridSize * 0.5)
+                    );
+                    position.assign(newPos);
+                    velocity.assign(vec2(0,0));
+                    age.assign(0);
+                    
+                    // Reset new lifetime
+                    const newMaxLife = hash(instanceIndex.add(uint(3)).add(fadeTimer)).mul(10).add(5);
+                    life.y.assign(newMaxLife);
+                    
+                    // Reset counter to 0 (just reset)
+                    resetCounter.assign(uint(0));
+                    
+                    // Stop fading
+                    fadeTimer.assign(float(0));
+                });
+            }).Else(() => {
+                // Normal particle behavior when not fading
+                age.addAssign(deltaTime);
+
+                // Check bounds first - start fade if out of bounds
+                const halfSize = float(this.gridSize * 0.5);
+                const outOfBounds = position.x.abs().greaterThan(halfSize).or(position.y.abs().greaterThan(halfSize));
+
+                // Start fade if particle is dead or out of bounds
+                const shouldStartFade = age.greaterThan(maxLife).or(outOfBounds);
+                If(shouldStartFade, () => {
+                    fadeTimer.assign(float(0.01)); // Start fade (small value > 0)
+                }).Else(() => {
+                    // Normal flow field behavior
+                    const flowVel = vec2(sin(position.y), sin(position.x));
+                    velocity.assign(mix(velocity, flowVel, float(0.1))); // Smoothly update velocity
+                    
+                    // Update position
+                    position.addAssign(velocity.mul(deltaTime));
+                });
             });
-
-            // Flow field equations: vx = sin(y), vy = sin(x)
-            const flowVel = vec2(sin(position.y), sin(position.x));
-            velocity.assign(mix(velocity, flowVel, float(0.1))); // Smoothly update velocity
-            
-            // Always update position (removed the skip condition)
-            position.addAssign(velocity.mul(deltaTime));
         });
         
         this.updateCompute = update().compute(this.particleCount);
@@ -224,6 +245,7 @@ class FlowFieldSystem {
             // Get particle data
             const currentPos = this.positionBuffer.element(particleId);
             const resetCounter = this.resetFlagBuffer.element(particleId);
+            const fadeTimer = this.fadeTimerBuffer.element(particleId);
             
             const trailStart = mul(particleId, uint(this.trailLength * 2));
             const metaIndex = mul(particleId, uint(2));
@@ -240,28 +262,28 @@ class FlowFieldSystem {
                     this.trailPositionsBuffer.element(clearIndex).assign(float(-9999));
                     this.trailPositionsBuffer.element(clearIndex.add(uint(1))).assign(float(-9999));
                 });
-                
-                // Don't set any positions yet - let the normal update logic handle the first position
             });
             
-            // Always add current position to ring buffer (whether just reset or not)
-            const headIndex = this.trailMetaBuffer.element(metaIndex);
-            const currentLength = this.trailMetaBuffer.element(metaIndex.add(uint(1)));
-            
-            // Calculate position in ring buffer to write new position
-            const writeIndex = trailStart.add(mul(headIndex, uint(2))); // *2 because x,y per position
-            
-            // Store current position at head
-            this.trailPositionsBuffer.element(writeIndex).assign(currentPos.x);
-            this.trailPositionsBuffer.element(writeIndex.add(uint(1))).assign(currentPos.y);
-            
-            // Update head index (ring buffer)
-            const newHeadIndex = mod(headIndex.add(uint(1)), uint(this.trailLength));
-            this.trailMetaBuffer.element(metaIndex).assign(newHeadIndex);
-            
-            // Update length (max out at trailLength)
-            const newLength = min(currentLength.add(uint(1)), uint(this.trailLength));
-            this.trailMetaBuffer.element(metaIndex.add(uint(1))).assign(newLength);
+            // Only add current position if not fading (when fading, let existing trail remain)
+            If(fadeTimer.lessThanEqual(0), () => {
+                const headIndex = this.trailMetaBuffer.element(metaIndex);
+                const currentLength = this.trailMetaBuffer.element(metaIndex.add(uint(1)));
+                
+                // Calculate position in ring buffer to write new position
+                const writeIndex = trailStart.add(mul(headIndex, uint(2))); // *2 because x,y per position
+                
+                // Store current position at head
+                this.trailPositionsBuffer.element(writeIndex).assign(currentPos.x);
+                this.trailPositionsBuffer.element(writeIndex.add(uint(1))).assign(currentPos.y);
+                
+                // Update head index (ring buffer)
+                const newHeadIndex = mod(headIndex.add(uint(1)), uint(this.trailLength));
+                this.trailMetaBuffer.element(metaIndex).assign(newHeadIndex);
+                
+                // Update length (max out at trailLength)
+                const newLength = min(currentLength.add(uint(1)), uint(this.trailLength));
+                this.trailMetaBuffer.element(metaIndex.add(uint(1))).assign(newLength);
+            });
         });
         
         this.trailUpdateCompute = trailUpdate().compute(this.particleCount);
@@ -306,6 +328,10 @@ class FlowFieldSystem {
             const metaIndex = mul(particleId, uint(2));
             const headIndex = this.trailMetaBuffer.element(metaIndex);
             const currentLength = this.trailMetaBuffer.element(metaIndex.add(uint(1)));
+            
+            // Get fade timer for this particle
+            const fadeTimer = this.fadeTimerBuffer.element(particleId);
+            const fadeTime = float(2.0); // Match fade duration from particle update
             
             // Check if this segment should be visible
             // Need at least 2 points (currentLength >= 2) and segmentId must be within valid range
@@ -362,9 +388,18 @@ class FlowFieldSystem {
                         
                         // Set color with fade (newer segments brighter)
                         const fadeRatio = float(segmentId).div(max(float(currentLength), float(1)));
-                        const alpha = mix(float(0.2), float(0.9), fadeRatio);
+                        const baseAlpha = mix(float(0.2), float(0.9), fadeRatio);
+                        
+                        // Apply fade timer effect - fade out the entire trail when particle is fading
+                        const fadeEffect = select(
+                            fadeTimer.greaterThan(0),
+                            float(1).sub(fadeTimer.div(fadeTime)).max(0), // Fade from 1 to 0 over fadeTime
+                            float(1) // No fade when fadeTimer is 0
+                        );
+                        
+                        const finalAlpha = baseAlpha.mul(fadeEffect);
                         const baseColor = mix(color('#0066ff'), color('#ff6600'), fadeRatio);
-                        lineColorsBuffer.element(idx).assign(vec4(baseColor, alpha));
+                        lineColorsBuffer.element(idx).assign(vec4(baseColor, finalAlpha));
                     }).Else(() => {
                         // Hide unreasonable or invalid segments
                         linePositionsBuffer.element(idx).assign(vec3(-9999, -9999, 0));
