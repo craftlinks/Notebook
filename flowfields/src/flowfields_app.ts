@@ -2,6 +2,7 @@ import * as THREE from 'three/webgpu';
 import { 
     float, 
     vec2, 
+    vec3,
     vec4, 
     Fn, 
     instanceIndex, 
@@ -12,11 +13,19 @@ import {
     mix,
     color,
     uint,
+    int,
     mod,
     mul,
     atan,
     If,
-    normalize
+    normalize,
+    attribute,
+    select,
+    floor,
+    max,
+    min,
+    clamp,
+    Loop
 } from 'three/tsl';
 
 /**
@@ -28,22 +37,30 @@ class FlowFieldSystem {
     private scene!: THREE.Scene;
     private camera!: THREE.OrthographicCamera;
     
-    private particleCount = 16384;
+    private particleCount = 1024; // Reduce for debugging
     private gridSize = 32;
-    // New grid properties
-    private gridResolution = 32;
+    private trailLength = 16; // Reduce for debugging
+    
+    // Grid properties
+    private gridResolution = 64; // Increased from 32
     private gridCount = this.gridResolution * this.gridResolution;
     private gridPositionBuffer!: any;
     private gridVectorBuffer!: any;
     private gridMesh!: THREE.InstancedMesh;
     private gridUpdateCompute!: any;
     
+    // Particle properties
     private positionBuffer!: any;
     private velocityBuffer!: any;
-    private lifeBuffer!: any; // To store age and maxLife
-    private spawnPositionBuffer!: any; // To store spawn position
+    private lifeBuffer!: any;
     private updateCompute!: any;
-    private particleMesh!: THREE.InstancedMesh;
+    
+    // Trail system
+    private trailPositionsBuffer!: any; // Ring buffer: [particleCount * trailLength * 2] (x,y positions)
+    private trailMetaBuffer!: any; // [particleCount * 2] (head_index, length)
+    private trailUpdateCompute!: any;
+    private trailPointUpdateCompute!: any;
+    private trailMesh!: THREE.InstancedMesh;
     
     constructor(canvas: HTMLCanvasElement) {
         this.init(canvas);
@@ -53,7 +70,8 @@ class FlowFieldSystem {
         await this.initRenderer(canvas);
         this.initScene();
         this.initParticles();
-        this.initGridVectors(); // <- add grid visualization
+        this.initTrailSystem();
+        this.initGridVectors();
     }
     
     private async initRenderer(canvas: HTMLCanvasElement): Promise<void> {
@@ -82,18 +100,16 @@ class FlowFieldSystem {
     }
     
     private initParticles(): void {
-        // Create buffers following the exact pattern from the working example
+        // Create buffers for basic particle data
         this.positionBuffer = instancedArray(this.particleCount, 'vec2');
         this.velocityBuffer = instancedArray(this.particleCount, 'vec2');
         this.lifeBuffer = instancedArray(this.particleCount, 'vec2'); // x: age, y: maxLife
-        this.spawnPositionBuffer = instancedArray(this.particleCount, 'vec2');
         
         // Initialize particles
         const init = Fn(() => {
             const position = this.positionBuffer.element(instanceIndex);
             const velocity = this.velocityBuffer.element(instanceIndex);
             const life = this.lifeBuffer.element(instanceIndex);
-            const spawnPosition = this.spawnPositionBuffer.element(instanceIndex);
             
             // Random initial position
             const randomPos = vec2(
@@ -102,11 +118,10 @@ class FlowFieldSystem {
             );
             
             position.assign(randomPos);
-            spawnPosition.assign(randomPos);
             velocity.assign(vec2(0, 0));
 
             // Assign random lifetime
-            const maxLife = hash(instanceIndex.add(uint(3))).mul(5).add(2); // 2-7 seconds
+            const maxLife = hash(instanceIndex.add(uint(3))).mul(10).add(5); // 5-15 seconds
             const age = hash(instanceIndex.add(uint(4))).mul(maxLife); // Start with a random age
             life.assign(vec2(age, maxLife));
         });
@@ -118,7 +133,6 @@ class FlowFieldSystem {
             const position = this.positionBuffer.element(instanceIndex);
             const velocity = this.velocityBuffer.element(instanceIndex);
             const life = this.lifeBuffer.element(instanceIndex);
-            const spawnPosition = this.spawnPositionBuffer.element(instanceIndex);
             
             const deltaTime = float(1/60);
             const age = life.x;
@@ -126,95 +140,236 @@ class FlowFieldSystem {
 
             age.addAssign(deltaTime);
 
-            // Reset particle if it's dead
-            If(age.greaterThan(maxLife), () => {
+            // Check bounds first - respawn if out of bounds
+            const halfSize = float(this.gridSize * 0.5);
+            const outOfBounds = position.x.abs().greaterThan(halfSize).or(position.y.abs().greaterThan(halfSize));
+
+            // Reset particle if it's dead or out of bounds
+            const shouldReset = age.greaterThan(maxLife).or(outOfBounds);
+            If(shouldReset, () => {
                 const newPos = vec2(
                     hash(instanceIndex.add(uint(1)).add(age)).mul(2).sub(1).mul(this.gridSize * 0.5),
                     hash(instanceIndex.add(uint(2)).add(age)).mul(2).sub(1).mul(this.gridSize * 0.5)
                 );
                 position.assign(newPos);
-                spawnPosition.assign(newPos);
                 velocity.assign(vec2(0,0));
                 age.assign(0);
+                
+                // Reset new lifetime
+                const newMaxLife = hash(instanceIndex.add(uint(3)).add(age)).mul(10).add(5);
+                life.y.assign(newMaxLife);
+                
+                // Clear trail buffer to prevent long lines
+                const trailStart = mul(instanceIndex, uint(this.trailLength * 2));
+                const metaIndex = mul(instanceIndex, uint(2));
+                
+                // Reset trail metadata
+                this.trailMetaBuffer.element(metaIndex).assign(uint(0));
+                this.trailMetaBuffer.element(metaIndex.add(uint(1))).assign(uint(0));
+                
+                // Clear all positions in this particle's trail buffer
+                Loop(uint(this.trailLength), ({ i }) => {
+                    const clearIndex = trailStart.add(mul(i, uint(2)));
+                    this.trailPositionsBuffer.element(clearIndex).assign(float(-9999));
+                    this.trailPositionsBuffer.element(clearIndex.add(uint(1))).assign(float(-9999));
+                });
             });
 
             // Flow field equations: vx = sin(y), vy = sin(x)
-            const flowVel = vec2((float(1.1)).mul(position.x), (float(-1)).mul(position.y));
+            const flowVel = vec2(sin(position.y), sin(position.x));
             velocity.assign(mix(velocity, flowVel, float(0.1))); // Smoothly update velocity
             
             // Update position
             position.addAssign(velocity.mul(deltaTime));
-            
-            // Boundary wrapping
-            const halfSize = float(this.gridSize * 0.5);
-
-            // Reset particle if it goes out of bounds
-            If(position.x.abs().greaterThan(halfSize).or(position.y.abs().greaterThan(halfSize)), () => {
-                age.assign(maxLife); // Mark as dead, will be reset on next frame
-            });
         });
         
         this.updateCompute = update().compute(this.particleCount);
         
         // Initialize
         this.renderer.computeAsync(initCompute);
-        
-        // Create rendering
-        this.createParticleRendering();
     }
-    
-    private createParticleRendering(): void {
-        const geometry = new THREE.PlaneGeometry(1, 0.02); // Use a thin quad for lines
-        const material = new THREE.SpriteNodeMaterial({ 
+
+    // ===========================
+    // Trail System (Ring Buffer)
+    // ===========================
+    private initTrailSystem(): void {
+        // Ring buffer for trail positions: [particleCount * trailLength * 2] floats (x,y per position)
+        const totalTrailElements = this.particleCount * this.trailLength * 2;
+        this.trailPositionsBuffer = instancedArray(totalTrailElements, 'float');
+        
+        // Meta buffer: [particleCount * 2] -> head_index, current_length
+        this.trailMetaBuffer = instancedArray(this.particleCount * 2, 'uint');
+
+        // Initialize trail buffers
+        const trailInit = Fn(() => {
+            // Initialize all trail positions to (0,0)
+            const totalElements = uint(totalTrailElements);
+            const idx = instanceIndex;
+            
+            If(idx.lessThan(totalElements), () => {
+                this.trailPositionsBuffer.element(idx).assign(0);
+            });
+            
+            // Initialize meta buffer (head_index=0, length=0 for each particle)
+            const metaElements = uint(this.particleCount * 2);
+            If(idx.lessThan(metaElements), () => {
+                this.trailMetaBuffer.element(idx).assign(uint(0));
+            });
+        });
+
+        const trailInitCompute = trailInit().compute(Math.max(totalTrailElements, this.particleCount * 2));
+        this.renderer.computeAsync(trailInitCompute);
+
+        // Trail update compute - adds current particle position to ring buffer
+        const trailUpdate = Fn(() => {
+            const particleId = instanceIndex;
+            
+            // Get particle data
+            const currentPos = this.positionBuffer.element(particleId);
+            const life = this.lifeBuffer.element(particleId);
+            const age = life.x;
+            
+            // Calculate buffer indices for this particle
+            const trailStart = mul(particleId, uint(this.trailLength * 2)); // Start of this particle's trail data
+            const metaIndex = mul(particleId, uint(2)); // Position in meta buffer
+            
+            // Get head index and current length
+            const headIndex = this.trailMetaBuffer.element(metaIndex);
+            const currentLength = this.trailMetaBuffer.element(metaIndex.add(uint(1)));
+            
+            // Note: Trail clearing is now handled in the particle update when reset occurs
+            
+            // Calculate position in ring buffer to write new position
+            const writeIndex = trailStart.add(mul(headIndex, uint(2))); // *2 because x,y per position
+            
+            // Store current position at head
+            this.trailPositionsBuffer.element(writeIndex).assign(currentPos.x);
+            this.trailPositionsBuffer.element(writeIndex.add(uint(1))).assign(currentPos.y);
+            
+            // Update head index (ring buffer)
+            const newHeadIndex = mod(headIndex.add(uint(1)), uint(this.trailLength));
+            this.trailMetaBuffer.element(metaIndex).assign(newHeadIndex);
+            
+            // Update length (max out at trailLength)
+            const newLength = min(currentLength.add(uint(1)), uint(this.trailLength));
+            this.trailMetaBuffer.element(metaIndex.add(uint(1))).assign(newLength);
+        });
+        
+        this.trailUpdateCompute = trailUpdate().compute(this.particleCount);
+
+        // Create trail visualization
+        this.createTrailVisualization();
+        
+        console.log(`Trail system initialized:
+        - Particles: ${this.particleCount}
+        - Trail length: ${this.trailLength}
+        - Total trail points: ${this.particleCount * this.trailLength}
+        - Trail positions buffer size: ${this.particleCount * this.trailLength * 2}`);
+    }
+
+    private createTrailVisualization(): void {
+        // Create line segments between consecutive trail points
+        const maxLineSegments = this.particleCount * (this.trailLength - 1); // N-1 segments per trail
+        
+        // Create instanced array for line segment data
+        const linePositionsBuffer = instancedArray(maxLineSegments, 'vec3'); // center position
+        const lineVectorsBuffer = instancedArray(maxLineSegments, 'vec3'); // direction and length
+        const lineColorsBuffer = instancedArray(maxLineSegments, 'vec4');
+        
+        // Initialize line segments
+        const lineInit = Fn(() => {
+            const idx = instanceIndex;
+            linePositionsBuffer.element(idx).assign(vec3(-9999, -9999, 0));
+            lineVectorsBuffer.element(idx).assign(vec3(0, 0, 0));
+            lineColorsBuffer.element(idx).assign(vec4(0, 0, 0, 0));
+        });
+        
+        const lineInitCompute = lineInit().compute(maxLineSegments);
+        this.renderer.computeAsync(lineInitCompute);
+        
+        // Create compute shader to update line segments
+        const updateLines = Fn(() => {
+            const idx = instanceIndex;
+            const particleId = uint(floor(float(idx).div(float(this.trailLength - 1))));
+            const segmentId = mod(idx, uint(this.trailLength - 1));
+            
+            // Get meta info for this particle
+            const metaIndex = mul(particleId, uint(2));
+            const headIndex = this.trailMetaBuffer.element(metaIndex);
+            const currentLength = this.trailMetaBuffer.element(metaIndex.add(uint(1)));
+            
+            // Check if this segment should be visible (need at least 2 points)
+            const isValidSegment = segmentId.lessThan(currentLength.sub(uint(1)));
+            
+            If(isValidSegment, () => {
+                // Get start and end point indices in ring buffer
+                const trailStart = mul(particleId, uint(this.trailLength * 2));
+                
+                // Start point (older)
+                const startRingIndex = mod(headIndex.sub(segmentId).sub(uint(1)).add(uint(this.trailLength)), uint(this.trailLength));
+                const startPosIndex = trailStart.add(mul(startRingIndex, uint(2)));
+                const startX = this.trailPositionsBuffer.element(startPosIndex);
+                const startY = this.trailPositionsBuffer.element(startPosIndex.add(uint(1)));
+                
+                // End point (newer)
+                const endRingIndex = mod(headIndex.sub(segmentId).add(uint(this.trailLength)), uint(this.trailLength));
+                const endPosIndex = trailStart.add(mul(endRingIndex, uint(2)));
+                const endX = this.trailPositionsBuffer.element(endPosIndex);
+                const endY = this.trailPositionsBuffer.element(endPosIndex.add(uint(1)));
+                
+                // Calculate line center and vector
+                const centerX = startX.add(endX).mul(0.5);
+                const centerY = startY.add(endY).mul(0.5);
+                const vecX = endX.sub(startX);
+                const vecY = endY.sub(startY);
+                const vecLength = length(vec2(vecX, vecY));
+                
+                // Set line data
+                linePositionsBuffer.element(idx).assign(vec3(centerX, centerY, float(0)));
+                lineVectorsBuffer.element(idx).assign(vec3(vecX, vecY, vecLength));
+                
+                // Set color with fade (newer segments brighter)
+                const fadeRatio = float(segmentId).div(max(float(currentLength), float(1)));
+                const alpha = mix(float(0.2), float(0.9), fadeRatio);
+                const baseColor = mix(color('#0066ff'), color('#ff6600'), fadeRatio);
+                lineColorsBuffer.element(idx).assign(vec4(baseColor, alpha));
+            }).Else(() => {
+                // Hide segment
+                linePositionsBuffer.element(idx).assign(vec3(-9999, -9999, 0));
+                lineVectorsBuffer.element(idx).assign(vec3(0, 0, 0));
+                lineColorsBuffer.element(idx).assign(vec4(0, 0, 0, 0));
+            });
+        });
+        
+        this.trailPointUpdateCompute = updateLines().compute(maxLineSegments);
+        
+        // Create line material
+        const material = new THREE.SpriteNodeMaterial({
             transparent: true,
             blending: THREE.AdditiveBlending,
             depthWrite: false
         });
         
-        const maxLineLength = float(2.0);
-
-        const headPosition = this.positionBuffer.toAttribute();
-        const spawnPosition = this.spawnPositionBuffer.toAttribute();
-        const velocity = this.velocityBuffer.toAttribute();
+        // Set material nodes
+        material.positionNode = linePositionsBuffer.toAttribute();
+        material.colorNode = lineColorsBuffer.toAttribute();
         
-        const distFromSpawn = length(headPosition.sub(spawnPosition));
-        
-        const isGrowing = distFromSpawn.lessThan(maxLineLength);
-
-        const tailPosition = mix(
-            headPosition.sub(normalize(velocity).mul(maxLineLength)),
-            spawnPosition,
-            isGrowing.toFloat()
-        );
-        
-        const lineVec = headPosition.sub(tailPosition);
-        
-        // Position from buffer
-        material.positionNode = tailPosition.add(lineVec.mul(0.5));
-        
-        // Rotate line to align with velocity
-        material.rotationNode = atan(lineVec.y, lineVec.x);
-
-        // Color based on velocity and fade with age
-        material.colorNode = Fn(() => {
-            const vel = this.velocityBuffer.toAttribute();
-            const speed = length(vel);
-            const normalizedSpeed = speed.div(2).clamp(0, 1);
-            
-            const life = this.lifeBuffer.toAttribute();
-            const lifeRatio = life.x.div(life.y).clamp(0, 1);
-
-            const baseColor = mix(color('#0066ff'), color('#ff6600'), normalizedSpeed);
-            const alpha = sin(lifeRatio.mul(Math.PI)).mul(0.8); // Fade in and out
-
-            return vec4(baseColor, alpha);
+        // Scale based on line length and make it thin
+        material.scaleNode = Fn(() => {
+            const vec = lineVectorsBuffer.toAttribute();
+            return vec2(vec.z, float(0.02)); // length x thin height
         })();
         
-        // Scale to create growing lines
-        material.scaleNode = length(lineVec);
+        // Rotate to align with line direction
+        material.rotationNode = Fn(() => {
+            const vec = lineVectorsBuffer.toAttribute();
+            return atan(vec.y, vec.x);
+        })();
         
-        this.particleMesh = new THREE.InstancedMesh(geometry, material, this.particleCount);
-        this.scene.add(this.particleMesh);
+        // Create geometry and mesh
+        const geometry = new THREE.PlaneGeometry(1, 1); // Will be scaled and rotated
+        this.trailMesh = new THREE.InstancedMesh(geometry, material, maxLineSegments);
+        this.scene.add(this.trailMesh);
     }
 
     // ===========================
@@ -228,6 +383,7 @@ class FlowFieldSystem {
         // Compute shader to initialize grid positions and vectors
         const gridInit = Fn(() => {
             const idx = instanceIndex;
+            
 
             const res = uint(this.gridResolution);
             const xIdx = idx.mod(res).toFloat();
@@ -260,8 +416,8 @@ class FlowFieldSystem {
             // Position is static already stored; fetch position from buffer
             const pos = this.gridPositionBuffer.element(idx);
 
-            // Flow field equations (mirror particle velocity logic)
-            const flow = vec2((float(1.1)).mul(pos.x), (float(-1)).mul(pos.y));
+            // Flow field equations: vx = sin(y), vy = sin(x) (match particle logic)
+            const flow = vec2(sin(pos.y), sin(pos.x));
 
             this.gridVectorBuffer.element(idx).assign(flow);
         });
@@ -270,7 +426,7 @@ class FlowFieldSystem {
 
         // Create arrow geometry (simple elongated quad)
         const arrowWidth = 1;
-        const arrowHeight = 0.02;
+        const arrowHeight = 0.05; // Increased from 0.02 for better visibility
         const geometry = new THREE.PlaneGeometry(arrowWidth, arrowHeight);
 
         const material = new THREE.SpriteNodeMaterial({
@@ -288,18 +444,18 @@ class FlowFieldSystem {
             return atan(vec.y, vec.x);
         })();
 
-        // Scale: based on vector magnitude
+        // Scale: based on vector magnitude (increased for better visibility)
         material.scaleNode = Fn(() => {
             const vec = this.gridVectorBuffer.toAttribute();
             const mag = length(vec);
-            return mag.mul(0.04).add(0.02);
+            return mag.mul(0.15).add(0.1); // Increased from 0.04 and 0.02
         })();
 
         // Color: blue to orange based on angle
         material.colorNode = Fn(() => {
             const vec = this.gridVectorBuffer.toAttribute();
             const ang = atan(vec.y, vec.x).add(float(Math.PI)).div(float(Math.PI * 2)); // 0-1
-            return vec4(mix(color('#0066ff'), color('#ff6600'), ang), 0.9);
+            return vec4(mix(color('#0066ff'), color('#ff6600'), ang), 1.0); // Full opacity
         })();
 
         // Create instanced mesh
@@ -308,11 +464,30 @@ class FlowFieldSystem {
     }
     
     public async update(): Promise<void> {
+        // Update particles
         if (this.updateCompute) {
             try {
                 await this.renderer.computeAsync(this.updateCompute);
             } catch (error) {
-                console.error('Compute error:', error);
+                console.error('Particle compute error:', error);
+            }
+        }
+
+        // Update trails (add current positions to ring buffer)
+        if (this.trailUpdateCompute) {
+            try {
+                await this.renderer.computeAsync(this.trailUpdateCompute);
+            } catch (error) {
+                console.error('Trail compute error:', error);
+            }
+        }
+
+        // Update trail point visualization
+        if (this.trailPointUpdateCompute) {
+            try {
+                await this.renderer.computeAsync(this.trailPointUpdateCompute);
+            } catch (error) {
+                console.error('Trail point compute error:', error);
             }
         }
 
