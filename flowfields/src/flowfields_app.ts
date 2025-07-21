@@ -7,7 +7,6 @@ import {
     Fn, 
     instanceIndex, 
     instancedArray,
-    sin,
     length,
     hash,
     mix,
@@ -298,7 +297,6 @@ class FlowFieldSystem {
             // Get particle data
             const currentPos = this.positionBuffer.element(particleId);
             const resetCounter = this.resetFlagBuffer.element(particleId);
-            const fadeTimer = this.fadeTimerBuffer.element(particleId);
             
             const trailStart = mul(particleId, uint(this.trailLength * 2));
             const metaIndex = mul(particleId, uint(2));
