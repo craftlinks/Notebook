@@ -14,7 +14,9 @@ import {
     uint,
     mod,
     mul,
-    atan
+    atan,
+    If,
+    normalize
 } from 'three/tsl';
 
 /**
@@ -38,6 +40,8 @@ class FlowFieldSystem {
     
     private positionBuffer!: any;
     private velocityBuffer!: any;
+    private lifeBuffer!: any; // To store age and maxLife
+    private spawnPositionBuffer!: any; // To store spawn position
     private updateCompute!: any;
     private particleMesh!: THREE.InstancedMesh;
     
@@ -81,20 +85,30 @@ class FlowFieldSystem {
         // Create buffers following the exact pattern from the working example
         this.positionBuffer = instancedArray(this.particleCount, 'vec2');
         this.velocityBuffer = instancedArray(this.particleCount, 'vec2');
+        this.lifeBuffer = instancedArray(this.particleCount, 'vec2'); // x: age, y: maxLife
+        this.spawnPositionBuffer = instancedArray(this.particleCount, 'vec2');
         
         // Initialize particles
         const init = Fn(() => {
             const position = this.positionBuffer.element(instanceIndex);
             const velocity = this.velocityBuffer.element(instanceIndex);
+            const life = this.lifeBuffer.element(instanceIndex);
+            const spawnPosition = this.spawnPositionBuffer.element(instanceIndex);
             
             // Random initial position
             const randomPos = vec2(
-                hash(instanceIndex.add(uint(1))).mul(2).sub(1).mul(this.gridSize * 0.2),
-                hash(instanceIndex.add(uint(2))).mul(2).sub(1).mul(this.gridSize * 0.2)
+                hash(instanceIndex.add(uint(1))).mul(2).sub(1).mul(this.gridSize * 0.5),
+                hash(instanceIndex.add(uint(2))).mul(2).sub(1).mul(this.gridSize * 0.5)
             );
             
             position.assign(randomPos);
+            spawnPosition.assign(randomPos);
             velocity.assign(vec2(0, 0));
+
+            // Assign random lifetime
+            const maxLife = hash(instanceIndex.add(uint(3))).mul(5).add(2); // 2-7 seconds
+            const age = hash(instanceIndex.add(uint(4))).mul(maxLife); // Start with a random age
+            life.assign(vec2(age, maxLife));
         });
         
         const initCompute = init().compute(this.particleCount);
@@ -103,21 +117,41 @@ class FlowFieldSystem {
         const update = Fn(() => {
             const position = this.positionBuffer.element(instanceIndex);
             const velocity = this.velocityBuffer.element(instanceIndex);
+            const life = this.lifeBuffer.element(instanceIndex);
+            const spawnPosition = this.spawnPositionBuffer.element(instanceIndex);
             
+            const deltaTime = float(1/60);
+            const age = life.x;
+            const maxLife = life.y;
+
+            age.addAssign(deltaTime);
+
+            // Reset particle if it's dead
+            If(age.greaterThan(maxLife), () => {
+                const newPos = vec2(
+                    hash(instanceIndex.add(uint(1)).add(age)).mul(2).sub(1).mul(this.gridSize * 0.5),
+                    hash(instanceIndex.add(uint(2)).add(age)).mul(2).sub(1).mul(this.gridSize * 0.5)
+                );
+                position.assign(newPos);
+                spawnPosition.assign(newPos);
+                velocity.assign(vec2(0,0));
+                age.assign(0);
+            });
+
             // Flow field equations: vx = sin(y), vy = sin(x)
             const flowVel = vec2((float(1.1)).mul(position.x), (float(-1)).mul(position.y));
-            velocity.assign(flowVel);
+            velocity.assign(mix(velocity, flowVel, float(0.1))); // Smoothly update velocity
             
             // Update position
-            const deltaTime = float(1/60);
             position.addAssign(velocity.mul(deltaTime));
             
             // Boundary wrapping
             const halfSize = float(this.gridSize * 0.5);
-            position.assign(vec2(
-                mod(position.x.add(halfSize), float(this.gridSize)).sub(halfSize),
-                mod(position.y.add(halfSize), float(this.gridSize)).sub(halfSize)
-            ));
+
+            // Reset particle if it goes out of bounds
+            If(position.x.abs().greaterThan(halfSize).or(position.y.abs().greaterThan(halfSize)), () => {
+                age.assign(maxLife); // Mark as dead, will be reset on next frame
+            });
         });
         
         this.updateCompute = update().compute(this.particleCount);
@@ -130,34 +164,54 @@ class FlowFieldSystem {
     }
     
     private createParticleRendering(): void {
-        const geometry = new THREE.PlaneGeometry(1, 1);
+        const geometry = new THREE.PlaneGeometry(1, 0.02); // Use a thin quad for lines
         const material = new THREE.SpriteNodeMaterial({ 
             transparent: true,
             blending: THREE.AdditiveBlending,
             depthWrite: false
         });
         
-        // Position from buffer
-        material.positionNode = this.positionBuffer.toAttribute();
+        const maxLineLength = float(2.0);
+
+        const headPosition = this.positionBuffer.toAttribute();
+        const spawnPosition = this.spawnPositionBuffer.toAttribute();
+        const velocity = this.velocityBuffer.toAttribute();
         
-        // Color based on velocity
+        const distFromSpawn = length(headPosition.sub(spawnPosition));
+        
+        const isGrowing = distFromSpawn.lessThan(maxLineLength);
+
+        const tailPosition = mix(
+            headPosition.sub(normalize(velocity).mul(maxLineLength)),
+            spawnPosition,
+            isGrowing.toFloat()
+        );
+        
+        const lineVec = headPosition.sub(tailPosition);
+        
+        // Position from buffer
+        material.positionNode = tailPosition.add(lineVec.mul(0.5));
+        
+        // Rotate line to align with velocity
+        material.rotationNode = atan(lineVec.y, lineVec.x);
+
+        // Color based on velocity and fade with age
         material.colorNode = Fn(() => {
             const vel = this.velocityBuffer.toAttribute();
             const speed = length(vel);
             const normalizedSpeed = speed.div(2).clamp(0, 1);
             
-            return vec4(
-                mix(color('#0066ff'), color('#ff6600'), normalizedSpeed),
-                0.8
-            );
+            const life = this.lifeBuffer.toAttribute();
+            const lifeRatio = life.x.div(life.y).clamp(0, 1);
+
+            const baseColor = mix(color('#0066ff'), color('#ff6600'), normalizedSpeed);
+            const alpha = sin(lifeRatio.mul(Math.PI)).mul(0.8); // Fade in and out
+
+            return vec4(baseColor, alpha);
         })();
         
-        // Scale based on velocity
-        material.scaleNode = Fn(() => {
-            const vel = this.velocityBuffer.toAttribute();
-            const speed = length(vel);
-            return speed.mul(0.015).add(0.01);
-        })();
+        // Scale to create growing lines
+        material.scaleNode = length(lineVec);
         
         this.particleMesh = new THREE.InstancedMesh(geometry, material, this.particleCount);
         this.scene.add(this.particleMesh);
@@ -181,9 +235,11 @@ class FlowFieldSystem {
 
             const halfSize = float(this.gridSize * 0.5);
             const gridSizeF = float(this.gridSize);
+            const resF = float(this.gridResolution);
 
-            const posX = xIdx.div(float(this.gridResolution)).mul(gridSizeF).sub(halfSize);
-            const posY = yIdx.div(float(this.gridResolution)).mul(gridSizeF).sub(halfSize);
+            // Center grid points in their cells
+            const posX = xIdx.toFloat().add(0.5).div(resF).mul(gridSizeF).sub(halfSize);
+            const posY = yIdx.toFloat().add(0.5).div(resF).mul(gridSizeF).sub(halfSize);
 
             // Assign position
             this.gridPositionBuffer.element(idx).assign(vec2(posX, posY));
