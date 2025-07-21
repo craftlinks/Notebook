@@ -188,25 +188,26 @@ class FlowFieldSystem {
                 // Increment reset counter (how many frames since reset)
                 resetCounter.assign(resetCounter.add(uint(1)).min(uint(10)));
                 
-                // Glycolytic oscillator (Higgins-Selkov model)
-                // dx/dt = -x + a*y + x^2*y
-                // dy/dt = b - a*y - x^2*y
+                // Lotka-Volterra predator-prey model
+                // dx/dt = alpha * x - beta * x * y  (prey)
+                // dy/dt = delta * x * y - gamma * y (predators)
                 const x_pos = position.x.div(float(this.gridSize * 0.5)); // Normalize to [-1, 1] range
                 const y_pos = position.y.div(float(this.gridSize * 0.5));
                 
-                // Map position to positive concentration values. The model requires x, y > 0.
-                const x = x_pos.add(1.0).mul(0.5); 
-                const y = y_pos.add(1.0).mul(0.5); 
-                
-                // Parameters for the Higgins-Selkov model
-                const a = float(0.8);
-                // Let b vary spatially for more interesting patterns
-                const b = float(0.6)
+                // Map position to positive population values (prey, predators)
+                // We'll scale them to make the dynamics more visible in the view.
+                const prey = x_pos.add(1.0).mul(2.0); // mapped to range ~[0, 4]
+                const predators = y_pos.add(1.0).mul(2.0); // mapped to range ~[0, 4]
 
-                // Higgins-Selkov equations
-                const commonTerm = a.mul(y).add(x.mul(x).mul(y));
-                const dx_dt = x.negate().add(commonTerm);
-                const dy_dt = b.sub(commonTerm);
+                // Lotka-Volterra parameters
+                const alpha = float(0.5); // Prey growth rate
+                const beta = float(0.5);  // Prey death rate from predation
+                const delta = float(0.5); // Predator growth from predation
+                const gamma = float(0.5); // Predator death rate
+
+                // Lotka-Volterra equations
+                const dx_dt = prey.mul(alpha).sub(beta.mul(prey).mul(predators));
+                const dy_dt = delta.mul(prey).mul(predators).sub(gamma.mul(predators));
                 
                 // Scale the flow field to a reasonable speed
                 const flowVel = vec2(dx_dt, dy_dt).mul(2.0);
@@ -573,25 +574,25 @@ class FlowFieldSystem {
             // Position is static already stored; fetch position from buffer
             const pos = this.gridPositionBuffer.element(idx);
 
-            // Glycolytic oscillator (Higgins-Selkov model)
-            // dx/dt = -x + a*y + x^2*y
-            // dy/dt = b - a*y - x^2*y
+            // Lotka-Volterra predator-prey model
+            // dx/dt = alpha * x - beta * x * y  (prey)
+            // dy/dt = delta * x * y - gamma * y (predators)
             const x_pos = pos.x.div(float(this.gridSize * 0.5)); // Normalize to [-1, 1] range
             const y_pos = pos.y.div(float(this.gridSize * 0.5));
             
-            // Map position to positive concentration values. The model requires x, y > 0.
-            const x = x_pos.add(1.5).mul(1.5); // Approx [0.75, 3.75]
-            const y = y_pos.add(1.5).mul(1.5); // Approx [0.75, 3.75]
+            // Map position to positive population values (prey, predators)
+            const prey = x_pos.add(1.0).mul(2.0);
+            const predators = y_pos.add(1.0).mul(2.0);
             
-            // Parameters for the Higgins-Selkov model
-            const a = float(0.1);
-            // Let b vary spatially for more interesting patterns
-            const b = float(0.6).add(sin(x_pos.mul(Math.PI)).mul(sin(y_pos.mul(Math.PI))).mul(0.5)); // b in [0.1, 1.1]
+            // Lotka-Volterra parameters
+            const alpha = float(1.0);
+            const beta = float(0.5);
+            const delta = float(0.5);
+            const gamma = float(2.0);
 
-            // Higgins-Selkov equations
-            const commonTerm = a.mul(y).add(x.mul(x).mul(y));
-            const dx_dt = x.negate().add(commonTerm);
-            const dy_dt = b.sub(commonTerm);
+            // Lotka-Volterra equations
+            const dx_dt = prey.mul(alpha).sub(beta.mul(prey).mul(predators));
+            const dy_dt = delta.mul(prey).mul(predators).sub(gamma.mul(predators));
             
             // Scale the flow field to reasonable magnitude for visualization
             const flow = vec2(dx_dt, dy_dt).mul(0.25);
