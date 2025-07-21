@@ -13,6 +13,8 @@ import {
     color,
     uint,
     mod,
+    mul,
+    atan
 } from 'three/tsl';
 
 /**
@@ -25,7 +27,14 @@ class FlowFieldSystem {
     private camera!: THREE.OrthographicCamera;
     
     private particleCount = 16384;
-    private gridSize = 10;
+    private gridSize = 32;
+    // New grid properties
+    private gridResolution = 32;
+    private gridCount = this.gridResolution * this.gridResolution;
+    private gridPositionBuffer!: any;
+    private gridVectorBuffer!: any;
+    private gridMesh!: THREE.InstancedMesh;
+    private gridUpdateCompute!: any;
     
     private positionBuffer!: any;
     private velocityBuffer!: any;
@@ -40,6 +49,7 @@ class FlowFieldSystem {
         await this.initRenderer(canvas);
         this.initScene();
         this.initParticles();
+        this.initGridVectors(); // <- add grid visualization
     }
     
     private async initRenderer(canvas: HTMLCanvasElement): Promise<void> {
@@ -79,8 +89,8 @@ class FlowFieldSystem {
             
             // Random initial position
             const randomPos = vec2(
-                hash(instanceIndex.add(uint(1))).mul(2).sub(1).mul(this.gridSize * 0.4),
-                hash(instanceIndex.add(uint(2))).mul(2).sub(1).mul(this.gridSize * 0.4)
+                hash(instanceIndex.add(uint(1))).mul(2).sub(1).mul(this.gridSize * 0.2),
+                hash(instanceIndex.add(uint(2))).mul(2).sub(1).mul(this.gridSize * 0.2)
             );
             
             position.assign(randomPos);
@@ -95,7 +105,7 @@ class FlowFieldSystem {
             const velocity = this.velocityBuffer.element(instanceIndex);
             
             // Flow field equations: vx = sin(y), vy = sin(x)
-            const flowVel = vec2(sin(position.y), sin(position.x));
+            const flowVel = vec2((float(1.1)).mul(position.x), (float(-1)).mul(position.y));
             velocity.assign(flowVel);
             
             // Update position
@@ -146,11 +156,99 @@ class FlowFieldSystem {
         material.scaleNode = Fn(() => {
             const vel = this.velocityBuffer.toAttribute();
             const speed = length(vel);
-            return speed.mul(0.03).add(0.02);
+            return speed.mul(0.015).add(0.01);
         })();
         
         this.particleMesh = new THREE.InstancedMesh(geometry, material, this.particleCount);
         this.scene.add(this.particleMesh);
+    }
+
+    // ===========================
+    // Grid Vector Visualization
+    // ===========================
+    private initGridVectors(): void {
+        // Create buffers for grid positions and vectors
+        this.gridPositionBuffer = instancedArray(this.gridCount, 'vec2');
+        this.gridVectorBuffer = instancedArray(this.gridCount, 'vec2');
+
+        // Compute shader to initialize grid positions and vectors
+        const gridInit = Fn(() => {
+            const idx = instanceIndex;
+
+            const res = uint(this.gridResolution);
+            const xIdx = idx.mod(res).toFloat();
+            const yIdx = idx.div(res).toFloat();
+
+            const halfSize = float(this.gridSize * 0.5);
+            const gridSizeF = float(this.gridSize);
+
+            const posX = xIdx.div(float(this.gridResolution)).mul(gridSizeF).sub(halfSize);
+            const posY = yIdx.div(float(this.gridResolution)).mul(gridSizeF).sub(halfSize);
+
+            // Assign position
+            this.gridPositionBuffer.element(idx).assign(vec2(posX, posY));
+
+            // Flow field vector: v = (sin(y), sin(x))
+            const vx = sin(posY);
+            const vy = sin(posX);
+            this.gridVectorBuffer.element(idx).assign(vec2(vx, vy));
+        });
+
+        const gridInitCompute = gridInit().compute(this.gridCount);
+        this.renderer.computeAsync(gridInitCompute);
+
+        // Create compute shader to update vectors each frame (keeps grid arrows synced with flow equation)
+        const gridUpdate = Fn(() => {
+            const idx = instanceIndex;
+
+            // Position is static already stored; fetch position from buffer
+            const pos = this.gridPositionBuffer.element(idx);
+
+            // Flow field equations (mirror particle velocity logic)
+            const flow = vec2((float(1.1)).mul(pos.x), (float(-1)).mul(pos.y));
+
+            this.gridVectorBuffer.element(idx).assign(flow);
+        });
+
+        this.gridUpdateCompute = gridUpdate().compute(this.gridCount);
+
+        // Create arrow geometry (simple elongated quad)
+        const arrowWidth = 1;
+        const arrowHeight = 0.02;
+        const geometry = new THREE.PlaneGeometry(arrowWidth, arrowHeight);
+
+        const material = new THREE.SpriteNodeMaterial({
+            transparent: true,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending
+        });
+
+        // Position from buffer
+        material.positionNode = this.gridPositionBuffer.toAttribute();
+
+        // Rotation based on vector direction
+        material.rotationNode = Fn(() => {
+            const vec = this.gridVectorBuffer.toAttribute();
+            return atan(vec.y, vec.x);
+        })();
+
+        // Scale: based on vector magnitude
+        material.scaleNode = Fn(() => {
+            const vec = this.gridVectorBuffer.toAttribute();
+            const mag = length(vec);
+            return mag.mul(0.04).add(0.02);
+        })();
+
+        // Color: blue to orange based on angle
+        material.colorNode = Fn(() => {
+            const vec = this.gridVectorBuffer.toAttribute();
+            const ang = atan(vec.y, vec.x).add(float(Math.PI)).div(float(Math.PI * 2)); // 0-1
+            return vec4(mix(color('#0066ff'), color('#ff6600'), ang), 0.9);
+        })();
+
+        // Create instanced mesh
+        this.gridMesh = new THREE.InstancedMesh(geometry, material, this.gridCount);
+        this.scene.add(this.gridMesh);
     }
     
     public async update(): Promise<void> {
@@ -159,6 +257,15 @@ class FlowFieldSystem {
                 await this.renderer.computeAsync(this.updateCompute);
             } catch (error) {
                 console.error('Compute error:', error);
+            }
+        }
+
+        // Update grid vectors each frame
+        if (this.gridUpdateCompute) {
+            try {
+                await this.renderer.computeAsync(this.gridUpdateCompute);
+            } catch (error) {
+                console.error('Grid compute error:', error);
             }
         }
         
