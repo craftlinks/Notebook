@@ -24,6 +24,7 @@ import {
     Loop,
     uniform
 } from 'three/tsl';
+import { testParser } from './parser';
 
 /**
  * Simplified Flow Field Visualization System
@@ -726,6 +727,10 @@ class FlowFieldApp {
         this.canvas.style.zIndex = '-1';
         document.body.appendChild(this.canvas);
         
+        // --- TEST PARSER ---
+        await testParser();
+        // ---------------------
+
         // Initialize flow field system
         this.flowField = new FlowFieldSystem(this.canvas);
         

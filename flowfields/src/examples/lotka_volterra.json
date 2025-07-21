@@ -1,0 +1,22 @@
+{
+    "name": "Lotka-Volterra",
+    "description": "A classic predator-prey model.",
+    "parameters": {
+      "alpha": { "initial": 0.5, "min": 0.0, "max": 2.0, "description": "Prey growth rate" },
+      "beta":  { "initial": 0.5, "min": 0.0, "max": 2.0, "description": "Predation rate" },
+      "delta": { "initial": 0.5, "min": 0.0, "max": 2.0, "description": "Predator growth from predation" },
+      "gamma": { "initial": 0.5, "min": 0.0, "max": 2.0, "description": "Predator death rate" }
+    },
+    "variables": {
+      "prey": "(x + 1.0) * 2.0",
+      "predators": "(y + 1.0) * 2.0"
+    },
+    "equations": {
+      "dx_dt": "alpha * prey - beta * prey * predators",
+      "dy_dt": "delta * prey * predators - gamma * predators"
+    },
+    "config": {
+      "velocity_scale": 2.0,
+      "smoothing_factor": 0.1
+    }
+  } 
