@@ -24,7 +24,11 @@ import {
     Loop,
     uniform
 } from 'three/tsl';
-import { testParser } from './parser';
+import type { EquationSystem } from './parser';
+import { loadEquationSystem } from './parser';
+import type { GeneratedTSL, UIUniforms } from './tsl_generator';
+import { generateTSL } from './tsl_generator';
+import { UIManager } from './ui_manager';
 
 /**
  * Simplified Flow Field Visualization System
@@ -58,6 +62,12 @@ class FlowFieldSystem {
     private fadeTimerBuffer!: any; // Timer for trail fading when particle resets
     private updateCompute!: any;
     
+    // Dynamically generated equation system
+    private equationSystem!: EquationSystem;
+    private tslSystem!: GeneratedTSL;
+    private uiUniforms!: UIUniforms;
+    private uiManager!: UIManager;
+    
     // Trail system
     private trailPositionsBuffer!: any; // Ring buffer: [particleCount * trailLength * 2] (x,y positions)
     private trailMetaBuffer!: any; // [particleCount * 2] (head_index, length)
@@ -67,6 +77,7 @@ class FlowFieldSystem {
     
     constructor(canvas: HTMLCanvasElement) {
         this.init(canvas);
+        this.uiManager = new UIManager();
     }
     
     private async init(canvas: HTMLCanvasElement): Promise<void> {
@@ -75,6 +86,10 @@ class FlowFieldSystem {
         this.initParticles();
         this.initTrailSystem();
         // this.initGridVectors();
+        
+        // --- TEST PARSER ---
+        // await testParser(); We know this works now.
+        // ---------------------
     }
     
     private async initRenderer(canvas: HTMLCanvasElement): Promise<void> {
@@ -104,13 +119,47 @@ class FlowFieldSystem {
         this.camera.position.z = 10;
     }
     
-    private initParticles(): void {
+    private async initParticles(): Promise<void> {
+        // =============================================================
+        // Initialize Particle Buffers
+        // =============================================================
+        
         // Create buffers for basic particle data
         this.positionBuffer = instancedArray(this.particleCount, 'vec2');
         this.velocityBuffer = instancedArray(this.particleCount, 'vec2');
         this.lifeBuffer = instancedArray(this.particleCount, 'vec2'); // x: age, y: maxLife
         this.resetFlagBuffer = instancedArray(this.particleCount, 'uint'); // frames since reset (0 = just reset)
         this.fadeTimerBuffer = instancedArray(this.particleCount, 'float'); // fade timer for trails (0 = no fade, >0 = fading)
+
+        // =============================================================
+        // Load, Parse, and Generate the Equation System
+        // =============================================================
+
+        // 1. Load the desired equation file.
+        // We'll start with Lotka-Volterra. This can be made selectable later.
+        this.equationSystem = await loadEquationSystem('/src/examples/lotka_volterra.json');
+        
+        // Define the normalized position node that will be passed to the generator.
+        const normalizedPosition = this.positionBuffer.element(instanceIndex).div(
+            vec2(
+                float(this.gridSize * 0.5).mul(this.aspectUniform),
+                float(this.gridSize * 0.5)
+            )
+        );
+
+        // 2. Generate the TSL compute function and uniforms.
+        this.tslSystem = generateTSL(this.equationSystem, normalizedPosition);
+        this.uiUniforms = this.tslSystem.uniforms; // Store for future UI controls
+
+        // 3. Create the UI for the loaded system
+        this.uiManager.createUIForSystem(this.equationSystem, this.uiUniforms);
+
+        console.log("Successfully generated TSL for:", this.equationSystem.name);
+        console.log("Generated Uniforms:", this.uiUniforms);
+        
+        // =============================================================
+        // Initialize Particle State (using a compute shader)
+        // =============================================================
         
         // Generate random seeds at compile time to break index patterns
         const seedX = Math.floor(Math.random() * 0xffffff);
@@ -189,32 +238,23 @@ class FlowFieldSystem {
                 // Increment reset counter (how many frames since reset)
                 resetCounter.assign(resetCounter.add(uint(1)).min(uint(10)));
                 
-                // Lotka-Volterra predator-prey model
-                // dx/dt = alpha * x - beta * x * y  (prey)
-                // dy/dt = delta * x * y - gamma * y (predators)
-                const x_pos = position.x.div(float(this.gridSize * 0.5)); // Normalize to [-1, 1] range
-                const y_pos = position.y.div(float(this.gridSize * 0.5));
+                // ===============================================================
+                // DYNAMICALLY GENERATED FLOW FIELD
+                // ===============================================================
                 
-                // Map position to positive population values (prey, predators)
-                // We'll scale them to make the dynamics more visible in the view.
-                const prey = x_pos.add(1.0).mul(2.0); // mapped to range ~[0, 4]
-                const predators = y_pos.add(1.0).mul(2.0); // mapped to range ~[0, 4]
+                // Call the dynamically generated TSL function to get the flow vector.
+                const flowVector = this.tslSystem.computeFn();
 
-                // Lotka-Volterra parameters
-                const alpha = float(0.5); // Prey growth rate
-                const beta = float(0.5);  // Prey death rate from predation
-                const delta = float(0.5); // Predator growth from predation
-                const gamma = float(0.5); // Predator death rate
+                // Get config from the loaded system, with defaults.
+                const velocityScale = float(this.tslSystem.config?.velocity_scale ?? 1.0);
+                const smoothing = float(this.tslSystem.config?.smoothing_factor ?? 0.1);
 
-                // Lotka-Volterra equations
-                const dx_dt = prey.mul(alpha).sub(beta.mul(prey).mul(predators));
-                const dy_dt = delta.mul(prey).mul(predators).sub(gamma.mul(predators));
-                
-                // Scale the flow field to a reasonable speed
-                const flowVel = vec2(dx_dt, dy_dt).mul(2.0);
-                
-                velocity.assign(mix(velocity, flowVel, float(0.1))); // Smoothly update velocity
+                // Scale the flow field and smoothly update velocity
+                const flowVel = flowVector.mul(velocityScale);
+                velocity.assign(mix(velocity, flowVel, smoothing));
                 position.addAssign(velocity.mul(deltaTime));
+                
+                // ===============================================================
                 
                 // Handle fading logic
                 If(fadeTimer.greaterThan(0), () => {
@@ -727,10 +767,6 @@ class FlowFieldApp {
         this.canvas.style.zIndex = '-1';
         document.body.appendChild(this.canvas);
         
-        // --- TEST PARSER ---
-        await testParser();
-        // ---------------------
-
         // Initialize flow field system
         this.flowField = new FlowFieldSystem(this.canvas);
         

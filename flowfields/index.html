@@ -9,29 +9,97 @@
             margin: 0;
             padding: 0;
             background: #000;
-            font-family: Arial, sans-serif;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             overflow: hidden;
+            color: #eee;
         }
         
-        .container {
+        canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            z-index: -1;
+        }
+
+        #ui-panel {
             position: absolute;
-            top: 20px;
-            left: 20px;
+            top: 15px;
+            right: 15px;
+            width: 320px;
+            background: rgba(20, 30, 40, 0.85);
+            border: 1px solid #334455;
+            border-radius: 8px;
+            padding: 10px 20px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
             z-index: 10;
-            color: white;
-            pointer-events: none;
+        }
+
+        h1, h2, h3 {
+            margin: 0 0 10px 0;
+            padding: 0;
+            border-bottom: 1px solid #334455;
+            padding-bottom: 8px;
+        }
+
+        h1 { font-size: 22px; }
+        h2 { font-size: 18px; margin-top: 15px; }
+        h3 { font-size: 16px; margin-top: 15px; border-bottom: none; }
+
+        #equation-info p {
+            font-size: 14px;
+            margin: 5px 0;
+            color: #ccc;
         }
         
-        h1 {
-            margin: 0;
-            font-size: 24px;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+        #equation-display code {
+            display: block;
+            background: #111;
+            padding: 8px;
+            border-radius: 4px;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 13px;
+            margin-bottom: 5px;
+            white-space: pre-wrap;
         }
+
+        .slider-container {
+            margin-bottom: 10px;
+        }
+
+        .slider-container label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 14px;
+            margin-bottom: 5px;
+        }
+        
+        .slider-container span {
+            font-weight: bold;
+            color: #66ccff;
+        }
+
+        .slider-container input[type="range"] {
+            width: 100%;
+            cursor: pointer;
+        }
+
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>2D Flow Fields</h1>
+    <div id="ui-panel">
+        <div id="equation-info">
+            <h2 id="equation-name">Loading...</h2>
+            <p id="equation-description"></p>
+        </div>
+        <div id="equation-display">
+            <h3>Equations</h3>
+            <div id="dx_dt_display"></div>
+            <div id="dy_dt_display"></div>
+        </div>
+        <div id="parameter-controls">
+            <h3>Parameters</h3>
+            <div id="sliders-container"></div>
+        </div>
     </div>
     <script type="module" src="/src/flowfields_app.ts"></script>
 </body>
