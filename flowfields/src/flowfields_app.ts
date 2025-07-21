@@ -25,7 +25,8 @@ import {
     max,
     min,
     clamp,
-    Loop
+    Loop,
+    uniform
 } from 'three/tsl';
 
 /**
@@ -36,6 +37,7 @@ class FlowFieldSystem {
     private renderer!: THREE.WebGPURenderer;
     private scene!: THREE.Scene;
     private camera!: THREE.OrthographicCamera;
+    private aspectUniform!: any;
     
     private particleCount = 32768; // Reduce for debugging
     private gridSize = 32;
@@ -92,6 +94,8 @@ class FlowFieldSystem {
         this.scene = new THREE.Scene();
         
         const aspect = window.innerWidth / window.innerHeight;
+        this.aspectUniform = uniform(aspect);
+
         const frustumSize = this.gridSize;
         this.camera = new THREE.OrthographicCamera(
             -frustumSize * aspect / 2, frustumSize * aspect / 2,
@@ -122,9 +126,11 @@ class FlowFieldSystem {
             const life = this.lifeBuffer.element(instanceIndex);
             
             // Random initial position with better hash spreading
+            const spawnWidth = float(this.gridSize * 0.5).mul(this.aspectUniform);
+            const spawnHeight = float(this.gridSize * 0.5);
             const randomPos = vec2(
-                hash(instanceIndex.mul(uint(97)).add(uint(seedX))).mul(2).sub(1).mul(this.gridSize * 0.5),
-                hash(instanceIndex.mul(uint(103)).add(uint(seedY))).mul(2).sub(1).mul(this.gridSize * 0.5)
+                hash(instanceIndex.mul(uint(97)).add(uint(seedX))).mul(2).sub(1).mul(spawnWidth),
+                hash(instanceIndex.mul(uint(103)).add(uint(seedY))).mul(2).sub(1).mul(spawnHeight)
             );
             
             position.assign(randomPos);
@@ -196,9 +202,11 @@ class FlowFieldSystem {
                     // Mix instanceIndex with multiple varying factors
                     const resetSeed = instanceIndex.mul(uint(127)).add(uint(floor(fadeTimer.mul(1000)))).add(uint(resetCounter));
                     
+                    const spawnWidth = float(this.gridSize * 0.5).mul(this.aspectUniform);
+                    const spawnHeight = float(this.gridSize * 0.5);
                     const newPos = vec2(
-                        hash(resetSeed.add(uint(31))).mul(2).sub(1).mul(this.gridSize * 0.5),
-                        hash(resetSeed.add(uint(37))).mul(2).sub(1).mul(this.gridSize * 0.5)
+                        hash(resetSeed.add(uint(31))).mul(2).sub(1).mul(spawnWidth),
+                        hash(resetSeed.add(uint(37))).mul(2).sub(1).mul(spawnHeight)
                     );
                     position.assign(newPos);
                     velocity.assign(vec2(0,0));
@@ -216,8 +224,9 @@ class FlowFieldSystem {
                 });
             }).Else(() => {
                 // Not currently fading - check if we should start fading
-                const halfSize = float(this.gridSize * 0.5);
-                const farOutOfBounds = position.x.abs().greaterThan(halfSize.mul(1.2)).or(position.y.abs().greaterThan(halfSize.mul(1.2)));
+                const halfSizeX = float(this.gridSize * 0.5).mul(this.aspectUniform);
+                const halfSizeY = float(this.gridSize * 0.5);
+                const farOutOfBounds = position.x.abs().greaterThan(halfSizeX.mul(1.2)).or(position.y.abs().greaterThan(halfSizeY.mul(1.2)));
                 
                 // Add some randomness to death timing to prevent synchronized fading
                 const deathThreshold = hash(instanceIndex.mul(uint(139))).mul(0.5).add(0.8); // 0.8-1.3 multiplier
@@ -640,6 +649,8 @@ class FlowFieldSystem {
     
     public onResize(): void {
         const aspect = window.innerWidth / window.innerHeight;
+        this.aspectUniform.value = aspect;
+        
         const frustumSize = this.gridSize;
         
         this.camera.left = -frustumSize * aspect / 2;
