@@ -1,6 +1,6 @@
 // flowfields/src/tsl_generator.ts
 import { 
-    uniform, float, vec2, sin, cos, mul, add, sub, div, Fn,
+    uniform, float, vec2, sin, cos, tan, asin, acos, atan, pow, exp, log, sqrt, abs, sign, floor, ceil, min, max, mod, mul, add, sub, div, Fn,
     type ShaderNodeObject
 } from 'three/tsl';
 import type { EquationSystem } from './parser';
@@ -33,6 +33,21 @@ export interface GeneratedTSL {
 const TSL_FN_MAP: Record<string, (...args: any[]) => ShaderNodeObject<any>> = {
     sin,
     cos,
+    tan,
+    asin,
+    acos,
+    atan,
+    pow,
+    exp,
+    log,
+    sqrt,
+    abs,
+    sign,
+    floor,
+    ceil,
+    min,
+    max,
+    mod,
 };
 
 /**
@@ -98,11 +113,24 @@ function parseExpression(expression: string, scope: Record<string, ShaderNodeObj
     const fnMatch = expression.match(/^(\w+)\((.*)\)$/);
     if (fnMatch) {
         const fnName = fnMatch[1];
-        const argExpr = fnMatch[2];
+        const argsExpr = fnMatch[2];
         const tslFn = TSL_FN_MAP[fnName];
         if (tslFn) {
-            const argNode = parseExpression(argExpr, scope);
-            return tslFn(argNode);
+            const argExpressions: string[] = [];
+            let level = 0;
+            let lastSplit = 0;
+            for (let i = 0; i < argsExpr.length; i++) {
+                if (argsExpr[i] === '(') level++;
+                else if (argsExpr[i] === ')') level--;
+                else if (argsExpr[i] === ',' && level === 0) {
+                    argExpressions.push(argsExpr.substring(lastSplit, i));
+                    lastSplit = i + 1;
+                }
+            }
+            argExpressions.push(argsExpr.substring(lastSplit));
+
+            const argNodes = argExpressions.map(arg => parseExpression(arg, scope));
+            return tslFn(...argNodes);
         } else {
             throw new Error(`Unknown function in expression: ${fnName}`);
         }
