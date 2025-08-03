@@ -20,3 +20,16 @@ pnpm-debug.log*
 
 # jetbrains setting folder
 .idea/
+
+# Created by https://www.gitignore.io/api/zig
+# Edit at https://www.gitignore.io/?templates=zig
+
+### zig ###
+# Zig programming language
+.zig-cache/
+zig-out/
+build/
+build-*/
+docgen_tmp/
+
+# End of https://www.gitignore.io/api/zig
