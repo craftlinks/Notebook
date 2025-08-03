@@ -79,6 +79,7 @@
         "build.zig",
         "build.zig.zon",
         "src",
+        "cclap",
         // For example...
         //"LICENSE",
         //"README.md",
