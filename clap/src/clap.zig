@@ -479,9 +479,26 @@ const extensionParams = cl.clap_plugin_params_t{
             // For parameters that have been modified by the main thread, send CLAP_EVENT_PARAM_VALUE events to the host.
             pluginSyncMainToAudio(plugin, out);
 
-            // Process events sent to our plugin from the host.
+            // Forward any parameter-value events received from the host (on the
+            // main thread) to the audio thread mirror. We avoid re-using
+            // `pluginProcessEvent` here because that routine is designed for the
+            // audio thread and would incorrectly flag `changed_params` in the
+            // wrong direction.
             for (0..event_count) |event_index| {
-                pluginProcessEvent(plugin, in.*.get.?(in, @intCast(event_index)));
+                const hdr = in.*.get.?(in, @intCast(event_index));
+
+                if (hdr.*.space_id != cl.CLAP_CORE_EVENT_SPACE_ID) continue;
+                switch (hdr.*.type) {
+                    cl.CLAP_EVENT_PARAM_VALUE => {
+                        const ev: [*c]const cl.clap_event_param_value_t = @ptrCast(@alignCast(hdr));
+                        const pid: usize = @intCast(ev.*.param_id);
+                        plugin.sync_parameters_mutex.lock();
+                        plugin.main_params[pid] = @floatCast(ev.*.value);
+                        plugin.main_changed_params[pid] = true;
+                        plugin.sync_parameters_mutex.unlock();
+                    },
+                    else => {},
+                }
             }
         }
     }.flush,
@@ -563,12 +580,14 @@ fn pluginSyncMainToAudio(plugin: *MyPlugin, out: [*c]const cl.clap_output_events
     plugin.sync_parameters_mutex.lock();
     defer plugin.sync_parameters_mutex.unlock();
 
-    // Iterate over every parameter slot.
-    for (plugin.changed_params, 0..) |changed, param_id| {
+    // Iterate over every parameter slot looking for updates flagged by the
+    // *main* thread.  These are stored in `main_changed_params`, leaving
+    // `changed_params` exclusively for the opposite direction (audio ➜ main).
+    for (plugin.main_changed_params, 0..) |changed, param_id| {
         if (changed) {
             // Copy the new value from the main thread into the audio thread.
             plugin.params[param_id] = plugin.main_params[param_id];
-            plugin.changed_params[param_id] = false; // Mark as processed.
+            plugin.main_changed_params[param_id] = false; // Mark as processed.
 
             // Build a CLAP parameter-value event that the host will forward
             // to any interested parties (automation lanes, UI, etc.).
