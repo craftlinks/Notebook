@@ -11,7 +11,7 @@ int main(void) {
 
     uint64_t u = 10;
 
-    printf("uint64_t is %lu bytes.\nuint64_t min: %lu - uint64_t max: %lu\n", sizeof(u), 0, UINT64_MAX);
+    printf("uint64_t is %lu bytes.\nuint64_t min: %d - uint64_t max: %lu\n", sizeof(u), 0, UINT64_MAX);
 
     size_t size = sizeof(u);
     printf("size_t size: %lu bytes.\n", sizeof(size));
