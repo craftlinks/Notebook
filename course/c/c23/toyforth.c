@@ -58,29 +58,6 @@ tfo *create_tfo(int type) {
     tfo *obj = xmalloc(sizeof(tfo));
     obj->refcount = 1;
     obj->type = type;
-    switch (type) {
-        case TFO_TYPE_INT:
-            obj->i = 0;
-            break;
-        case TFO_TYPE_FLOAT:
-            obj->i = 0;
-            break;
-        case TFO_TYPE_STRING:
-            obj->str.s = NULL;
-            obj->str.len = 0;
-            break;
-        case TFO_TYPE_LIST:
-            obj->list.ele = NULL;
-            obj->list.len = 0;
-            break;
-        case TFO_TYPE_BOOL:
-            obj->i = 0;
-            break;
-        case TFO_TYPE_SYMBOL:
-            obj->str.s = NULL;
-            obj->str.len = 0;
-            break;
-    }
     return obj;
 }
 
