@@ -38,6 +38,8 @@ typedef struct tf_parser {
     char *ch; // The next character to be parsed
 } tf_parser;
 
+typedef struct tf_ctx tf_ctx;
+
 typedef struct {
     char *name;
     void (*func)(tf_ctx *ctx, tfo *name);
@@ -49,11 +51,11 @@ typedef struct FunctionTable{
     size_t func_count;
 } FunctionTable;
 
-typedef struct tf_ctx {
+struct tf_ctx {
     tfo *stack;
     struct FunctionTable func_table;
 
-} tf_ctx;
+};
 
 /* ============ Utility Functions ============ */
 
@@ -139,17 +141,20 @@ void free_tfo(tfo *o) {
     if (!o) return;
     assert(o->ref_count == 0);
     switch (o->type) {
-        case TFO_TYPE_BOOL:
+        case TFO_TYPE_SYMBOL:
         case TFO_TYPE_STRING:
             free(o->str.s);
-            free(o);
             break;
         case TFO_TYPE_LIST:
             for (size_t i = 0; i < o->list.len; i++) {
                 release(o->list.ele[i]);
             }
+            free(o->list.ele);
             break;
-        default:
+        case TFO_TYPE_INT:
+        case TFO_TYPE_FLOAT:
+        case TFO_TYPE_BOOL:
+            // No extra data to free
             break;
     }
     free(o);
@@ -197,9 +202,17 @@ tfo *create_tfo_list(void) {
 void add_element_to_list(tfo *list, tfo *element) {
     if (!list || list->type != TFO_TYPE_LIST) return;
 
-    list->list.len++;
-    list->list.ele = realloc(list->list.ele, list->list.len * sizeof(tfo *));
-    list->list.ele[list->list.len - 1] = (struct tfo *)element;
+    size_t new_len = list->list.len + 1;
+    tfo **new_ele = realloc(list->list.ele, new_len * sizeof(tfo *));
+
+    if (!new_ele) {
+        fprintf(stderr, "Failed to reallocate memory for list element\n");
+        exit(EXIT_FAILURE);
+    }
+    
+    list->list.ele = new_ele;
+    list->list.ele[list->list.len] = (struct tfo *)element;
+    list->list.len = new_len;
 }
 
 /* ===================Compile=================== */
@@ -325,6 +338,14 @@ tf_ctx *create_context() {
     return ctx;
 }
 
+void free_context(tf_ctx *ctx) {
+    if (!ctx) return;
+    release(ctx->stack);
+    // In the future, we would free the function table here as well.
+    free(ctx);
+}
+
+
 int call_symbol(tf_ctx *ctx, tfo *symbol) {
     // https://youtu.be/oMj3N6jYIUU?si=brgSq6LrKX0oqJ6b&t=1159
     printf("%s\n", symbol->str.s);
@@ -366,8 +387,10 @@ int main(int argc, char **argv) {
     fseek(fp, 0, SEEK_SET);
     fread(prg_text, 1, file_size, fp);
     prg_text[file_size] = '\0';
+    fclose(fp);
 
     tfo *compiled_program = compile(prg_text);
+    free(prg_text);
 
     print_tfo(compiled_program);
     printf("\n");
@@ -379,7 +402,9 @@ int main(int argc, char **argv) {
     print_tfo(ctx->stack);
     printf("\n");
 
-    fclose(fp);
+    release(compiled_program);
+    free_context(ctx);
+
     return 0;
 
 }
