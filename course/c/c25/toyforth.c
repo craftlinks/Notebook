@@ -240,7 +240,7 @@ void print_tfo(tfo *o) {
             printf(" %d ", o->i);
             break;
         case TFO_TYPE_SYMBOL:
-        printf("\'%s\' ", o->str.s);
+            printf("\'%s\' ", o->str.s);
             break;
         default:
             printf("Unknown type\n");
