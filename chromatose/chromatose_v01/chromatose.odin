@@ -1630,7 +1630,7 @@ draw_grid :: proc(world: ^World, dst: rl.Rectangle, scale: f32) {
 	}
 }
 
-main :: proc() {
+main_v01 :: proc() {
 	rand.reset(u64(1))
 
 	// VSYNC reduces tearing (often perceived as flicker for fast pixel sims).
