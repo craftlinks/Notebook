@@ -1,71 +1,92 @@
-Here is the ultra-minimal specification for **Chromatose 3.0** as currently implemented in `chromatose_v02.odin`.
-
-This is a pure **Diffusion / Relaxation Engine** with interactive painting.
-
----
-
-# Chromatose 3.0 Specification (Implementation-Accurate)
-**"The Radiant Field (Relaxation)"**
+# Chromatose 3.0 Specification
+**"The 8-Neighbor Standard"**
 
 ### 1. The Data Structure
-Each cell contains two values:
-1. **`TYPE` (`Cell_Type`)**: discrete material type.
-2. **`VAL` (`f32`, range \([0, 512]\))**: thermal energy field.
-
-The simulation uses **double buffering** for both `TYPE` and `VAL` (`types/vals` and `next_types/next_vals`).
+Each grid unit contains three values (Double Buffered):
+1. **`TYPE` (`Cell_Type`, u8)**: Material classification.
+2. **`VAL` (`f32`, range \([0, 512]\))**: Thermal energy / Charge.
+3. **`OP` (`u8`)**: Machine instruction code.
 
 ### 2. The Types
 
-| ID | Name | Description | Physics |
+| ID | Name | Description | Physics Interaction |
 | :--- | :--- | :--- | :--- |
-| **0** | **ETHER** | The medium. | Variable `VAL`. Updates every tick. |
-| **1** | **SOURCE** | A vent/heat source. | Fixed `VAL = 512`. Never changes. |
-| **2** | **CONSUMER** | A sink/drain. | Fixed `VAL = 0`. Never changes. |
+| **0** | **ETHER** | The medium. | Diffuses energy. |
+| **1** | **SOURCE** | Generator. | Fixed `VAL = 512`. |
+| **2** | **CELL** | Organism. | **Variable Permeability**. Acts as Wall or Sink based on `OP`. |
 
-### 3. Boundary Condition (Sampling)
-When sampling neighbors, coordinates are **clamped to the grid** (no-flux / Neumann-ish). That means edges do not artificially darken; out-of-bounds samples read the nearest edge cell.
+### 3. The Instruction Set (OP Codes)
 
-Additionally, when sampling a cell:
-- If `TYPE == SOURCE`, the sampled value is **512**.
-- If `TYPE == CONSUMER`, the sampled value is **0**.
-- Else the sampled value is the stored `VAL`.
+| OP ID | Name | Behavior |
+| :--- | :--- | :--- |
+| **0** | **IDLE** | The Cell is **Inert**. It acts as a **WALL**. |
+| **1** | **HARVEST** | The Cell is **Active**. It acts as a **SINK** (Value 0) to Ether, causing inflow. |
 
-### 4. The Physics (Synchronous Update)
-Every tick computes **Next** from **Current** (synchronous / double buffered).
+### 4. The Physics Update (Synchronous)
 
-#### For `SOURCE` Cells:
-\[
-VAL_{next} = 512
-\]
+#### A. The Ether Perspective (Diffusion)
+When updating an `ETHER` cell, sample all **8 neighbors**:
 
-#### For `CONSUMER` Cells:
-\[
-VAL_{next} = 0
-\]
+1. **Neighbor Sampling**:
+   - `SOURCE` $\to$ **512**.
+   - `ETHER` $\to$ Neighbor's **VAL**.
+   - `CELL` (with `OP == HARVEST`) $\to$ **0.0** (Sink).
+   - `CELL` (with `OP == IDLE`) $\to$ **Ignore** (Wall).
 
-#### For `ETHER` Cells:
-1. **Sample 8 neighbors** (N, S, E, W, NE, NW, SE, SW) using the clamped sampling rule above.
-2. **Average**: \(neighbor\_avg = \frac{\sum neighbors}{8}\)
-3. **Relaxation step** (explicit):
-\[
-VAL_{next} = clamp\Big(VAL_{cur} + (neighbor\_avg - VAL_{cur}) \cdot spread\_rate,\ 0,\ 512\Big)
-\]
+2. **Relaxation**:
+   \[
+   VAL_{next} = VAL_{cur} + (Average - VAL_{cur}) \cdot spread\_rate
+   \]
 
-Where:
-- `spread_rate` is a runtime parameter (hotkey-adjustable) intended to stay in **\([0, 1]\)**.
-- There is **no explicit decay constant** in this implementation.
+#### B. The Cell Perspective (Metabolism)
+When updating a `CELL`:
 
-### 5. Expected Behavior (As Implemented)
-- **Sources** remain bright peaks.
-- **Ether** forms smooth gradients and “blur” diffusion around sources.
-- With **no sinks** and **no decay**, the field will eventually “bathtub fill” toward the source value (512) over time (uniform saturation).
-- **Consumers** create persistent valleys (sinks) and can prevent full saturation.
+1. **Persistence**: `VAL` is preserved by default.
+2. **Execution (`OP` Logic)**:
+   - If `OP == HARVEST`:
+     - Scan all **8 neighbors** (N, S, E, W, NE, NW, SE, SW).
+     - Sum the `VAL` of any neighbor that is `ETHER` or `SOURCE`.
+     - **Absorption**:
+       \[ VAL_{next} = VAL_{cur} + (Sum \cdot 0.1) \]
+   - **Clamp**: Ensure `VAL` never exceeds 512.
 
-### 6. Interaction / Controls (As Implemented)
-- **LMB**: paint `SOURCE`
-- **MMB**: paint `CONSUMER`
-- **RMB**: erase to `ETHER` (does not forcibly zero `VAL`)
-- **SPACE**: pause
-- **R**: reseed (single source at center)
-- **C**: clear
-- **+ / -**: adjust `spread_rate`
+---
+
+### Implementation Instructions
+
+#### 1. Logic Update: Cell Update Loop
+In the `CELL` case of your update function:
+```odin
+case .CELL:
+    // Persist state
+    next_types[idx] = .CELL
+    next_ops[idx]   = ops[idx]
+    current_val    := current_vals[idx]
+    
+    // OP Execution
+    if ops[idx] == 1 { // HARVEST
+        energy_sum: f32 = 0
+        
+        // Scan 8 neighbors
+        for offset in neighbors {
+            nx, ny := get_clamped_coords(x + offset.x, y + offset.y)
+            n_idx := nx + ny * width
+            
+            n_type := current_types[n_idx]
+            
+            // Only absorb from the environment
+            if n_type == .ETHER || n_type == .SOURCE {
+                // For Ether, read actual value. For Source, read 512.
+                val := (n_type == .SOURCE) ? 512.0 : current_vals[n_idx]
+                energy_sum += val
+            }
+        }
+        
+        // Gain Energy (10% of surrounding flux)
+        current_val += energy_sum * 0.1
+    }
+    
+    // Clamp
+    if current_val > 512 do current_val = 512
+    next_vals[idx] = current_val
+```
