@@ -185,6 +185,141 @@ world_set_cell :: proc(w: ^World, x, y: int, t: Cell_Type, op: Op_Code, dir_move
 	}
 }
 
+world_enforce_source_cap :: proc(w: ^World, cfg: Sim_Config) {
+	// Enforce a global SOURCE cap by converting the *oldest* sources into ETHER.
+	// Oldest is defined by `idle_ticks` (monotonically increasing age).
+	if cfg.source_max_count == 0 {
+		return
+	}
+
+	n := w.width * w.height
+	max_count := int(cfg.source_max_count)
+	if max_count <= 0 {
+		// Treat invalid caps as "no sources allowed".
+		for i in 0..<n {
+			if w.types[i] == .SOURCE {
+				w.types[i] = .ETHER
+				w.vals[i] = clamp_f32(w.vals[i], cfg.energy_min, cfg.energy_max)
+				w.ops[i] = .IDLE
+				w.genes[i] = 0
+				w.dir_moves[i]  = 0
+				w.dir_reads[i]  = 0
+				w.dir_reads2[i] = 0
+				w.dir_writes[i] = 0
+				w.idle_ticks[i] = 0
+			}
+		}
+		return
+	}
+
+	// Count current sources.
+	source_count := 0
+	for i in 0..<n {
+		if w.types[i] == .SOURCE {
+			source_count += 1
+		}
+	}
+
+	// Evict oldest until within cap. Tie-break deterministically by lowest index.
+	for source_count > max_count {
+		oldest_i := -1
+		oldest_age: u32 = 0
+		for i in 0..<n {
+			if w.types[i] != .SOURCE {
+				continue
+			}
+			age := w.idle_ticks[i]
+			if oldest_i < 0 || age > oldest_age || (age == oldest_age && i < oldest_i) {
+				oldest_i = i
+				oldest_age = age
+			}
+		}
+		if oldest_i < 0 {
+			break
+		}
+
+		w.types[oldest_i] = .ETHER
+		w.vals[oldest_i] = clamp_f32(w.vals[oldest_i], cfg.energy_min, cfg.energy_max)
+		w.ops[oldest_i] = .IDLE
+		w.genes[oldest_i] = 0
+		w.dir_moves[oldest_i]  = 0
+		w.dir_reads[oldest_i]  = 0
+		w.dir_reads2[oldest_i] = 0
+		w.dir_writes[oldest_i] = 0
+		w.idle_ticks[oldest_i] = 0
+
+		source_count -= 1
+	}
+}
+
+world_count_sources :: proc(w: ^World) -> int {
+	n := w.width * w.height
+	c := 0
+	for i in 0..<n {
+		if w.types[i] == .SOURCE {
+			c += 1
+		}
+	}
+	return c
+}
+
+world_ensure_min_sources :: proc(w: ^World, cfg: Sim_Config) {
+	// Ensure a minimum number of SOURCE cells exist by spawning new sources into ETHER.
+	// Selection is deterministic via hash over (tick, index, spawn_k).
+	min_count := int(cfg.source_min_count)
+	if min_count <= 0 {
+		return
+	}
+	if cfg.source_max_count > 0 && min_count > int(cfg.source_max_count) {
+		min_count = int(cfg.source_max_count)
+	}
+	if min_count <= 0 {
+		return
+	}
+
+	n := w.width * w.height
+	existing := world_count_sources(w)
+	missing := min_count - existing
+	if missing <= 0 {
+		return
+	}
+
+	for k in 0..<missing {
+		best_i := -1
+		best_h: u32 = 0
+		for i in 0..<n {
+			if w.types[i] != .ETHER {
+				continue
+			}
+			h := hash_u32(u32(w.tick) ~ (u32(i) * 0x9e3779b9) ~ u32(k) ~ 0x534F5552) // "SOUR"
+			if best_i < 0 || h < best_h {
+				best_i = i
+				best_h = h
+			}
+		}
+		if best_i < 0 {
+			// No ETHER space available.
+			break
+		}
+
+		w.types[best_i] = .SOURCE
+		w.vals[best_i]  = cfg.energy_max
+		w.ops[best_i]   = .IDLE
+		w.genes[best_i] = 0
+		w.dir_moves[best_i]  = 0
+		w.dir_reads[best_i]  = 0
+		w.dir_reads2[best_i] = 0
+		w.dir_writes[best_i] = 0
+
+		// Deterministic per-source age jitter to desynchronize expiry.
+		age0: u32 = 0
+		if cfg.source_lifespan_jitter_ticks > 0 {
+			age0 = hash_u32(u32(w.tick) ~ (u32(best_i) * 0x85ebca6b) ~ 0x51A71E5) % (cfg.source_lifespan_jitter_ticks + 1)
+		}
+		w.idle_ticks[best_i] = age0
+	}
+}
+
 // Boundary behavior: clamp coordinates (no-flux / Neumann-ish), so edges don't artificially darken.
 clamp_coords :: proc(w: ^World, x, y: int) -> (int, int) {
 	xx := x
@@ -323,6 +458,10 @@ world_seed :: proc(w: ^World, seed: u32, cfg: Sim_Config) {
 
 	// Place sources at random locations (configurable count).
 	source_count := cfg.initial_source_count
+	if source_count < 0 { source_count = 0 }
+	if cfg.source_max_count > 0 && source_count > int(cfg.source_max_count) {
+		source_count = int(cfg.source_max_count)
+	}
 	for _ in 0..<source_count {
 		for _ in 0..<2048 {
 			sx := rand_int(&rng, 0, w.width-1)
@@ -334,6 +473,11 @@ world_seed :: proc(w: ^World, seed: u32, cfg: Sim_Config) {
 			}
 		}
 	}
+
+	// Make sure we start within the configured cap.
+	world_enforce_source_cap(w, cfg)
+	// And ensure we start above the configured minimum.
+	world_ensure_min_sources(w, cfg)
 }
 
 

@@ -126,6 +126,18 @@ Sim_Config :: struct {
 
 	// Initialization:
 	initial_source_count: int,      // number of SOURCE cells to place during world_seed
+	// SOURCE controls:
+	// - source_min_count: ensure at least this many SOURCE cells exist (0 disables).
+	//   If the count drops below this floor, new sources are spawned into ETHER cells deterministically.
+	// - source_max_count: hard cap on number of SOURCE cells in the world (0 disables cap).
+	//   If exceeded, the oldest sources (by age) are converted into ETHER to restore the cap.
+	// - source_lifespan_ticks: after this many ticks, a SOURCE decays into ETHER (0 disables lifespan).
+	// - source_lifespan_jitter_ticks: deterministic per-source age offset in [0..jitter] applied at creation
+	//   (0 disables). This prevents all initial sources from expiring on the same tick.
+	source_min_count:            u32,
+	source_max_count:            u32,
+	source_lifespan_ticks:       u32,
+	source_lifespan_jitter_ticks: u32,
 
 	// IDLE cell transformation:
 	idle_transform_ticks: u32,      // number of ticks an IDLE cell waits before randomly transforming
@@ -173,6 +185,10 @@ sim_config_default :: proc() -> Sim_Config {
 		cell_death_source_1_in  = 5000,
 
 		initial_source_count    = 10,
+		source_min_count            = 10,
+		source_max_count            = 16,
+		source_lifespan_ticks       = 2048,
+		source_lifespan_jitter_ticks = 512,
 
 		idle_transform_ticks    = 100,
 	}
