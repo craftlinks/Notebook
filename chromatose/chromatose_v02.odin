@@ -26,7 +26,11 @@ to_pixel :: proc(t: Cell_Type, v: f32, op: Op_Code) -> rl.Color {
 		// Slight warm tint so vents read as "special", while still being bright.
 		return rl.Color{255, 255, 220, 255}
 	}
-	if t == .CELL {
+	if t == .CODE && op == .PORE {
+		// PORE op-cell: permeable red wall that allows energy diffusion
+		return rl.Color{255, 80, 80, 255}
+	}
+	if t == .CODE {
 		if op == .GROW {
 			// GROW: motile head
 			return rl.Color{120, 180, 255, 255}
@@ -81,7 +85,7 @@ main :: proc() {
 	paint_dir_move:  u8 = 0
 	paint_dir_read:  u8 = 0
 	paint_dir_write: u8 = 0
-	paint_gene: u8 = DEFAULT_WRITE_GENE
+	paint_gene: u16 = DEFAULT_WRITE_GENE
 
 	for !rl.WindowShouldClose() {
 		if rl.IsKeyPressed(.SPACE) { paused = !paused }
@@ -93,6 +97,10 @@ main :: proc() {
 		if rl.IsKeyPressed(.TWO)   { brush_cell_op = .GROW }
 		if rl.IsKeyPressed(.THREE) { brush_cell_op = .WRITE }
 		if rl.IsKeyPressed(.FOUR)  { brush_cell_op = .SWAP }
+		
+		// FIVE key paints PORE op-cells directly
+		paint_pore := false
+		if rl.IsKeyPressed(.FIVE) { paint_pore = true }
 		if rl.IsKeyPressed(.EQUAL) || rl.IsKeyPressed(.KP_ADD) {
 			spread_f32 = clamp_f32(spread_f32+0.01, 0.0, 1.0)
 		}
@@ -184,10 +192,12 @@ main :: proc() {
 
 		// Paint/erase sources with mouse in texture space.
 		if ok, cx, cy := get_mouse_cell(&world, dst, scale); ok {
-			if rl.IsMouseButtonDown(.LEFT) {
+			if paint_pore {
+				world_set_cell(&world, cx, cy, .CODE, .PORE, 0, 0, 0, 0)
+			} else if rl.IsMouseButtonDown(.LEFT) {
 				world_set_cell(&world, cx, cy, .SOURCE, .IDLE, 0, 0, 0, 0)
 			} else if rl.IsMouseButtonDown(.MIDDLE) {
-				gene := u8(0)
+				gene := u16(0)
 				if brush_cell_op == .WRITE {
 					gene = paint_gene
 				}
@@ -208,7 +218,7 @@ main :: proc() {
 						dir_read2 = u8(seed % 8)
 					}
 				}
-				world_set_cell(&world, cx, cy, .CELL, brush_cell_op, paint_dir_move, paint_dir_read, paint_dir_write, gene, dir_read2)
+				world_set_cell(&world, cx, cy, .CODE, brush_cell_op, paint_dir_move, paint_dir_read, paint_dir_write, gene, dir_read2)
 			} else if rl.IsMouseButtonDown(.RIGHT) {
 				world_set_cell(&world, cx, cy, .ETHER, .IDLE, 0, 0, 0, 0)
 			}
@@ -232,9 +242,9 @@ main :: proc() {
 		hud_y: i32 = 8
 		rl.DrawText("Chromatose 3.0: Diffusion Engine", hud_x, hud_y, title_font_size, rl.RAYWHITE)
 		hud_y += title_font_size + pad_y
-		rl.DrawText("LMB: paint SOURCE   MMB: paint CELL   RMB: erase to ETHER   SPACE: pause   R: reseed   C: clear   +/-: spread   P: pixel-perfect   F: reset view", hud_x, hud_y, body_font_size, rl.RAYWHITE)
+		rl.DrawText("LMB: paint SOURCE   MMB: paint CODE   RMB: erase to ETHER   SPACE: pause   R: reseed   C: clear   +/-: spread   P: pixel-perfect   F: reset view", hud_x, hud_y, body_font_size, rl.RAYWHITE)
 		hud_y += body_font_size + 2
-		rl.DrawText("1: CELL=IDLE(wall)   2: CELL=GROW(head)   3: CELL=WRITE(walker)   4: CELL=SWAP(swapper)   Wheel: dir_move   Shift+Wheel: dir_read   Alt+Wheel: dir_write   Ctrl+Wheel: zoom", hud_x, hud_y, body_font_size, rl.RAYWHITE)
+		rl.DrawText("1: CODE=IDLE(wall)   2: CODE=GROW(head)   3: CODE=WRITE(walker)   4: CODE=SWAP(swapper)   5: CODE/PORE(red wall)   Wheel: dir_move   Shift+Wheel: dir_read   Alt+Wheel: dir_write   Ctrl+Wheel: zoom", hud_x, hud_y, body_font_size, rl.RAYWHITE)
 		hud_y += body_font_size + 2
 		rl.DrawText(rl.TextFormat("spread=%.2f   zoom=%.2f   sim=%dx%d   cell_op=%d   move=%d read=%d write=%d gene=%d", spread_f32, zoom, world.width, world.height, u8(brush_cell_op), paint_dir_move, paint_dir_read, paint_dir_write, paint_gene), hud_x, hud_y, body_font_size, rl.RAYWHITE)
 

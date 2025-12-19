@@ -5,7 +5,7 @@
 Each grid unit contains three values (Double Buffered):
 1. **`TYPE` (`Cell_Type`, u8)**: Material classification.
 2. **`VAL` (`f32`, range \([0, 512]\))**: Thermal energy / Charge.
-3. **`OP` (`u8`)**: Machine instruction code.
+3. **`OP` (`Op_Code`, u8)**: Machine instruction code.
 
 ### 2. The Types
 
@@ -13,14 +13,17 @@ Each grid unit contains three values (Double Buffered):
 | :--- | :--- | :--- | :--- |
 | **0** | **ETHER** | The medium. | Diffuses energy. |
 | **1** | **SOURCE** | Generator. | Fixed `VAL = 512`. |
-| **2** | **CELL** | Organism. | **Variable Permeability**. Acts as Wall or Sink based on `OP`. |
+| **2** | **CODE** | Organism / solid substrate. | Acts as a wall by default; permeability is controlled by `OP` (not by `TYPE`). |
 
 ### 3. The Instruction Set (OP Codes)
 
 | OP ID | Name | Behavior |
 | :--- | :--- | :--- |
-| **0** | **IDLE** | The Cell is **Inert**. It acts as a **WALL**. |
-| **1** | **HARVEST** | The Cell is **Active**. It acts as a **SINK** (Value 0) to Ether, causing inflow. |
+| **0** | **IDLE** | CODE cell is inert. Acts as a wall. |
+| **1** | **PORE** | CODE cell is a permeable wall. It conducts diffusion like ETHER, but is still solid for movement/locking. |
+| **2** | **GROW** | Directional growth head. |
+| **3** | **WRITE** | Scanner/writer. |
+| **4** | **SWAP** | Swapper. |
 
 ### 4. The Physics Update (Synchronous)
 
@@ -30,61 +33,36 @@ When updating an `ETHER` cell, sample all **8 neighbors**:
 1. **Neighbor Sampling**:
    - `SOURCE` $\to$ **512**.
    - `ETHER` $\to$ Neighbor's **VAL**.
-   - `CELL` (with `OP == HARVEST`) $\to$ **0.0** (Sink).
-   - `CELL` (with `OP == IDLE`) $\to$ **Ignore** (Wall).
+   - `CODE` (with `OP == PORE`) $\to$ Neighbor's **VAL** (Permeable).
+   - `CODE` (other ops) $\to$ **Ignore** (Wall).
 
 2. **Relaxation**:
    \[
    VAL_{next} = VAL_{cur} + (Average - VAL_{cur}) \cdot spread\_rate
    \]
 
-#### B. The Cell Perspective (Metabolism)
-When updating a `CELL`:
+#### B. The CODE Perspective (OP execution)
+When updating a `CODE` cell:
 
 1. **Persistence**: `VAL` is preserved by default.
-2. **Execution (`OP` Logic)**:
-   - If `OP == HARVEST`:
-     - Scan all **8 neighbors** (N, S, E, W, NE, NW, SE, SW).
-     - Sum the `VAL` of any neighbor that is `ETHER` or `SOURCE`.
-     - **Absorption**:
-       \[ VAL_{next} = VAL_{cur} + (Sum \cdot 0.1) \]
-   - **Clamp**: Ensure `VAL` never exceeds 512.
+2. **Execution (`OP` Logic)**: depends on `OP` (e.g. `GROW`, `WRITE`, `SWAP`).
+3. **Permeability**: `OP == PORE` diffuses like ETHER and can starve/die.
 
 ---
 
 ### Implementation Instructions
 
-#### 1. Logic Update: Cell Update Loop
-In the `CELL` case of your update function:
+#### 1. Logic Update: CODE Update Loop
+In the `CODE` case of your update function:
 ```odin
-case .CELL:
+case .CODE:
     // Persist state
-    next_types[idx] = .CELL
+    next_types[idx] = .CODE
     next_ops[idx]   = ops[idx]
     current_val    := current_vals[idx]
     
     // OP Execution
-    if ops[idx] == 1 { // HARVEST
-        energy_sum: f32 = 0
-        
-        // Scan 8 neighbors
-        for offset in neighbors {
-            nx, ny := get_clamped_coords(x + offset.x, y + offset.y)
-            n_idx := nx + ny * width
-            
-            n_type := current_types[n_idx]
-            
-            // Only absorb from the environment
-            if n_type == .ETHER || n_type == .SOURCE {
-                // For Ether, read actual value. For Source, read 512.
-                val := (n_type == .SOURCE) ? 512.0 : current_vals[n_idx]
-                energy_sum += val
-            }
-        }
-        
-        // Gain Energy (10% of surrounding flux)
-        current_val += energy_sum * 0.1
-    }
+    // (See `sim_rules.odin` for the authoritative implementation.)
     
     // Clamp
     if current_val > 512 do current_val = 512

@@ -3,11 +3,12 @@ package chromatose
 Cell_Type :: enum u8 {
 	ETHER  = 0,
 	SOURCE = 1,
-	CELL   = 2,
+	CODE   = 2,
 }
 
 Op_Code :: enum u8 {
 	IDLE  = 0,
+	PORE  = 1,
 	GROW  = 2,
 	WRITE = 3,
 	SWAP  = 4,
@@ -36,7 +37,7 @@ World :: struct {
 	types: []Cell_Type,
 	vals:  []f32,
 	ops:   []Op_Code,
-	genes: []u8,
+	genes: []u16,
 	dir_moves:  []u8,
 	dir_reads:  []u8,
 	dir_reads2: []u8,
@@ -46,7 +47,7 @@ World :: struct {
 	next_types: []Cell_Type,
 	next_vals:  []f32,
 	next_ops:   []Op_Code,
-	next_genes: []u8,
+	next_genes: []u16,
 	next_dir_moves:  []u8,
 	next_dir_reads:  []u8,
 	next_dir_reads2: []u8,
@@ -74,7 +75,7 @@ world_make :: proc(width, height: int) -> World {
 		types      = make([]Cell_Type, n),
 		vals       = make([]f32, n),
 		ops        = make([]Op_Code, n),
-		genes      = make([]u8, n),
+		genes      = make([]u16, n),
 		dir_moves  = make([]u8, n),
 		dir_reads  = make([]u8, n),
 		dir_reads2 = make([]u8, n),
@@ -84,7 +85,7 @@ world_make :: proc(width, height: int) -> World {
 		next_types = make([]Cell_Type, n),
 		next_vals  = make([]f32, n),
 		next_ops   = make([]Op_Code, n),
-		next_genes      = make([]u8, n),
+		next_genes      = make([]u16, n),
 		next_dir_moves  = make([]u8, n),
 		next_dir_reads  = make([]u8, n),
 		next_dir_reads2 = make([]u8, n),
@@ -122,7 +123,7 @@ world_clear :: proc(w: ^World) {
 	}
 }
 
-world_set_cell :: proc(w: ^World, x, y: int, t: Cell_Type, op: Op_Code, dir_move, dir_read, dir_write: u8, gene: u8, dir_read2: u8 = 255) {
+world_set_cell :: proc(w: ^World, x, y: int, t: Cell_Type, op: Op_Code, dir_move, dir_read, dir_write: u8, gene: u16, dir_read2: u8 = 255) {
 	if !in_bounds(w, x, y) {
 		return
 	}
@@ -137,11 +138,23 @@ world_set_cell :: proc(w: ^World, x, y: int, t: Cell_Type, op: Op_Code, dir_move
 		w.dir_reads2[i] = 0
 		w.dir_writes[i] = 0
 		w.idle_ticks[i] = 0
-	} else if t == .CELL {
+	} else if t == .CODE {
 		// Reset energy on paint so edits are visually obvious and behavior is deterministic.
 		// (Caller can always write `w.vals[i]` directly after painting if desired.)
 		w.vals[i] = 0.0
 		w.ops[i] = op
+		if op == .PORE {
+			// PORE op-cells allow energy to pass through (like ETHER) but are "solid" (like CODE).
+			// They don't participate in directional logic or gene execution.
+			w.genes[i] = 0
+			w.dir_moves[i]  = 0
+			w.dir_reads[i]  = 0
+			w.dir_reads2[i] = 0
+			w.dir_writes[i] = 0
+			w.idle_ticks[i] = 0
+			return
+		}
+
 		w.dir_moves[i]  = dir_move
 		w.dir_reads[i]  = dir_read
 		// For SWAP cells, use provided dir_read2 if given (not 255), else default to opposite direction.
@@ -228,12 +241,13 @@ world_seed :: proc(w: ^World, seed: u32, cfg: Sim_Config) {
 	}
 
 	// Sprinkle solids and walkers (keep sparse so motion is visible).
-	// p_cell_total: probability a position becomes a CELL (leave room for ETHER!)
+	// p_cell_total: probability a position becomes a CODE cell (leave room for ETHER!)
 	// p_write/grow/swap: cumulative probabilities for cell op types
-	p_cell_total: f32 = 0.15  // 15% of positions become cells
-	p_write:      f32 = 1.0   // 100% of cells are WRITE cells
-	p_grow:       f32 = 0.0   // 0% GROW
-	p_swap:       f32 = 0.0   // 0% SWAP
+	p_cell_total: f32 = 0.06 // 15% of positions become cells
+	p_pore:       f32 = 0.03  // 2% of positions become PORE cells
+	p_write:      f32 = 0.3   // 100% of cells are WRITE cells
+	p_grow:       f32 = 0.3   // 100% GROW
+	p_swap:       f32 = 0.3   // 100% SWAP
 
 	for y in 0..<w.height {
 		for x in 0..<w.width {
@@ -241,6 +255,13 @@ world_seed :: proc(w: ^World, seed: u32, cfg: Sim_Config) {
 			if w.types[i] != .ETHER {
 				continue
 			}
+			
+			// First check if this position becomes a PORE
+			if rand_f32_01(&rng) < p_pore {
+				world_set_cell(w, x, y, .CODE, .PORE, 0, 0, 0, 0)
+				continue
+			}
+			
 			if rand_f32_01(&rng) > p_cell_total {
 				continue
 			}
@@ -261,31 +282,22 @@ world_seed :: proc(w: ^World, seed: u32, cfg: Sim_Config) {
 			dr := rand_u8(&rng, 8)
 			dw := rand_u8(&rng, 8)
 			
-			// Generate random gene for writers (3 Op_Code values encoded as 2-bit fields)
-			// Op_Code: IDLE=0, GROW=2, WRITE=3, SWAP=4
-			// Gene encoding maps 2-bit values (0-3) to op codes: 0->IDLE, 1->GROW, 2->WRITE, 3->SWAP
-			gene: u8 = 0
+			// Generate random gene for writers (5 actions encoded as 3-bit fields)
+			// Gene encoding maps 3-bit values (0-4) to actions: 0->IDLE, 1->GROW, 2->WRITE, 3->SWAP, 4->PORE
+			// Each slot is 3 bits, 5 slots = 15 bits total (fits in u16)
+			gene: u16 = 0
 			if op == .WRITE {
-				// Generate random Op_Code from valid values [0, 2, 3, 4]
-				rand_op :: proc(state: ^u32) -> Op_Code {
-					r := rand_u8(state, 4) // 0, 1, 2, or 3
-					switch r {
-					case 0: return .IDLE
-					case 1: return .GROW
-					case 2: return .WRITE
-					case 3: return .SWAP
-					}
-					return .IDLE
+				// Generate random action from valid values [0-4]
+				rand_action :: proc(state: ^u32) -> u8 {
+					return rand_u8(state, 5) // 0, 1, 2, 3, or 4
 				}
-				// Generate 3 random op codes for the gene (bits 0-1, 4-5, 6-7)
-				op0 := rand_op(&rng)
-				op1 := rand_op(&rng)
-				op2 := rand_op(&rng)
-				// Encode as 2-bit indices (0-3) not raw Op_Code values
-				idx0 := u8(op0 == .IDLE ? 0 : (op0 == .GROW ? 1 : (op0 == .WRITE ? 2 : 3)))
-				idx1 := u8(op1 == .IDLE ? 0 : (op1 == .GROW ? 1 : (op1 == .WRITE ? 2 : 3)))
-				idx2 := u8(op2 == .IDLE ? 0 : (op2 == .GROW ? 1 : (op2 == .WRITE ? 2 : 3)))
-				gene = u8((idx0 << 0) | (idx1 << 4) | (idx2 << 6))
+				// Generate 5 random actions for the gene (bits 0-2, 3-5, 6-8, 9-11, 12-14)
+				act0 := rand_action(&rng)
+				act1 := rand_action(&rng)
+				act2 := rand_action(&rng)
+				act3 := rand_action(&rng)
+				act4 := rand_action(&rng)
+				gene = u16((u16(act0) << 0) | (u16(act1) << 3) | (u16(act2) << 6) | (u16(act3) << 9) | (u16(act4) << 12))
 			}
 			
 			// For SWAP cells, generate two different random read directions.
@@ -298,7 +310,7 @@ world_seed :: proc(w: ^World, seed: u32, cfg: Sim_Config) {
 				}
 			}
 			
-			world_set_cell(w, x, y, .CELL, op, dm, dr, dw, gene, dr2)
+			world_set_cell(w, x, y, .CODE, op, dm, dr, dw, gene, dr2)
 
 			// Give non-idle actors some initial charge so dynamics start immediately.
 			if op == .WRITE || op == .GROW || op == .SWAP {
