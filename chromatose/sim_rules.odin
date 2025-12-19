@@ -228,7 +228,8 @@ sim_tick :: proc(w: ^World, cfg: Sim_Config) {
 					w.next_dir_reads[i]  = 0
 					w.next_dir_reads2[i] = 0
 					w.next_dir_writes[i] = 0
-					w.next_idle_ticks[i] = 0
+					pore_age := w.idle_ticks[i] + 1
+					w.next_idle_ticks[i] = pore_age
 
 					// Sample all 8 neighbors for energy diffusion (same as ETHER)
 					sum: f32 = 0.0
@@ -243,7 +244,6 @@ sim_tick :: proc(w: ^World, cfg: Sim_Config) {
 					incl, v  = sample_for_ether(w, cfg, x+1, y+1); if incl { sum += v; count += 1 }
 					incl, v  = sample_for_ether(w, cfg, x-1, y+1); if incl { sum += v; count += 1 }
 
-					current_val := w.vals[i]
 					neighbor_avg := current_val
 					if count > 0.0 {
 						neighbor_avg = sum / count
@@ -285,10 +285,49 @@ sim_tick :: proc(w: ^World, cfg: Sim_Config) {
 						}
 					}
 
-					// Save updated VAL (if still a PORE op-cell; otherwise it was overwritten above)
-					if w.next_types[i] == .CODE && w.next_ops[i] == .PORE {
+					// Save updated VAL (if still a CODE cell; otherwise it was overwritten above)
+					if w.next_types[i] == .CODE {
 						new_val = clamp_f32(new_val, cfg.energy_min, cfg.energy_max)
 						w.next_vals[i] = new_val
+
+						// Lifespan: after a while, a PORE turns back into a random non-PORE op.
+						if cfg.pore_lifespan_ticks > 0 {
+							jitter := cfg.pore_lifespan_jitter_ticks
+							extra: u32 = 0
+							if jitter > 0 {
+								// Salt with ASCII "PORE"
+								extra = hash_u32(u32(i) ~ 0x504F5245) % (jitter + 1)
+							}
+							lifespan := cfg.pore_lifespan_ticks + extra
+							if pore_age >= lifespan {
+								rng_seed := hash_u32(u32(i) ~ u32(w.tick) ~ u32(pore_age) ~ 0xDEC0DE01)
+								ops := [4]Op_Code{.IDLE, .GROW, .WRITE, .SWAP}
+								new_op := ops[hash_u32(rng_seed) % u32(len(ops))]
+
+								w.next_ops[i] = new_op
+								w.next_dir_moves[i]  = u8(hash_u32(rng_seed ~ 0x11111111) % 8)
+								w.next_dir_reads[i]  = u8(hash_u32(rng_seed ~ 0x22222222) % 8)
+								w.next_dir_reads2[i] = u8(hash_u32(rng_seed ~ 0x33333333) % 8)
+								w.next_dir_writes[i] = u8(hash_u32(rng_seed ~ 0x44444444) % 8)
+								w.next_idle_ticks[i] = 0
+
+								// Maintain invariant: only WRITE cells carry genes.
+								if new_op == .WRITE {
+									gene_val := hash_u32(rng_seed ~ 0x55555555) & 0xFFFF
+									w.next_genes[i] = u16(gene_val)
+									if w.next_genes[i] == 0 {
+										w.next_genes[i] = DEFAULT_WRITE_GENE
+									}
+								} else {
+									w.next_genes[i] = 0
+								}
+
+								// For SWAP, ensure read2 differs from read (fallback to opposite).
+								if new_op == .SWAP && w.next_dir_reads2[i] == w.next_dir_reads[i] {
+									w.next_dir_reads2[i] = u8((int(w.next_dir_reads[i]) + 4) % 8)
+								}
+							}
+						}
 					}
 					continue
 				}

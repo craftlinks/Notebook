@@ -67,6 +67,17 @@ Sim_Config :: struct {
 	wall_overheat_break_weight_8:    u32,
 	wall_overheat_pore_weight_8:     u32,
 
+	// PORE lifespan:
+	// PORE cells are permeable walls; to avoid permanent "holes", they can decay back into
+	// a random non-PORE op after some time.
+	//
+	// Lifespan is deterministic per-cell:
+	//   lifespan = pore_lifespan_ticks + hash(i)% (pore_lifespan_jitter_ticks+1)
+	//
+	// Set pore_lifespan_ticks to 0 to disable.
+	pore_lifespan_ticks:        u32,
+	pore_lifespan_jitter_ticks: u32,
+
 	// WRITE tuning.
 	write_cost_idle:        f32,
 	write_cost_solid:       f32,
@@ -137,6 +148,9 @@ sim_config_default :: proc() -> Sim_Config {
 		wall_overheat_min_neighbor_val = 400.0,
 		wall_overheat_break_weight_8   = 3, // ~3/8 per tick when adjacent to SOURCE
 		wall_overheat_pore_weight_8    = 5, // ~5/8 of ruptures become PORE; else ETHER
+
+		pore_lifespan_ticks        = 240,
+		pore_lifespan_jitter_ticks = 120,
 
 		write_cost_idle         = 5.0,
 		write_cost_solid        = 5.0,

@@ -42,7 +42,7 @@ World :: struct {
 	dir_reads:  []u8,
 	dir_reads2: []u8,
 	dir_writes: []u8,
-	idle_ticks: []u32, // Track how long each cell has been IDLE
+	idle_ticks: []u32, // Track how long each cell has been IDLE (also used as PORE age)
 
 	next_types: []Cell_Type,
 	next_vals:  []f32,
@@ -243,8 +243,8 @@ world_seed :: proc(w: ^World, seed: u32, cfg: Sim_Config) {
 	// Sprinkle solids and walkers (keep sparse so motion is visible).
 	// p_cell_total: probability a position becomes a CODE cell (leave room for ETHER!)
 	// p_write/grow/swap: cumulative probabilities for cell op types
-	p_cell_total: f32 = 0.06 // 15% of positions become cells
-	p_pore:       f32 = 0.03  // 2% of positions become PORE cells
+	p_cell_total: f32 = 0.1 // 15% of positions become cells
+	p_pore:       f32 = 0.01 // 1% of positions become PORE cells
 	p_write:      f32 = 0.3   // 100% of cells are WRITE cells
 	p_grow:       f32 = 0.3   // 100% GROW
 	p_swap:       f32 = 0.3   // 100% SWAP
