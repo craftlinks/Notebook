@@ -29,4 +29,9 @@ max_f32 :: proc(a, b: f32) -> f32 {
 	return b
 }
 
+abs_f32 :: proc(x: f32) -> f32 {
+	if x < 0 { return -x }
+	return x
+}
+
 

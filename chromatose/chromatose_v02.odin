@@ -35,6 +35,10 @@ to_pixel :: proc(t: Cell_Type, v: f32, op: Op_Code) -> rl.Color {
 			// WRITE: scanner walker
 			return rl.Color{220, 120, 255, 255}
 		}
+		if op == .SWAP {
+			// SWAP: swapper cell
+			return rl.Color{255, 180, 120, 255}
+		}
 		// IDLE: wall
 		return rl.Color{120, 255, 120, 255}
 	}
@@ -49,9 +53,8 @@ main :: proc() {
 	rl.SetTargetFPS(60)
 
 	world := world_make(SIM_W, SIM_H)
-	world_seed(&world, u32(rl.GetTime()*1000.0))
-
 	cfg := sim_config_default()
+	world_seed(&world, u32(rl.GetTime()*1000.0), cfg)
 
 	image := rl.GenImageColor(i32(world.width), i32(world.height), rl.BLACK)
 	texture_a := rl.LoadTextureFromImage(image)
@@ -82,13 +85,14 @@ main :: proc() {
 
 	for !rl.WindowShouldClose() {
 		if rl.IsKeyPressed(.SPACE) { paused = !paused }
-		if rl.IsKeyPressed(.R)     { world_seed(&world, u32(rl.GetTime()*1000.0)) }
+		if rl.IsKeyPressed(.R)     { world_seed(&world, u32(rl.GetTime()*1000.0), cfg) }
 		if rl.IsKeyPressed(.C)     { world_clear(&world) }
 		if rl.IsKeyPressed(.F)     { zoom = 1.0; pan = rl.Vector2{0, 0} }
 		if rl.IsKeyPressed(.P)     { pixel_perfect = !pixel_perfect }
 		if rl.IsKeyPressed(.ONE)   { brush_cell_op = .IDLE }
 		if rl.IsKeyPressed(.TWO)   { brush_cell_op = .GROW }
 		if rl.IsKeyPressed(.THREE) { brush_cell_op = .WRITE }
+		if rl.IsKeyPressed(.FOUR)  { brush_cell_op = .SWAP }
 		if rl.IsKeyPressed(.EQUAL) || rl.IsKeyPressed(.KP_ADD) {
 			spread_f32 = clamp_f32(spread_f32+0.01, 0.0, 1.0)
 		}
@@ -187,7 +191,24 @@ main :: proc() {
 				if brush_cell_op == .WRITE {
 					gene = paint_gene
 				}
-				world_set_cell(&world, cx, cy, .CELL, brush_cell_op, paint_dir_move, paint_dir_read, paint_dir_write, gene)
+				// For SWAP cells, generate a random second read direction (different from first).
+				dir_read2: u8 = 255 // default (will use fallback in world_set_cell)
+				if brush_cell_op == .SWAP {
+					// Simple RNG based on time and position for randomness when painting
+					seed := u32(rl.GetTime()*1000.0) ~ u32(cx*73856093) ~ u32(cy*19349663)
+					seed ~= seed << 13
+					seed ~= seed >> 17
+					seed ~= seed << 5
+					dir_read2 = u8(seed % 8)
+					// Ensure dir_read2 is different from paint_dir_read
+					for dir_read2 == paint_dir_read {
+						seed ~= seed << 13
+						seed ~= seed >> 17
+						seed ~= seed << 5
+						dir_read2 = u8(seed % 8)
+					}
+				}
+				world_set_cell(&world, cx, cy, .CELL, brush_cell_op, paint_dir_move, paint_dir_read, paint_dir_write, gene, dir_read2)
 			} else if rl.IsMouseButtonDown(.RIGHT) {
 				world_set_cell(&world, cx, cy, .ETHER, .IDLE, 0, 0, 0, 0)
 			}
@@ -213,7 +234,7 @@ main :: proc() {
 		hud_y += title_font_size + pad_y
 		rl.DrawText("LMB: paint SOURCE   MMB: paint CELL   RMB: erase to ETHER   SPACE: pause   R: reseed   C: clear   +/-: spread   P: pixel-perfect   F: reset view", hud_x, hud_y, body_font_size, rl.RAYWHITE)
 		hud_y += body_font_size + 2
-		rl.DrawText("1: CELL=IDLE(wall)   2: CELL=GROW(head)   3: CELL=WRITE(walker)   Wheel: dir_move   Shift+Wheel: dir_read   Alt+Wheel: dir_write   Ctrl+Wheel: zoom", hud_x, hud_y, body_font_size, rl.RAYWHITE)
+		rl.DrawText("1: CELL=IDLE(wall)   2: CELL=GROW(head)   3: CELL=WRITE(walker)   4: CELL=SWAP(swapper)   Wheel: dir_move   Shift+Wheel: dir_read   Alt+Wheel: dir_write   Ctrl+Wheel: zoom", hud_x, hud_y, body_font_size, rl.RAYWHITE)
 		hud_y += body_font_size + 2
 		rl.DrawText(rl.TextFormat("spread=%.2f   zoom=%.2f   sim=%dx%d   cell_op=%d   move=%d read=%d write=%d gene=%d", spread_f32, zoom, world.width, world.height, u8(brush_cell_op), paint_dir_move, paint_dir_read, paint_dir_write, paint_gene), hud_x, hud_y, body_font_size, rl.RAYWHITE)
 

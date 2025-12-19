@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../../karl2d"
+		},
+		{
+			"path": "../../Odin"
+		}
+	],
+	"settings": {}
+}
