@@ -197,33 +197,15 @@ sim_tick :: proc(w: ^World, cfg: Sim_Config) {
 
 		switch t {
 		case .SOURCE:
-			// SOURCE aging + optional decay into ETHER.
-			age := w.idle_ticks[i]
-			if age < 0xFFFF_FFFF {
-				age += 1
-			}
-			if cfg.source_lifespan_ticks > 0 && age >= cfg.source_lifespan_ticks {
-				// Decay to ETHER, preserving the local energy so it can diffuse outward.
-				w.next_types[i] = .ETHER
-				w.next_vals[i]  = cfg.energy_max
-				w.next_ops[i]   = .IDLE
-				w.next_genes[i] = 0
-				w.next_dir_moves[i]  = 0
-				w.next_dir_reads[i]  = 0
-				w.next_dir_reads2[i] = 0
-				w.next_dir_writes[i] = 0
-				w.next_idle_ticks[i] = 0
-			} else {
-				w.next_types[i] = .SOURCE
-				w.next_vals[i]  = cfg.energy_max
-				w.next_ops[i]   = .IDLE
-				w.next_genes[i] = 0
-				w.next_dir_moves[i]  = 0
-				w.next_dir_reads[i]  = 0
-				w.next_dir_reads2[i] = 0
-				w.next_dir_writes[i] = 0
-				w.next_idle_ticks[i] = age
-			}
+			w.next_types[i] = .SOURCE
+			w.next_vals[i]  = cfg.energy_max
+			w.next_ops[i]   = .IDLE
+			w.next_genes[i] = 0
+			w.next_dir_moves[i]  = 0
+			w.next_dir_reads[i]  = 0
+			w.next_dir_reads2[i] = 0
+			w.next_dir_writes[i] = 0
+			w.next_idle_ticks[i] = 0
 
 		case .CODE:
 				// Persist state
@@ -280,25 +262,18 @@ sim_tick :: proc(w: ^World, cfg: Sim_Config) {
 
 						if new_val <= 0.0 {
 							// Death -> Ether(0) or rare Source
-							seed := hash_u32(u32(w.tick) ~ (u32(i) * 0x9e3779b9))
 							make_source := false
 							if cfg.cell_death_source_1_in > 0 {
-								make_source = (seed % cfg.cell_death_source_1_in) == 0
+								r := hash_u32(u32(w.tick) ~ (u32(i) * 0x9e3779b9))
+								make_source = (r % cfg.cell_death_source_1_in) == 0
 							}
 
 							if make_source {
 								w.next_types[i] = .SOURCE
 								w.next_vals[i]  = cfg.energy_max
-								// Deterministic initial-age jitter so sources don't expire in sync.
-								if cfg.source_lifespan_jitter_ticks > 0 {
-									w.next_idle_ticks[i] = hash_u32(seed ~ 0x51A71E5) % (cfg.source_lifespan_jitter_ticks + 1)
-								} else {
-									w.next_idle_ticks[i] = 0
-								}
 							} else {
 								w.next_types[i] = .ETHER
 								w.next_vals[i]  = 0.0
-								w.next_idle_ticks[i] = 0
 							}
 							w.next_ops[i]   = .IDLE
 							w.next_genes[i] = 0
@@ -306,6 +281,7 @@ sim_tick :: proc(w: ^World, cfg: Sim_Config) {
 							w.next_dir_reads[i]  = 0
 							w.next_dir_reads2[i] = 0
 							w.next_dir_writes[i] = 0
+							w.next_idle_ticks[i] = 0
 						}
 					}
 
@@ -807,25 +783,18 @@ sim_tick :: proc(w: ^World, cfg: Sim_Config) {
 
 							if current_val <= 0.0 {
 								// Death -> Ether(0) or rare Source.
-								seed := hash_u32(u32(w.tick) ~ (u32(i) * 0x9e3779b9))
 								make_source := false
 								if cfg.cell_death_source_1_in > 0 {
-									make_source = (seed % cfg.cell_death_source_1_in) == 0
+									r := hash_u32(u32(w.tick) ~ (u32(i) * 0x9e3779b9))
+									make_source = (r % cfg.cell_death_source_1_in) == 0
 								}
 
 								if make_source {
 									w.next_types[i] = .SOURCE
 									w.next_vals[i]  = cfg.energy_max
-									// Deterministic initial-age jitter so sources don't expire in sync.
-									if cfg.source_lifespan_jitter_ticks > 0 {
-										w.next_idle_ticks[i] = hash_u32(seed ~ 0x51A71E5) % (cfg.source_lifespan_jitter_ticks + 1)
-									} else {
-										w.next_idle_ticks[i] = 0
-									}
 								} else {
 									w.next_types[i] = .ETHER
 									w.next_vals[i]  = 0.0
-									w.next_idle_ticks[i] = 0
 								}
 								w.next_ops[i]   = .IDLE
 								w.next_genes[i] = 0
@@ -929,24 +898,17 @@ sim_tick :: proc(w: ^World, cfg: Sim_Config) {
 						}
 
 						if current_val <= 0.0 {
-							seed := hash_u32(u32(w.tick) ~ (u32(i) * 0x9e3779b9))
 							make_source := false
 							if cfg.cell_death_source_1_in > 0 {
-								make_source = (seed % cfg.cell_death_source_1_in) == 0
+								r := hash_u32(u32(w.tick) ~ (u32(i) * 0x9e3779b9))
+								make_source = (r % cfg.cell_death_source_1_in) == 0
 							}
 							if make_source {
 								w.next_types[i] = .SOURCE
 								w.next_vals[i]  = cfg.energy_max
-								// Deterministic initial-age jitter so sources don't expire in sync.
-								if cfg.source_lifespan_jitter_ticks > 0 {
-									w.next_idle_ticks[i] = hash_u32(seed ~ 0x51A71E5) % (cfg.source_lifespan_jitter_ticks + 1)
-								} else {
-									w.next_idle_ticks[i] = 0
-								}
 							} else {
 								w.next_types[i] = .ETHER
 								w.next_vals[i]  = 0.0
-								w.next_idle_ticks[i] = 0
 							}
 							w.next_ops[i]   = .IDLE
 							w.next_genes[i] = 0
@@ -954,6 +916,7 @@ sim_tick :: proc(w: ^World, cfg: Sim_Config) {
 							w.next_dir_reads[i]  = 0
 							w.next_dir_reads2[i] = 0
 							w.next_dir_writes[i] = 0
+							w.next_idle_ticks[i] = 0
 						}
 					}
 
@@ -1166,11 +1129,6 @@ sim_tick :: proc(w: ^World, cfg: Sim_Config) {
 	w.dir_reads2, w.next_dir_reads2 = w.next_dir_reads2, w.dir_reads2
 	w.dir_writes, w.next_dir_writes = w.next_dir_writes, w.dir_writes
 	w.idle_ticks, w.next_idle_ticks = w.next_idle_ticks, w.idle_ticks
-
-	// Cap SOURCES on the post-swap world state (covers manual painting, seeding, and in-tick creation).
-	world_enforce_source_cap(w, cfg)
-	// Ensure we never fall below a minimum (prevents "all sources gone" dead worlds).
-	world_ensure_min_sources(w, cfg)
 
 	w.tick += 1
 }

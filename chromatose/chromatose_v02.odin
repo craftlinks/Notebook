@@ -196,8 +196,6 @@ main :: proc() {
 				world_set_cell(&world, cx, cy, .CODE, .PORE, 0, 0, 0, 0)
 			} else if rl.IsMouseButtonDown(.LEFT) {
 				world_set_cell(&world, cx, cy, .SOURCE, .IDLE, 0, 0, 0, 0)
-				// Maintain SOURCE cap even while paused (sim_tick won't run).
-				world_enforce_source_cap(&world, cfg)
 			} else if rl.IsMouseButtonDown(.MIDDLE) {
 				gene := u16(0)
 				if brush_cell_op == .WRITE {
