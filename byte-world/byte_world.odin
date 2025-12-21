@@ -47,6 +47,9 @@ SPARK_COUNT_MIN : int = 40000
 
 SPARK_MAX_AGE_TICKS : int = 500
 
+// Hard upper bound on total sparks alive at once.
+SPARK_CAP :: 100_000
+
 Spark :: struct {
 	x, y: int,
 	dx, dy: int,      // -1, 0, 1
@@ -54,6 +57,11 @@ Spark :: struct {
 	register: u8,     // 8-bit payload (0..255)
 	age: int,
 	color: rl.Color,  // Lineage color (inherited from parent)
+}
+
+Spark_Buffer :: struct {
+	data: []Spark, // backing storage is allocated once (fixed capacity)
+	count: int,
 }
 
 Byte_World :: struct {
@@ -64,8 +72,8 @@ Byte_World :: struct {
 	alpha: []f32,  // Alpha channel per cell (0.0 to 1.0)
 
 	// Two buffers to avoid per-tick allocations.
-	sparks: [dynamic]Spark,
-	sparks_next: [dynamic]Spark,
+	sparks: Spark_Buffer,
+	sparks_next: Spark_Buffer,
 
 	rng: u32,
 }
@@ -179,6 +187,24 @@ shuffle_sparks :: proc(sparks: []Spark, rng: ^u32) {
 	}
 }
 
+spark_buf_clear :: proc(b: ^Spark_Buffer) {
+	b.count = 0
+}
+
+spark_buf_slice :: proc(b: ^Spark_Buffer) -> []Spark {
+	if b.count <= 0 { return b.data[:0] }
+	return b.data[:b.count]
+}
+
+spark_buf_append :: proc(b: ^Spark_Buffer, s: Spark) -> bool {
+	if b.count >= len(b.data) {
+		return false
+	}
+	b.data[b.count] = s
+	b.count += 1
+	return true
+}
+
 // -------------------------
 // World seeding / lifecycle
 // -------------------------
@@ -199,11 +225,9 @@ byte_world_make :: proc(size: int, seed: u32) -> Byte_World {
 	grid := make([]u8, cell_count)
 	alpha := make([]f32, cell_count)
 
-	// Upper bound is unknown (splits), but size² is a decent "big enough" default.
-	spark_cap := size * size
-	if spark_cap < 256 { spark_cap = 256 }
-	sparks_a := make([dynamic]Spark, 0, spark_cap)
-	sparks_b := make([dynamic]Spark, 0, spark_cap)
+	// Fixed-capacity spark pools (hard cap); no per-tick allocations.
+	sparks_a := Spark_Buffer{data = make([]Spark, SPARK_CAP), count = 0}
+	sparks_b := Spark_Buffer{data = make([]Spark, SPARK_CAP), count = 0}
 
 	w := Byte_World{
 		size = size,
@@ -222,8 +246,8 @@ byte_world_reseed :: proc(w: ^Byte_World, seed: u32) {
 	w.tick = 0
 	w.rng = seed ~ u32(w.size*73856093) ~ 0x9E37_79B9
 
-	clear(&w.sparks)
-	clear(&w.sparks_next)
+	spark_buf_clear(&w.sparks)
+	spark_buf_clear(&w.sparks_next)
 
 	// Initialize alpha values to low opacity
 	for i in 0..<len(w.alpha) {
@@ -273,11 +297,14 @@ byte_world_reseed :: proc(w: ^Byte_World, seed: u32) {
 
 	// Spawn initial sparks
 	for _ in 0..<SPARK_COUNT_MIN {
-		spawn_spark_into(w, &w.sparks)
+		if !spawn_spark_into(w, &w.sparks) { break }
 	}
 }
 
-spawn_spark_into :: proc(w: ^Byte_World, sparks: ^[dynamic]Spark) {
+spawn_spark_into :: proc(w: ^Byte_World, sparks: ^Spark_Buffer) -> bool {
+	if sparks.count >= SPARK_CAP {
+		return false
+	}
 	// Generate a distinct, vibrant lineage color
 	hue := rng_u32_bounded(&w.rng, 360)
 	color := hsv_to_rgb(hue, 0.8, 1.0)
@@ -296,7 +323,7 @@ spawn_spark_into :: proc(w: ^Byte_World, sparks: ^[dynamic]Spark) {
 	if s.dx == 0 && s.dy == 0 {
 		s.dx = 1
 	}
-	append(sparks, s)
+	return spark_buf_append(sparks, s)
 }
 
 // -----------------
@@ -304,11 +331,11 @@ spawn_spark_into :: proc(w: ^Byte_World, sparks: ^[dynamic]Spark) {
 // -----------------
 
 byte_world_step :: proc(w: ^Byte_World) {
-	shuffle_sparks(w.sparks[:], &w.rng)
+	shuffle_sparks(spark_buf_slice(&w.sparks), &w.rng)
 
-	clear(&w.sparks_next)
+	spark_buf_clear(&w.sparks_next)
 
-	for s0 in w.sparks {
+	for s0 in spark_buf_slice(&w.sparks) {
 		s := s0
 		s.age += 1
 
@@ -376,7 +403,7 @@ byte_world_step :: proc(w: ^Byte_World) {
 						age = 0,
 						color = s.color,  // Inherit parent's lineage color
 					}
-					append(&w.sparks_next, child)
+					_ = spark_buf_append(&w.sparks_next, child)
 					s.energy *= 0.5
 				}
 
@@ -411,14 +438,14 @@ byte_world_step :: proc(w: ^Byte_World) {
 
 		// Survival
 		if s.energy > 0 && s.age < SPARK_MAX_AGE_TICKS {
-			append(&w.sparks_next, s)
+			_ = spark_buf_append(&w.sparks_next, s)
 		}
 	}
 
 	// Extinction failsafe (panspermia): inject a new spark into the next generation.
-	if len(w.sparks_next) == 0 {
+	if w.sparks_next.count == 0 {
 		for _ in 0..<SPARK_COUNT_MIN {
-			spawn_spark_into(w, &w.sparks_next)
+			if !spawn_spark_into(w, &w.sparks_next) { break }
 		}
 	}
 
@@ -487,7 +514,7 @@ render_world_pixels :: proc(w: ^Byte_World, pixels: []rl.Color) {
 	}
 
 	// Sparks render on top with their lineage color.
-	for s in w.sparks {
+	for s in spark_buf_slice(&w.sparks) {
 		pixels[idx_of(w.size, s.x, s.y)] = s.color
 	}
 }
@@ -543,7 +570,7 @@ main :: proc() {
 		if rl.IsKeyPressed(.I) {
 			// Inject 5000 random sparks
 			for _ in 0..<5000 {
-				spawn_spark_into(&world, &world.sparks)
+				if !spawn_spark_into(&world, &world.sparks) { break }
 			}
 		}
 
@@ -644,7 +671,7 @@ main :: proc() {
 		rl.DrawText("BRANCH", legend_x, hud_y, body_font_size, rl.Color{255, 20, 147, 255}) // Hot Pink
 		hud_y += body_font_size + 2
 		
-		rl.DrawText(rl.TextFormat("tick=%d   sparks=%d   steps/frame=%d   zoom=%.2f", world.tick, len(world.sparks), steps_per_frame, zoom), hud_x, hud_y, body_font_size, rl.RAYWHITE)
+		rl.DrawText(rl.TextFormat("tick=%d   sparks=%d/%d   steps/frame=%d   zoom=%.2f", world.tick, world.sparks.count, int(SPARK_CAP), steps_per_frame, zoom), hud_x, hud_y, body_font_size, rl.RAYWHITE)
 
 		origin := rl.Vector2{0, 0}
 		rl.DrawTexturePro(texture, src, dst, origin, 0, rl.WHITE)
