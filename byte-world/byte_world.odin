@@ -8,10 +8,10 @@ import "core:time"
 // Byte-Physics World (Odin port of byte-world.md)
 // --------------------------------------------
 
-GRID_SIZE :: 100
+GRID_SIZE :: 512
 
-WINDOW_W :: 1000
-WINDOW_H :: 1000
+WINDOW_W :: 2048
+WINDOW_H :: 2048
 
 // Value ranges (ontology)
 RANGE_VOID_MAX  : u8 = 63   // Empty space / Passive data
@@ -21,16 +21,16 @@ RANGE_SOLAR_MAX : u8 = 191  // Energy sources (metabolism)
 
 // Metabolic costs
 COST_MOVE   : f32 = 0.2   // Entropy: cost to exist/move per tick
-COST_WRITE  : f32 = 5.0   // Work: cost to change a grid value
+COST_WRITE  : f32 = 1.0   // Work: cost to change a grid value
 COST_SPLIT  : f32 = 25.0  // Reproduction: cost to create a child
 COST_MATH   : f32 = 0.1   // Processing: cost to compute (INC/DEC)
 PENALTY_HIT : f32 = 0.5   // Damage: cost when hitting a wall
 
 // Metabolic gains
 SOLAR_BASE_GAIN : f32 = 1.0 // Minimum energy from a solar tile
-SOLAR_BONUS_MAX : f32 = 2.0 // Additional energy based on tile intensity
+SOLAR_BONUS_MAX : f32 = 16.0 // Additional energy based on tile intensity
 
-ENERGY_CAP : f32 = 250.0
+ENERGY_CAP : f32 = 350.0
 
 // Op codes
 OP_LOAD   : u8 = 200 // Register = Grid[Ahead]
@@ -42,12 +42,15 @@ OP_INC    : u8 = 205 // Register++
 OP_DEC    : u8 = 206 // Register--
 OP_BRANCH : u8 = 207 // If Register < 128 -> LEFT else RIGHT
 
+SPARK_COUNT_MIN : int = 20000
+
 Spark :: struct {
 	x, y: int,
 	dx, dy: int,      // -1, 0, 1
 	energy: f32,
 	register: u8,     // 8-bit payload (0..255)
 	age: int,
+	color: rl.Color,  // Lineage color (inherited from parent)
 }
 
 Byte_World :: struct {
@@ -55,6 +58,7 @@ Byte_World :: struct {
 	tick: u64,
 
 	grid: []u8,
+	alpha: []f32,  // Alpha channel per cell (0.0 to 1.0)
 
 	// Two buffers to avoid per-tick allocations.
 	sparks: [dynamic]Spark,
@@ -69,6 +73,44 @@ Byte_World :: struct {
 
 min_f32 :: proc(a, b: f32) -> f32 {
 	return b if a > b else a
+}
+
+// Convert HSV to RGB. H in [0, 360), S and V in [0, 1]
+hsv_to_rgb :: proc(hue: u32, saturation: f32, value: f32) -> rl.Color {
+	h := f32(hue % 360)
+	s := saturation
+	v := value
+	
+	c := v * s
+	x := c * (1.0 - abs(f32(int(h/60.0) % 2) + (h/60.0 - f32(int(h/60.0))) - 1.0))
+	m := v - c
+	
+	r, g, b: f32
+	
+	if h < 60 {
+		r, g, b = c, x, 0
+	} else if h < 120 {
+		r, g, b = x, c, 0
+	} else if h < 180 {
+		r, g, b = 0, c, x
+	} else if h < 240 {
+		r, g, b = 0, x, c
+	} else if h < 300 {
+		r, g, b = x, 0, c
+	} else {
+		r, g, b = c, 0, x
+	}
+	
+	return rl.Color{
+		u8((r + m) * 255.0),
+		u8((g + m) * 255.0),
+		u8((b + m) * 255.0),
+		255,
+	}
+}
+
+abs :: proc(x: f32) -> f32 {
+	return x if x >= 0 else -x
 }
 
 wrap_i :: proc(i, n: int) -> int {
@@ -150,10 +192,11 @@ byte_world_make :: proc(size: int, seed: u32) -> Byte_World {
 	assert(size > 0)
 	cell_count := size * size
 
-	// Allocate once; we’ll reuse these buffers every tick.
+	// Allocate once; we'll reuse these buffers every tick.
 	grid := make([]u8, cell_count)
+	alpha := make([]f32, cell_count)
 
-	// Upper bound is unknown (splits), but size² is a decent “big enough” default.
+	// Upper bound is unknown (splits), but size² is a decent "big enough" default.
 	spark_cap := size * size
 	if spark_cap < 256 { spark_cap = 256 }
 	sparks_a := make([dynamic]Spark, 0, spark_cap)
@@ -163,6 +206,7 @@ byte_world_make :: proc(size: int, seed: u32) -> Byte_World {
 		size = size,
 		tick = 0,
 		grid = grid,
+		alpha = alpha,
 		sparks = sparks_a,
 		sparks_next = sparks_b,
 		rng = seed,
@@ -178,9 +222,27 @@ byte_world_reseed :: proc(w: ^Byte_World, seed: u32) {
 	clear(&w.sparks)
 	clear(&w.sparks_next)
 
+	// Initialize alpha values to low opacity
+	for i in 0..<len(w.alpha) {
+		w.alpha[i] = 0.05
+	}
+
 	// Base noise (void/data)
 	for i in 0..<len(w.grid) {
-		w.grid[i] = u8(rng_u32_bounded(&w.rng, 255)) // 0..255
+		r := rng_u32_bounded(&w.rng, 100)
+		if r < 10 {
+			// Void (0..63) - 40% of universe
+			w.grid[i] = u8(rng_u32_bounded(&w.rng, u32(RANGE_VOID_MAX) + 1))
+		} else if r < 11 {
+			// Wall (64..127) - 5% of universe
+			w.grid[i] = u8(rng_int_inclusive(&w.rng, int(RANGE_VOID_MAX) + 1, int(RANGE_WALL_MAX)))
+		} else if r < 12 {
+			// Solar (128..191) - 5% of universe
+			w.grid[i] = u8(rng_int_inclusive(&w.rng, int(RANGE_WALL_MAX) + 1, int(RANGE_SOLAR_MAX)))
+		} else {
+			// Ops (192..255) - 50% of universe
+			w.grid[i] = u8(rng_int_inclusive(&w.rng, int(RANGE_SOLAR_MAX) + 1, 255))
+		}
 	}
 
 	// // Solar clusters (food)
@@ -207,12 +269,16 @@ byte_world_reseed :: proc(w: ^Byte_World, seed: u32) {
 	// }
 
 	// Spawn initial sparks
-	for _ in 0..<250 {
+	for _ in 0..<SPARK_COUNT_MIN {
 		spawn_spark_into(w, &w.sparks)
 	}
 }
 
 spawn_spark_into :: proc(w: ^Byte_World, sparks: ^[dynamic]Spark) {
+	// Generate a distinct, vibrant lineage color
+	hue := rng_u32_bounded(&w.rng, 360)
+	color := hsv_to_rgb(hue, 0.8, 1.0)
+	
 	s := Spark{
 		x = rng_int_inclusive(&w.rng, 0, w.size-1),
 		y = rng_int_inclusive(&w.rng, 0, w.size-1),
@@ -221,8 +287,9 @@ spawn_spark_into :: proc(w: ^Byte_World, sparks: ^[dynamic]Spark) {
 		energy = f32(rng_int_inclusive(&w.rng, 50, 80)),
 		register = 0,
 		age = 0,
+		color = color,
 	}
-	// Ensure it’s moving.
+	// Ensure it's moving.
 	if s.dx == 0 && s.dy == 0 {
 		s.dx = 1
 	}
@@ -241,6 +308,10 @@ byte_world_step :: proc(w: ^Byte_World) {
 	for s0 in w.sparks {
 		s := s0
 		s.age += 1
+
+		// Mark current cell as visited
+		current_idx := idx_of(w.size, s.x, s.y)
+		w.alpha[current_idx] = min_f32(w.alpha[current_idx] + 0.01, 1.0)
 
 		// Potential next coordinates (toroidal wrap)
 		nx := wrap_i(s.x + s.dx, w.size)
@@ -267,6 +338,9 @@ byte_world_step :: proc(w: ^Byte_World) {
 			efficiency := (f32(val) - 128.0) / 64.0
 			gain := SOLAR_BASE_GAIN + efficiency*SOLAR_BONUS_MAX
 			s.energy += gain
+
+			// Drain solar energy: reduce value, eventually becoming a wall (<= 127)
+			w.grid[idx_of(w.size, nx, ny)] -= 1
 
 		} else {
 			// Operators: permeable + execution
@@ -297,6 +371,7 @@ byte_world_step :: proc(w: ^Byte_World) {
 						energy = s.energy * 0.5,
 						register = s.register,
 						age = 0,
+						color = s.color,  // Inherit parent's lineage color
 					}
 					append(&w.sparks_next, child)
 					s.energy *= 0.5
@@ -338,8 +413,10 @@ byte_world_step :: proc(w: ^Byte_World) {
 	}
 
 	// Extinction failsafe (panspermia): inject a new spark into the next generation.
-	if len(w.sparks_next) < 5 {
-		spawn_spark_into(w, &w.sparks_next)
+	if len(w.sparks_next) == 0 {
+		for _ in 0..<SPARK_COUNT_MIN {
+			spawn_spark_into(w, &w.sparks_next)
+		}
 	}
 
 	w.tick += 1
@@ -356,36 +433,59 @@ u8_from_f32_01 :: proc(x: f32) -> u8 {
 	return u8(int(x*255.0 + 0.5))
 }
 
-color_from_cell_value :: proc(v: u8) -> rl.Color {
+color_from_cell_value :: proc(v: u8, alpha: f32) -> rl.Color {
+	a := u8_from_f32_01(alpha)
+	
 	if v <= RANGE_VOID_MAX {
-		// Dark grey
-		return rl.Color{26, 26, 26, 255}
+		// Void -> Black
+		return rl.Color{0, 0, 0, a}
 	} else if v <= RANGE_WALL_MAX {
 		// Blue shades
 		brightness := f32(v-64) / 64.0
 		b := u8_from_f32_01(0.4 + brightness*0.6)
-		return rl.Color{0, 0, b, 255}
+		return rl.Color{0, 0, b, a}
 	} else if v <= RANGE_SOLAR_MAX {
 		// Green/yellow-ish shades
 		brightness := f32(v-128) / 64.0
 		r := u8_from_f32_01(brightness * 0.8)
 		g := u8_from_f32_01(0.4 + brightness*0.6)
-		return rl.Color{r, g, 0, 255}
+		return rl.Color{r, g, 0, a}
 	}
-	// Ops: magenta-ish
-	return rl.Color{u8_from_f32_01(0.9), 0, u8_from_f32_01(0.5), 255}
+	
+	// Ops: Each OP code gets a distinct color
+	switch v {
+	case OP_LOAD:   // 200: Cyan (memory read)
+		return rl.Color{0, 255, 255, a}
+	case OP_STORE:  // 201: Orange (memory write)
+		return rl.Color{255, 140, 0, a}
+	case OP_SPLIT:  // 202: Bright Magenta (reproduction)
+		return rl.Color{255, 0, 255, a}
+	case OP_LEFT:   // 203: Lime Green (turn left)
+		return rl.Color{50, 255, 50, a}
+	case OP_RIGHT:  // 204: Yellow (turn right)
+		return rl.Color{255, 255, 0, a}
+	case OP_INC:    // 205: Light Blue (increment)
+		return rl.Color{100, 150, 255, a}
+	case OP_DEC:    // 206: Light Red (decrement)
+		return rl.Color{255, 100, 100, a}
+	case OP_BRANCH: // 207: Hot Pink (conditional)
+		return rl.Color{255, 20, 147, a}
+	case:
+		// Unknown ops (192-255): Default dim magenta
+		return rl.Color{150, 0, 100, a}
+	}
 }
 
 render_world_pixels :: proc(w: ^Byte_World, pixels: []rl.Color) {
 	assert(len(pixels) == len(w.grid))
 
 	for i in 0..<len(w.grid) {
-		pixels[i] = color_from_cell_value(w.grid[i])
+		pixels[i] = color_from_cell_value(w.grid[i], w.alpha[i])
 	}
 
-	// Sparks render on top (white).
+	// Sparks render on top with their lineage color.
 	for s in w.sparks {
-		pixels[idx_of(w.size, s.x, s.y)] = rl.Color{255, 255, 255, 255}
+		pixels[idx_of(w.size, s.x, s.y)] = s.color
 	}
 }
 
@@ -437,6 +537,12 @@ main :: proc() {
 			steps_per_frame -= 1
 			if steps_per_frame < 1 { steps_per_frame = 1 }
 		}
+		if rl.IsKeyPressed(.I) {
+			// Inject 5000 random sparks
+			for _ in 0..<5000 {
+				spawn_spark_into(&world, &world.sparks)
+			}
+		}
 
 		// Pan with arrows (screen space)
 		dt := rl.GetFrameTime()
@@ -479,7 +585,7 @@ main :: proc() {
 		title_font_size :: 20
 		body_font_size  :: 18
 		pad_y           :: 6
-		ui_top: i32 = i32(8 + title_font_size + pad_y + (body_font_size+2)*3 + pad_y)
+		ui_top: i32 = i32(8 + title_font_size + pad_y + (body_font_size+2)*4 + pad_y)
 		if ui_top > sh-1 { ui_top = sh-1 }
 
 		src := rl.Rectangle{0, 0, f32(world.size), f32(world.size)}
@@ -509,10 +615,32 @@ main :: proc() {
 		hud_y: i32 = 8
 		rl.DrawText("Byte-Physics World", hud_x, hud_y, title_font_size, rl.RAYWHITE)
 		hud_y += title_font_size + pad_y
-		rl.DrawText("SPACE: pause   N: step (paused)   R: reseed   +/-: steps/frame   Ctrl+Wheel: zoom   Arrows: pan   P: pixel-perfect   F: reset view", hud_x, hud_y, body_font_size, rl.RAYWHITE)
+		rl.DrawText("SPACE: pause   N: step (paused)   R: reseed   I: inject 5k sparks   +/-: steps/frame   Ctrl+Wheel: zoom   Arrows: pan   P: pixel-perfect   F: reset view", hud_x, hud_y, body_font_size, rl.RAYWHITE)
 		hud_y += body_font_size + 2
-		rl.DrawText("Ranges: 0-63(Void), 64-127(Wall), 128-191(Solar), 192+(Ops)   Ops: 200 Load, 201 Store, 202 Split, 203 Left, 204 Right, 205 Inc, 206 Dec, 207 Branch", hud_x, hud_y, body_font_size, rl.RAYWHITE)
+		rl.DrawText("Ranges: 0-63(Void/Black), 64-127(Wall/Blue), 128-191(Solar/Green-Yellow), 192+(Ops/Colored)", hud_x, hud_y, body_font_size, rl.RAYWHITE)
 		hud_y += body_font_size + 2
+		
+		// Draw OP code legend with actual colors
+		legend_x := hud_x
+		rl.DrawText("Ops: ", legend_x, hud_y, body_font_size, rl.RAYWHITE)
+		legend_x += 45
+		rl.DrawText("LOAD", legend_x, hud_y, body_font_size, rl.Color{0, 255, 255, 255}) // Cyan
+		legend_x += 60
+		rl.DrawText("STORE", legend_x, hud_y, body_font_size, rl.Color{255, 140, 0, 255}) // Orange
+		legend_x += 75
+		rl.DrawText("SPLIT", legend_x, hud_y, body_font_size, rl.Color{255, 0, 255, 255}) // Magenta
+		legend_x += 65
+		rl.DrawText("LEFT", legend_x, hud_y, body_font_size, rl.Color{50, 255, 50, 255}) // Lime
+		legend_x += 60
+		rl.DrawText("RIGHT", legend_x, hud_y, body_font_size, rl.Color{255, 255, 0, 255}) // Yellow
+		legend_x += 70
+		rl.DrawText("INC", legend_x, hud_y, body_font_size, rl.Color{100, 150, 255, 255}) // Light Blue
+		legend_x += 50
+		rl.DrawText("DEC", legend_x, hud_y, body_font_size, rl.Color{255, 100, 100, 255}) // Light Red
+		legend_x += 50
+		rl.DrawText("BRANCH", legend_x, hud_y, body_font_size, rl.Color{255, 20, 147, 255}) // Hot Pink
+		hud_y += body_font_size + 2
+		
 		rl.DrawText(rl.TextFormat("tick=%d   sparks=%d   steps/frame=%d   zoom=%.2f", world.tick, len(world.sparks), steps_per_frame, zoom), hud_x, hud_y, body_font_size, rl.RAYWHITE)
 
 		origin := rl.Vector2{0, 0}
