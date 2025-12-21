@@ -10,8 +10,8 @@ import "core:time"
 
 GRID_SIZE :: 512
 
-WINDOW_W :: 2048
-WINDOW_H :: 2048
+WINDOW_W :: 1024
+WINDOW_H :: 1024
 
 // Value ranges (ontology)
 RANGE_VOID_MAX  : u8 = 63   // Empty space / Passive data
@@ -27,8 +27,9 @@ COST_MATH   : f32 = 0.1   // Processing: cost to compute (INC/DEC)
 PENALTY_HIT : f32 = 0.5   // Damage: cost when hitting a wall
 
 // Metabolic gains
-SOLAR_BASE_GAIN : f32 = 1.0 // Minimum energy from a solar tile
+SOLAR_BASE_GAIN : f32 = 0.0 // Minimum energy from a solar tile
 SOLAR_BONUS_MAX : f32 = 16.0 // Additional energy based on tile intensity
+SOLAR_DRAIN_PER_HARVEST  : u8 = 4 // When a spark steps onto solar
 
 ENERGY_CAP : f32 = 350.0
 
@@ -42,7 +43,9 @@ OP_INC    : u8 = 205 // Register++
 OP_DEC    : u8 = 206 // Register--
 OP_BRANCH : u8 = 207 // If Register < 128 -> LEFT else RIGHT
 
-SPARK_COUNT_MIN : int = 20000
+SPARK_COUNT_MIN : int = 40000
+
+SPARK_MAX_AGE_TICKS : int = 500
 
 Spark :: struct {
 	x, y: int,
@@ -340,7 +343,7 @@ byte_world_step :: proc(w: ^Byte_World) {
 			s.energy += gain
 
 			// Drain solar energy: reduce value, eventually becoming a wall (<= 127)
-			w.grid[idx_of(w.size, nx, ny)] -= 1
+			w.grid[idx_of(w.size, nx, ny)] -= SOLAR_DRAIN_PER_HARVEST
 
 		} else {
 			// Operators: permeable + execution
@@ -407,7 +410,7 @@ byte_world_step :: proc(w: ^Byte_World) {
 		if s.energy > ENERGY_CAP { s.energy = ENERGY_CAP }
 
 		// Survival
-		if s.energy > 0 {
+		if s.energy > 0 && s.age < SPARK_MAX_AGE_TICKS {
 			append(&w.sparks_next, s)
 		}
 	}
