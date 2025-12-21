@@ -22,17 +22,22 @@ RANGE_SOLAR_MAX : u8 = 191  // Energy sources (metabolism)
 // Metabolic costs
 COST_MOVE   : f32 = 0.2   // Entropy: cost to exist/move per tick
 COST_WRITE  : f32 = 1.0   // Work: cost to change a grid value
-COST_SPLIT  : f32 = 25.0  // Reproduction: cost to create a child
+COST_SPLIT  : f32 = 6.0  // Reproduction: cost to create a child
 COST_MATH   : f32 = 0.1   // Processing: cost to compute (INC/DEC)
 PENALTY_HIT : f32 = 0.5   // Damage: cost when hitting a wall
 PENALTY_BLOCKED : f32 = 0.5 // Damage: cost when trying to move into an occupied cell
 
 // Metabolic gains
 SOLAR_BASE_GAIN : f32 = 0.0 // Minimum energy from a solar tile
-SOLAR_BONUS_MAX : f32 = 20.0 // Additional energy based on tile intensity
-SOLAR_DRAIN_PER_HARVEST  : u8 = 4 // When a spark steps onto solar
+solar_bonus_max_setting : f32 = 20.0 // Max solar bonus (adjustable via slider, when few sparks)
+solar_bonus_max : f32 = 20.0 // Actual solar bonus (computed dynamically based on spark count)
+SOLAR_DRAIN_PER_HARVEST  : u8 = 2 // When a spark steps onto solar
 
-ENERGY_CAP : f32 = 350.0
+ENERGY_CAP : f32 = 500.0
+
+// Rendering alpha dynamics
+ALPHA_DECAY_PER_TICK : f32 = 0.002  // Small fade per tick for unused cells
+ALPHA_GAIN_ON_VISIT  : f32 = 0.090   // Large boost when spark visits (>> decay)
 
 // Op codes
 OP_LOAD   : u8 = 200 // Register = Grid[Ahead]
@@ -469,7 +474,7 @@ attempt_with_dir :: proc(w: ^Byte_World, s0: Spark, dirx, diry: int) -> Attempt_
 		// Solar: enter, gain energy, drain tile.
 		res.dest_x, res.dest_y, res.dest_idx = nx, ny, nidx
 		efficiency := (f32(val) - 128.0) / 64.0
-		gain := SOLAR_BASE_GAIN + efficiency*SOLAR_BONUS_MAX
+		gain := SOLAR_BASE_GAIN + efficiency*solar_bonus_max
 		res.s.energy += gain
 		res.do_solar_drain = true
 		res.solar_idx = nidx
@@ -573,13 +578,19 @@ byte_world_step :: proc(w: ^Byte_World) {
 	spark_buf_clear(&w.sparks_next)
 	occ_begin_step(w)
 
+	// Decay alpha for all cells (emphasizes actively used code paths)
+	for i in 0..<len(w.alpha) {
+		w.alpha[i] -= ALPHA_DECAY_PER_TICK
+		if w.alpha[i] < 0 { w.alpha[i] = 0 }
+	}
+
 	for s0 in spark_buf_slice(&w.sparks) {
 		s := s0
 		s.age += 1
 
-		// Mark current cell as visited
+		// Mark current cell as visited (boost alpha to visualize active code paths)
 		current_idx := idx_of(w.size, s.x, s.y)
-		w.alpha[current_idx] = min_f32(w.alpha[current_idx] + 0.01, 1.0)
+		w.alpha[current_idx] = min_f32(w.alpha[current_idx] + ALPHA_GAIN_ON_VISIT, 1.0)
 
 		// --- Physics interpreter with occupancy ---
 		// Rule: if the intended destination is already occupied for the next generation,
@@ -818,6 +829,13 @@ main :: proc() {
 		if zoom < 0.25 { zoom = 0.25 }
 		if zoom > 64.0 { zoom = 64.0 }
 
+		// Update solar bonus based on spark population (self-regulating)
+		// When spark count is low, solar bonus is high (helps recovery)
+		// When spark count approaches cap, solar bonus approaches zero (limits growth)
+		spark_ratio := f32(world.sparks.count) / f32(SPARK_CAP)
+		// Inverse relationship: fewer sparks = more solar energy
+		solar_bonus_max = solar_bonus_max_setting * (1.0 - spark_ratio)
+
 		// Simulate
 		if !paused {
 			for _ in 0..<steps_per_frame {
@@ -893,6 +911,45 @@ main :: proc() {
 		hud_y += body_font_size + 2
 		
 		rl.DrawText(rl.TextFormat("tick=%d   sparks=%d/%d   steps/frame=%d   zoom=%.2f", world.tick, world.sparks.count, int(SPARK_CAP), steps_per_frame, zoom), hud_x, hud_y, body_font_size, rl.RAYWHITE)
+
+		// Solar Bonus Max slider
+		slider_x: i32 = sw - 400
+		slider_y: i32 = 10
+		slider_width: i32 = 200
+		slider_height: i32 = 20
+		slider_min: f32 = 0.0
+		slider_max: f32 = 50.0
+		
+		// Draw slider background
+		slider_rect := rl.Rectangle{f32(slider_x), f32(slider_y), f32(slider_width), f32(slider_height)}
+		rl.DrawRectangleRec(slider_rect, rl.Color{50, 50, 50, 255})
+		
+		// Draw slider fill
+		slider_fill_width := (solar_bonus_max_setting - slider_min) / (slider_max - slider_min) * f32(slider_width)
+		slider_fill_rect := rl.Rectangle{f32(slider_x), f32(slider_y), slider_fill_width, f32(slider_height)}
+		rl.DrawRectangleRec(slider_fill_rect, rl.Color{100, 200, 100, 255})
+		
+		// Draw slider handle
+		handle_x := f32(slider_x) + slider_fill_width
+		handle_rect := rl.Rectangle{handle_x - 5, f32(slider_y) - 2, 10, f32(slider_height) + 4}
+		rl.DrawRectangleRec(handle_rect, rl.RAYWHITE)
+		
+		// Draw slider label with both max setting and actual value
+		rl.DrawText(rl.TextFormat("Solar Max: %.1f (actual: %.1f)", solar_bonus_max_setting, solar_bonus_max), slider_x, slider_y + slider_height + 5, 16, rl.RAYWHITE)
+		
+		// Handle slider interaction
+		mouse_pos := rl.GetMousePosition()
+		if rl.IsMouseButtonDown(.LEFT) {
+			if rl.CheckCollisionPointRec(mouse_pos, slider_rect) {
+				// Update solar_bonus_max_setting based on mouse position
+				local_x := mouse_pos.x - f32(slider_x)
+				if local_x < 0 { local_x = 0 }
+				if local_x > f32(slider_width) { local_x = f32(slider_width) }
+				
+				t := local_x / f32(slider_width)
+				solar_bonus_max_setting = slider_min + t * (slider_max - slider_min)
+			}
+		}
 
 		origin := rl.Vector2{0, 0}
 		rl.DrawTexturePro(texture, src, dst, origin, 0, rl.WHITE)
