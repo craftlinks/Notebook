@@ -55,6 +55,7 @@ OP_RIGHT  : u8 = 204 // Turn 90° clockwise
 OP_INC    : u8 = 205 // Register++
 OP_DEC    : u8 = 206 // Register--
 OP_BRANCH : u8 = 207 // If Register < 128 -> LEFT else RIGHT
+OP_SWAP   : u8 = 208 // Swap Register <-> Grid[Ahead]
 
 SPARK_COUNT_MIN : int = 150000
 
@@ -452,10 +453,10 @@ byte_world_reseed :: proc(w: ^Byte_World, seed: u32) {
 		if r < 10 {
 			// Void (0..63) - 40% of universe
 			w.grid[i] = u8(rng_u32_bounded(&w.rng, u32(RANGE_VOID_MAX) + 1))
-		} else if r < 11 {
+		} else if r < 15 {
 			// Wall (64..127) - 5% of universe
 			w.grid[i] = u8(rng_int_inclusive(&w.rng, int(RANGE_VOID_MAX) + 1, int(RANGE_WALL_MAX)))
-		} else if r < 12 {
+		} else if r < 20 {
 			// Solar (128..191) - 5% of universe
 			w.grid[i] = u8(rng_int_inclusive(&w.rng, int(RANGE_WALL_MAX) + 1, int(RANGE_SOLAR_MAX)))
 		} else {
@@ -750,6 +751,31 @@ attempt_with_dir :: proc(w: ^Byte_World, s0: Spark, dirx, diry: int) -> Attempt_
 		} else {
 			res.s.dx, res.s.dy = -res.s.dy, res.s.dx
 		}
+
+	case OP_SWAP:
+		ahead_val := w.grid[ahead_idx]
+		
+		// Determine cost based on what we are swapping with
+		swap_cost := COST_WRITE
+		if ahead_val > RANGE_VOID_MAX && ahead_val <= RANGE_WALL_MAX {
+			swap_cost = COST_WRITE_WALL
+		}
+		
+		// If we have energy, perform the swap
+		if res.s.energy > swap_cost {
+			// Atomic exchange: Register <-> Grid[Ahead]
+			// 1. Update Spark Register (immediate effect)
+			old_register := res.s.register
+			res.s.register = ahead_val
+			
+			// 2. Schedule Grid Update (deferred effect)
+			res.do_store = true
+			res.store_idx = ahead_idx
+			res.store_value = old_register
+			
+			res.s.energy -= swap_cost
+		}
+
 	case:
 		// Unknown op tile: treated as permeable no-op.
 	}
@@ -941,6 +967,8 @@ color_from_cell_value :: proc(v: u8, alpha: f32) -> rl.Color {
 		return rl.Color{255, 100, 100, a}
 	case OP_BRANCH: // 207: Hot Pink (conditional)
 		return rl.Color{255, 20, 147, a}
+	case OP_SWAP:   // 208: Violet (atomic exchange/transport)
+		return rl.Color{138, 43, 226, a}
 	case:
 		// Unknown ops (192-255): Default dim magenta
 		return rl.Color{150, 0, 100, a}
@@ -1548,6 +1576,8 @@ main :: proc() {
 		rl.DrawText("DEC", legend_x, hud_y, body_font_size, rl.Color{255, 100, 100, 255}) // Light Red
 		legend_x += 50
 		rl.DrawText("BRANCH", legend_x, hud_y, body_font_size, rl.Color{255, 20, 147, 255}) // Hot Pink
+		legend_x += 80
+		rl.DrawText("SWAP", legend_x, hud_y, body_font_size, rl.Color{138, 43, 226, 255}) // Violet
 		hud_y += body_font_size + 2
 		
 		// Display current pattern info based on mode
