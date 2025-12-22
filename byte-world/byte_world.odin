@@ -136,11 +136,11 @@ Detected_Blob :: struct {
 // Global list of detected blobs (reset every detection frame)
 detected_blobs: [dynamic]Detected_Blob
 
-// Configuration
-DETECT_ALPHA_THRESHOLD :: 0.12   // Cell must be this bright to be part of a blob
-MIN_BLOB_SIZE          :: 4     // Width/Height minimum
-MAX_BLOB_SIZE          :: 512   // Max size (ignore world-spanning chaos)
-MIN_PIXEL_COUNT        :: 128    // Minimum active cells to count as a pattern
+// Configuration (now adjustable via sliders)
+detect_alpha_threshold : f32 = 0.12   // Cell must be this bright to be part of a blob
+min_blob_size          : int = 4     // Width/Height minimum
+max_blob_size          : int = 512   // Max size (ignore world-spanning chaos)
+min_pixel_count        : int = 128    // Minimum active cells to count as a pattern
 
 detect_active_regions :: proc(w: ^Byte_World) {
 	// Clear previous results
@@ -159,7 +159,7 @@ detect_active_regions :: proc(w: ^Byte_World) {
 			idx := idx_of(w.size, x, y)
 			
 			// If hot and not visited, start a new blob detection
-			if w.alpha[idx] > DETECT_ALPHA_THRESHOLD && !visited[idx] {
+			if w.alpha[idx] > detect_alpha_threshold && !visited[idx] {
 				
 				// --- Start Flood Fill ---
 				append(&stack, idx)
@@ -194,7 +194,7 @@ detect_active_regions :: proc(w: ^Byte_World) {
 					// Up
 					if cy > 0 {
 						n_idx := curr_idx - w.size
-						if !visited[n_idx] && w.alpha[n_idx] > DETECT_ALPHA_THRESHOLD {
+						if !visited[n_idx] && w.alpha[n_idx] > detect_alpha_threshold {
 							visited[n_idx] = true
 							append(&stack, n_idx)
 						}
@@ -202,7 +202,7 @@ detect_active_regions :: proc(w: ^Byte_World) {
 					// Down
 					if cy < w.size-1 {
 						n_idx := curr_idx + w.size
-						if !visited[n_idx] && w.alpha[n_idx] > DETECT_ALPHA_THRESHOLD {
+						if !visited[n_idx] && w.alpha[n_idx] > detect_alpha_threshold {
 							visited[n_idx] = true
 							append(&stack, n_idx)
 						}
@@ -210,7 +210,7 @@ detect_active_regions :: proc(w: ^Byte_World) {
 					// Left
 					if cx > 0 {
 						n_idx := curr_idx - 1
-						if !visited[n_idx] && w.alpha[n_idx] > DETECT_ALPHA_THRESHOLD {
+						if !visited[n_idx] && w.alpha[n_idx] > detect_alpha_threshold {
 							visited[n_idx] = true
 							append(&stack, n_idx)
 						}
@@ -218,7 +218,7 @@ detect_active_regions :: proc(w: ^Byte_World) {
 					// Right
 					if cx < w.size-1 {
 						n_idx := curr_idx + 1
-						if !visited[n_idx] && w.alpha[n_idx] > DETECT_ALPHA_THRESHOLD {
+						if !visited[n_idx] && w.alpha[n_idx] > detect_alpha_threshold {
 							visited[n_idx] = true
 							append(&stack, n_idx)
 						}
@@ -231,9 +231,9 @@ detect_active_regions :: proc(w: ^Byte_World) {
 				height := max_y - min_y + 1
 
 				// Filter noise
-				if width >= MIN_BLOB_SIZE && height >= MIN_BLOB_SIZE && 
-				   width <= MAX_BLOB_SIZE && height <= MAX_BLOB_SIZE &&
-				   count >= MIN_PIXEL_COUNT {
+				if width >= min_blob_size && height >= min_blob_size && 
+				   width <= max_blob_size && height <= max_blob_size &&
+				   count >= min_pixel_count {
 					
 					// Add padding to the rect so we catch sparks slightly outside the core path
 					pad :: 2
@@ -1153,6 +1153,8 @@ main :: proc() {
 
 	// File logic
 	last_save_file := "pattern_01.dat"
+	auto_pattern_mode := false
+	auto_pattern_index := 0
 
 	// Auto-Detection State
 	show_debug_blobs := false
@@ -1207,16 +1209,36 @@ main :: proc() {
 			}
 		}
 
-		// Number keys: Switch pattern slot
-		if rl.IsKeyPressed(.ONE)   { last_save_file = "pattern_01.dat" }
-		if rl.IsKeyPressed(.TWO)   { last_save_file = "pattern_02.dat" }
-		if rl.IsKeyPressed(.THREE) { last_save_file = "pattern_03.dat" }
-		if rl.IsKeyPressed(.FOUR)  { last_save_file = "pattern_04.dat" }
-		if rl.IsKeyPressed(.FIVE)  { last_save_file = "pattern_05.dat" }
-		if rl.IsKeyPressed(.SIX)   { last_save_file = "pattern_06.dat" }
-		if rl.IsKeyPressed(.SEVEN) { last_save_file = "pattern_07.dat" }
-		if rl.IsKeyPressed(.EIGHT) { last_save_file = "pattern_08.dat" }
-		if rl.IsKeyPressed(.NINE)  { last_save_file = "pattern_09.dat" }
+		// 'A' to toggle auto-pattern mode
+		if rl.IsKeyPressed(.A) {
+			auto_pattern_mode = !auto_pattern_mode
+			fmt.println(auto_pattern_mode ? "Auto-pattern mode enabled" : "Manual pattern mode enabled")
+		}
+
+		// '[' and ']' to navigate through auto-patterns
+		if auto_pattern_mode {
+			if rl.IsKeyPressed(.LEFT_BRACKET) {
+				auto_pattern_index -= 1
+				if auto_pattern_index < 0 { auto_pattern_index = 0 }
+			}
+			if rl.IsKeyPressed(.RIGHT_BRACKET) {
+				auto_pattern_index += 1
+				if auto_pattern_index > 999 { auto_pattern_index = 999 }
+			}
+		}
+
+		// Number keys: Switch pattern slot (only in manual mode)
+		if !auto_pattern_mode {
+			if rl.IsKeyPressed(.ONE)   { last_save_file = "pattern_01.dat" }
+			if rl.IsKeyPressed(.TWO)   { last_save_file = "pattern_02.dat" }
+			if rl.IsKeyPressed(.THREE) { last_save_file = "pattern_03.dat" }
+			if rl.IsKeyPressed(.FOUR)  { last_save_file = "pattern_04.dat" }
+			if rl.IsKeyPressed(.FIVE)  { last_save_file = "pattern_05.dat" }
+			if rl.IsKeyPressed(.SIX)   { last_save_file = "pattern_06.dat" }
+			if rl.IsKeyPressed(.SEVEN) { last_save_file = "pattern_07.dat" }
+			if rl.IsKeyPressed(.EIGHT) { last_save_file = "pattern_08.dat" }
+			if rl.IsKeyPressed(.NINE)  { last_save_file = "pattern_09.dat" }
+		}
 
 		// Pan with arrows (screen space)
 		dt := rl.GetFrameTime()
@@ -1307,7 +1329,7 @@ main :: proc() {
 		hud_y += title_font_size + pad_y
 		rl.DrawText("SPACE: pause   N: step   R: reseed   I: inject 5k   +/-: steps/frame   Ctrl+Wheel: zoom   Arrows: pan   P: pixel-perfect   F: reset view", hud_x, hud_y, body_font_size, rl.RAYWHITE)
 		hud_y += body_font_size + 2
-		rl.DrawText("RIGHT-DRAG: save pattern   MIDDLE/L: paste pattern   1-9: switch pattern slot   D: detect patterns   S: snapshot detected", hud_x, hud_y, body_font_size, rl.RAYWHITE)
+		rl.DrawText("RIGHT-DRAG: save   MIDDLE/L: paste   1-9: manual slots   A: toggle auto-mode   [/]: browse auto   D: detect   S: snapshot", hud_x, hud_y, body_font_size, rl.RAYWHITE)
 		hud_y += body_font_size + 2
 		
 		// Draw OP code legend with actual colors
@@ -1331,45 +1353,106 @@ main :: proc() {
 		rl.DrawText("BRANCH", legend_x, hud_y, body_font_size, rl.Color{255, 20, 147, 255}) // Hot Pink
 		hud_y += body_font_size + 2
 		
-		rl.DrawText(rl.TextFormat("tick=%d   sparks=%d/%d   steps/frame=%d   zoom=%.2f   [Pattern: %s]", world.tick, world.sparks.count, int(SPARK_CAP), steps_per_frame, zoom, cstring(raw_data(last_save_file))), hud_x, hud_y, body_font_size, rl.RAYWHITE)
+		// Display current pattern info based on mode
+		pattern_display := last_save_file
+		if auto_pattern_mode {
+			pattern_display = fmt.tprintf("auto_pattern_%d.dat [%c/%c]", auto_pattern_index, '[', ']')
+		}
+		mode_indicator := auto_pattern_mode ? "AUTO" : "MANUAL"
+		rl.DrawText(rl.TextFormat("tick=%d   sparks=%d/%d   steps/frame=%d   zoom=%.2f   [%s: %s]", world.tick, world.sparks.count, int(SPARK_CAP), steps_per_frame, zoom, cstring(raw_data(mode_indicator)), cstring(raw_data(pattern_display))), hud_x, hud_y, body_font_size, rl.RAYWHITE)
 
+		// Slider helper procedure
+		draw_slider_f32 :: proc(x, y, width, height: i32, value: ^f32, min_val, max_val: f32, label: cstring, mouse_pos: rl.Vector2) {
+			slider_rect := rl.Rectangle{f32(x), f32(y), f32(width), f32(height)}
+			rl.DrawRectangleRec(slider_rect, rl.Color{50, 50, 50, 255})
+			
+			slider_fill_width := (value^ - min_val) / (max_val - min_val) * f32(width)
+			slider_fill_rect := rl.Rectangle{f32(x), f32(y), slider_fill_width, f32(height)}
+			rl.DrawRectangleRec(slider_fill_rect, rl.Color{100, 200, 100, 255})
+			
+			handle_x := f32(x) + slider_fill_width
+			handle_rect := rl.Rectangle{handle_x - 5, f32(y) - 2, 10, f32(height) + 4}
+			rl.DrawRectangleRec(handle_rect, rl.RAYWHITE)
+			
+			rl.DrawText(rl.TextFormat("%s: %.2f", label, value^), x, y + height + 5, 14, rl.RAYWHITE)
+			
+			if rl.IsMouseButtonDown(.LEFT) {
+				if rl.CheckCollisionPointRec(mouse_pos, slider_rect) {
+					local_x := mouse_pos.x - f32(x)
+					if local_x < 0 { local_x = 0 }
+					if local_x > f32(width) { local_x = f32(width) }
+					t := local_x / f32(width)
+					value^ = min_val + t * (max_val - min_val)
+				}
+			}
+		}
+		
+		draw_slider_int :: proc(x, y, width, height: i32, value: ^int, min_val, max_val: int, label: cstring, mouse_pos: rl.Vector2) {
+			slider_rect := rl.Rectangle{f32(x), f32(y), f32(width), f32(height)}
+			rl.DrawRectangleRec(slider_rect, rl.Color{50, 50, 50, 255})
+			
+			slider_fill_width := f32(value^ - min_val) / f32(max_val - min_val) * f32(width)
+			slider_fill_rect := rl.Rectangle{f32(x), f32(y), slider_fill_width, f32(height)}
+			rl.DrawRectangleRec(slider_fill_rect, rl.Color{100, 200, 100, 255})
+			
+			handle_x := f32(x) + slider_fill_width
+			handle_rect := rl.Rectangle{handle_x - 5, f32(y) - 2, 10, f32(height) + 4}
+			rl.DrawRectangleRec(handle_rect, rl.RAYWHITE)
+			
+			rl.DrawText(rl.TextFormat("%s: %d", label, value^), x, y + height + 5, 14, rl.RAYWHITE)
+			
+			if rl.IsMouseButtonDown(.LEFT) {
+				if rl.CheckCollisionPointRec(mouse_pos, slider_rect) {
+					local_x := mouse_pos.x - f32(x)
+					if local_x < 0 { local_x = 0 }
+					if local_x > f32(width) { local_x = f32(width) }
+					t := local_x / f32(width)
+					value^ = min_val + int(t * f32(max_val - min_val))
+				}
+			}
+		}
+		
 		// Solar Bonus Max slider
+		mouse_pos := rl.GetMousePosition()
 		slider_x: i32 = sw - 400
 		slider_y: i32 = 10
 		slider_width: i32 = 200
 		slider_height: i32 = 20
-		slider_min: f32 = 0.0
-		slider_max: f32 = 50.0
 		
-		// Draw slider background
+		// Solar bonus slider with special display
 		slider_rect := rl.Rectangle{f32(slider_x), f32(slider_y), f32(slider_width), f32(slider_height)}
 		rl.DrawRectangleRec(slider_rect, rl.Color{50, 50, 50, 255})
-		
-		// Draw slider fill
+		slider_min: f32 = 0.0
+		slider_max: f32 = 50.0
 		slider_fill_width := (solar_bonus_max_setting - slider_min) / (slider_max - slider_min) * f32(slider_width)
 		slider_fill_rect := rl.Rectangle{f32(slider_x), f32(slider_y), slider_fill_width, f32(slider_height)}
 		rl.DrawRectangleRec(slider_fill_rect, rl.Color{100, 200, 100, 255})
-		
-		// Draw slider handle
 		handle_x := f32(slider_x) + slider_fill_width
 		handle_rect := rl.Rectangle{handle_x - 5, f32(slider_y) - 2, 10, f32(slider_height) + 4}
 		rl.DrawRectangleRec(handle_rect, rl.RAYWHITE)
-		
-		// Draw slider label with both max setting and actual value
-		rl.DrawText(rl.TextFormat("Solar Max: %.1f (actual: %.1f)", solar_bonus_max_setting, solar_bonus_max), slider_x, slider_y + slider_height + 5, 16, rl.RAYWHITE)
-		
-		// Handle slider interaction
-		mouse_pos := rl.GetMousePosition()
+		rl.DrawText(rl.TextFormat("Solar Max: %.1f (actual: %.1f)", solar_bonus_max_setting, solar_bonus_max), slider_x, slider_y + slider_height + 5, 14, rl.RAYWHITE)
 		if rl.IsMouseButtonDown(.LEFT) {
 			if rl.CheckCollisionPointRec(mouse_pos, slider_rect) {
-				// Update solar_bonus_max_setting based on mouse position
 				local_x := mouse_pos.x - f32(slider_x)
 				if local_x < 0 { local_x = 0 }
 				if local_x > f32(slider_width) { local_x = f32(slider_width) }
-				
 				t := local_x / f32(slider_width)
 				solar_bonus_max_setting = slider_min + t * (slider_max - slider_min)
 			}
+		}
+		
+		// Pattern Detection Sliders (only show when detection is active)
+		if show_debug_blobs {
+			slider_y += 45
+			rl.DrawText("--- Pattern Detection ---", slider_x, slider_y - 5, 14, rl.YELLOW)
+			slider_y += 20
+			draw_slider_f32(slider_x, slider_y, slider_width, slider_height, &detect_alpha_threshold, 0.01, 0.5, "Alpha Threshold", mouse_pos)
+			slider_y += 40
+			draw_slider_int(slider_x, slider_y, slider_width, slider_height, &min_blob_size, 1, 20, "Min Size", mouse_pos)
+			slider_y += 40
+			draw_slider_int(slider_x, slider_y, slider_width, slider_height, &max_blob_size, 50, 1000, "Max Size", mouse_pos)
+			slider_y += 40
+			draw_slider_int(slider_x, slider_y, slider_width, slider_height, &min_pixel_count, 10, 500, "Min Pixels", mouse_pos)
 		}
 
 		origin := rl.Vector2{0, 0}
@@ -1427,7 +1510,12 @@ main :: proc() {
 
 		// Middle Mouse (or 'L' key): Load/Paste Pattern
 		if rl.IsMouseButtonPressed(.MIDDLE) || (rl.IsKeyPressed(.L) && !paused) {
-			load_and_paste_pattern(&world, gx, gy, last_save_file)
+			// Determine which file to load based on mode
+			file_to_load := last_save_file
+			if auto_pattern_mode {
+				file_to_load = fmt.tprintf("auto_pattern_%d.dat", auto_pattern_index)
+			}
+			load_and_paste_pattern(&world, gx, gy, file_to_load)
 		}
 
 		// Visual Feedback: Draw Selection Rectangle
