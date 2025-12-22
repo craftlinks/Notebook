@@ -123,6 +123,137 @@ free_pattern :: proc(p: ^Pattern) {
 }
 
 // ----------------
+// Auto-Detection System
+// ----------------
+
+// A structure to hold found patterns temporarily
+Detected_Blob :: struct {
+	rect:   rl.Rectangle, // The bounding box
+	score:  f32,          // Average alpha (heat)
+	pixels: int,          // Total area
+}
+
+// Global list of detected blobs (reset every detection frame)
+detected_blobs: [dynamic]Detected_Blob
+
+// Configuration
+DETECT_ALPHA_THRESHOLD :: 0.12   // Cell must be this bright to be part of a blob
+MIN_BLOB_SIZE          :: 4     // Width/Height minimum
+MAX_BLOB_SIZE          :: 512   // Max size (ignore world-spanning chaos)
+MIN_PIXEL_COUNT        :: 128    // Minimum active cells to count as a pattern
+
+detect_active_regions :: proc(w: ^Byte_World) {
+	// Clear previous results
+	clear(&detected_blobs)
+
+	// Keep track of visited cells during this scan
+	visited := make([]bool, w.size * w.size)
+	defer delete(visited)
+
+	// Stack for flood fill
+	stack := make([dynamic]int, 0, 1000)
+	defer delete(stack)
+
+	for y := 0; y < w.size; y += 1 {
+		for x := 0; x < w.size; x += 1 {
+			idx := idx_of(w.size, x, y)
+			
+			// If hot and not visited, start a new blob detection
+			if w.alpha[idx] > DETECT_ALPHA_THRESHOLD && !visited[idx] {
+				
+				// --- Start Flood Fill ---
+				append(&stack, idx)
+				visited[idx] = true
+
+				min_x, max_x := x, x
+				min_y, max_y := y, y
+				total_alpha: f32 = 0.0
+				count: int = 0
+
+				for len(stack) > 0 {
+					curr_idx := pop(&stack)
+					curr_val := w.alpha[curr_idx]
+					
+					cx := curr_idx % w.size
+					cy := curr_idx / w.size
+
+					// Update bounds
+					if cx < min_x { min_x = cx }
+					if cx > max_x { max_x = cx }
+					if cy < min_y { min_y = cy }
+					if cy > max_y { max_y = cy }
+					
+					total_alpha += curr_val
+					count += 1
+
+					// Check 4 neighbors
+					// We only follow "hot" paths
+					// We do NOT wrap here, because a pattern wrapping around the screen edge 
+					// is hard to save/load as a simple rectangle.
+					
+					// Up
+					if cy > 0 {
+						n_idx := curr_idx - w.size
+						if !visited[n_idx] && w.alpha[n_idx] > DETECT_ALPHA_THRESHOLD {
+							visited[n_idx] = true
+							append(&stack, n_idx)
+						}
+					}
+					// Down
+					if cy < w.size-1 {
+						n_idx := curr_idx + w.size
+						if !visited[n_idx] && w.alpha[n_idx] > DETECT_ALPHA_THRESHOLD {
+							visited[n_idx] = true
+							append(&stack, n_idx)
+						}
+					}
+					// Left
+					if cx > 0 {
+						n_idx := curr_idx - 1
+						if !visited[n_idx] && w.alpha[n_idx] > DETECT_ALPHA_THRESHOLD {
+							visited[n_idx] = true
+							append(&stack, n_idx)
+						}
+					}
+					// Right
+					if cx < w.size-1 {
+						n_idx := curr_idx + 1
+						if !visited[n_idx] && w.alpha[n_idx] > DETECT_ALPHA_THRESHOLD {
+							visited[n_idx] = true
+							append(&stack, n_idx)
+						}
+					}
+				}
+
+				// --- End Flood Fill ---
+
+				width := max_x - min_x + 1
+				height := max_y - min_y + 1
+
+				// Filter noise
+				if width >= MIN_BLOB_SIZE && height >= MIN_BLOB_SIZE && 
+				   width <= MAX_BLOB_SIZE && height <= MAX_BLOB_SIZE &&
+				   count >= MIN_PIXEL_COUNT {
+					
+					// Add padding to the rect so we catch sparks slightly outside the core path
+					pad :: 2
+					final_x := max(0, min_x - pad)
+					final_y := max(0, min_y - pad)
+					final_w := min(w.size - final_x, width + pad*2)
+					final_h := min(w.size - final_y, height + pad*2)
+
+					append(&detected_blobs, Detected_Blob{
+						rect = rl.Rectangle{f32(final_x), f32(final_y), f32(final_w), f32(final_h)},
+						score = total_alpha / f32(count),
+						pixels = count,
+					})
+				}
+			}
+		}
+	}
+}
+
+// ----------------
 // Small utilities
 // ----------------
 
@@ -1023,6 +1154,10 @@ main :: proc() {
 	// File logic
 	last_save_file := "pattern_01.dat"
 
+	// Auto-Detection State
+	show_debug_blobs := false
+	auto_scan_timer: f32 = 0.0
+
 	for !rl.WindowShouldClose() {
 		// Controls
 		if rl.IsKeyPressed(.SPACE) { paused = !paused }
@@ -1047,6 +1182,28 @@ main :: proc() {
 			// Inject 5000 random sparks
 			for _ in 0..<5000 {
 				if !spawn_spark_into(&world, &world.sparks) { break }
+			}
+		}
+
+		// 'D' to toggle debug visualization of detected patterns
+		if rl.IsKeyPressed(.D) {
+			show_debug_blobs = !show_debug_blobs
+			// Force a scan immediately
+			detect_active_regions(&world)
+			fmt.println("Pattern detection", show_debug_blobs ? "enabled" : "disabled")
+		}
+
+		// 'S' (Snapshot): Save ALL currently detected blobs to files
+		if rl.IsKeyPressed(.S) && show_debug_blobs {
+			fmt.println("Snapshotting", len(detected_blobs), "patterns...")
+			for blob, i in detected_blobs {
+				fname := fmt.tprintf("auto_pattern_%d.dat", i)
+				// Convert rect floats back to ints
+				bx := int(blob.rect.x)
+				by := int(blob.rect.y)
+				bw := int(blob.rect.width)
+				bh := int(blob.rect.height)
+				save_pattern(&world, bx, by, bw, bh, fname)
 			}
 		}
 
@@ -1090,6 +1247,15 @@ main :: proc() {
 		spark_ratio := f32(world.sparks.count) / f32(SPARK_CAP)
 		// Inverse relationship: fewer sparks = more solar energy
 		solar_bonus_max = solar_bonus_max_setting * (1.0 - spark_ratio)
+
+		// Auto-update detection every 1 second if visible
+		if show_debug_blobs {
+			auto_scan_timer += dt
+			if auto_scan_timer > 1.0 {
+				auto_scan_timer = 0
+				detect_active_regions(&world)
+			}
+		}
 
 		// Simulate
 		if !paused {
@@ -1141,7 +1307,7 @@ main :: proc() {
 		hud_y += title_font_size + pad_y
 		rl.DrawText("SPACE: pause   N: step   R: reseed   I: inject 5k   +/-: steps/frame   Ctrl+Wheel: zoom   Arrows: pan   P: pixel-perfect   F: reset view", hud_x, hud_y, body_font_size, rl.RAYWHITE)
 		hud_y += body_font_size + 2
-		rl.DrawText("RIGHT-DRAG: save pattern   MIDDLE/L: paste pattern   1-9: switch pattern slot   Ranges: 0-63(Void), 64-127(Wall), 128-191(Solar), 192+(Ops)", hud_x, hud_y, body_font_size, rl.RAYWHITE)
+		rl.DrawText("RIGHT-DRAG: save pattern   MIDDLE/L: paste pattern   1-9: switch pattern slot   D: detect patterns   S: snapshot detected", hud_x, hud_y, body_font_size, rl.RAYWHITE)
 		hud_y += body_font_size + 2
 		
 		// Draw OP code legend with actual colors
@@ -1208,6 +1374,28 @@ main :: proc() {
 
 		origin := rl.Vector2{0, 0}
 		rl.DrawTexturePro(texture, src, dst, origin, 0, rl.WHITE)
+
+		// --- Draw Detected Blobs ---
+		if show_debug_blobs {
+			for blob in detected_blobs {
+				// Convert Grid Rect to Screen Rect using view transform
+				rx := dst.x + blob.rect.x * scale
+				ry := dst.y + blob.rect.y * scale
+				rw := blob.rect.width * scale
+				rh := blob.rect.height * scale
+				
+				// Draw bounding box
+				rl.DrawRectangleLinesEx(rl.Rectangle{rx, ry, rw, rh}, 2, rl.YELLOW)
+				
+				// Draw score
+				score_text := rl.TextFormat("%.2f", blob.score)
+				rl.DrawText(score_text, i32(rx), i32(ry)-12, 10, rl.YELLOW)
+			}
+			
+			// Draw detection info
+			detection_text := rl.TextFormat("Detected: %d patterns", len(detected_blobs))
+			rl.DrawText(detection_text, 10, sh - 30, 20, rl.YELLOW)
+		}
 
 		// --- Grid Interaction Logic (Pattern Selection) ---
 		// Get World Coordinates
