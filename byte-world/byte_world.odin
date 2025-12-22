@@ -60,6 +60,9 @@ SPARK_COUNT_MIN : int = 150000
 
 SPARK_MAX_AGE_TICKS : int = 500
 
+// Maximum number of SOLAR writes a spark can perform in its lifetime
+SPARK_MAX_SOLAR_WRITES : int = 2
+
 // Hard upper bound on total sparks alive at once.
 SPARK_CAP :: 150_000
 
@@ -69,6 +72,7 @@ Spark :: struct {
 	energy: f32,
 	register: u8,     // 8-bit payload (0..255)
 	age: int,
+	solar_writes: int, // Number of SOLAR cells written during lifetime
 	color: rl.Color,  // Lineage color (inherited from parent)
 }
 
@@ -506,6 +510,7 @@ spawn_spark_into :: proc(w: ^Byte_World, sparks: ^Spark_Buffer) -> bool {
 		energy = f32(rng_int_inclusive(&w.rng, 50, 80)),
 		register = 0,
 		age = 0,
+		solar_writes = 0,
 		color = color,
 	}
 	// Ensure it's moving.
@@ -542,6 +547,7 @@ spawn_spark_into_unique :: proc(w: ^Byte_World, sparks: ^Spark_Buffer) -> bool {
 			energy = f32(rng_int_inclusive(&w.rng, 50, 80)),
 			register = 0,
 			age = 0,
+			solar_writes = 0,
 			color = color,
 		}
 		if s.dx == 0 && s.dy == 0 {
@@ -688,11 +694,19 @@ attempt_with_dir :: proc(w: ^Byte_World, s0: Spark, dirx, diry: int) -> Attempt_
 		if ahead_val > RANGE_VOID_MAX && ahead_val <= RANGE_WALL_MAX {
 			write_cost = COST_WRITE_WALL
 		}
-		if res.s.energy > write_cost {
+		// Check if we're trying to write a SOLAR value
+		is_solar_write := res.s.register > RANGE_WALL_MAX && res.s.register <= RANGE_SOLAR_MAX
+		can_write_solar := !is_solar_write || res.s.solar_writes < SPARK_MAX_SOLAR_WRITES
+		
+		if res.s.energy > write_cost && can_write_solar {
 			res.do_store = true
 			res.store_idx = ahead_idx
 			res.store_value = res.s.register
 			res.s.energy -= write_cost
+			// Track SOLAR writes
+			if is_solar_write {
+				res.s.solar_writes += 1
+			}
 		}
 
 	case OP_SPLIT:
@@ -707,6 +721,7 @@ attempt_with_dir :: proc(w: ^Byte_World, s0: Spark, dirx, diry: int) -> Attempt_
 				energy = half_energy,
 				register = res.s.register,
 				age = half_age,
+				solar_writes = 0, // Child starts with fresh solar write counter
 				color = res.s.color,
 			}
 			res.do_split = true
@@ -1109,6 +1124,7 @@ load_and_paste_pattern :: proc(w: ^Byte_World, dest_x, dest_y: int, filename: st
 			energy = 100.0, // Give fresh energy
 			register = rs.register,
 			age = 0,
+			solar_writes = 0,
 			color = rl.Color{rs.color_r, rs.color_g, rs.color_b, 255},
 		}
 		
@@ -1116,6 +1132,183 @@ load_and_paste_pattern :: proc(w: ^Byte_World, dest_x, dest_y: int, filename: st
 		spark_buf_append(&w.sparks, new_spark)
 	}
 	fmt.println("Loaded pattern from", filename)
+}
+
+// Load pattern into a Pattern structure (without pasting to world)
+load_pattern_from_file :: proc(filename: string) -> (Pattern, bool) {
+	data, ok := os.read_entire_file(filename)
+	if !ok {
+		return Pattern{}, false
+	}
+	defer delete(data)
+
+	if len(data) < 12 { return Pattern{}, false }
+
+	offset := 0
+	read_int :: proc(d: []u8, off: ^int) -> int {
+		if len(d) < off^ + 4 { return 0 }
+		val_bytes := [4]u8{d[off^], d[off^+1], d[off^+2], d[off^+3]}
+		off^ += 4
+		return int(transmute(i32)val_bytes)
+	}
+
+	p_w := read_int(data, &offset)
+	p_h := read_int(data, &offset)
+	s_count := read_int(data, &offset)
+
+	// Read Grid
+	grid_size := p_w * p_h
+	if len(data) < offset + grid_size { return Pattern{}, false }
+	
+	cells := make([]u8, grid_size)
+	for i := 0; i < grid_size; i += 1 {
+		cells[i] = data[offset]
+		offset += 1
+	}
+
+	// Read Sparks
+	sparks := make([dynamic]Relative_Spark, 0, s_count)
+	spark_bytes := size_of(Relative_Spark)
+	for i := 0; i < s_count; i += 1 {
+		if len(data) < offset + spark_bytes { break }
+		
+		temp_b: [size_of(Relative_Spark)]u8
+		for k := 0; k < spark_bytes; k+=1 { temp_b[k] = data[offset+k] }
+		offset += spark_bytes
+		
+		rs := transmute(Relative_Spark)temp_b
+		append(&sparks, rs)
+	}
+
+	return Pattern{
+		width = p_w,
+		height = p_h,
+		cells = cells,
+		sparks = sparks,
+	}, true
+}
+
+// Paste a Pattern structure to the world at given coordinates
+paste_pattern_to_world :: proc(w: ^Byte_World, p: ^Pattern, dest_x, dest_y: int) {
+	// Paste Grid
+	for row := 0; row < p.height; row += 1 {
+		for col := 0; col < p.width; col += 1 {
+			val := p.cells[row * p.width + col]
+			
+			wx := wrap_i(dest_x + col, w.size)
+			wy := wrap_i(dest_y + row, w.size)
+			idx := idx_of(w.size, wx, wy)
+			
+			w.grid[idx] = val
+			w.alpha[idx] = 1.0
+		}
+	}
+
+	// Paste Sparks
+	for rs in p.sparks {
+		final_x := wrap_i(dest_x + int(rs.rel_x), w.size)
+		final_y := wrap_i(dest_y + int(rs.rel_y), w.size)
+		
+		new_spark := Spark{
+			x = final_x,
+			y = final_y,
+			dx = int(rs.dx),
+			dy = int(rs.dy),
+			energy = 100.0,
+			register = rs.register,
+			age = 0,
+			solar_writes = 0,
+			color = rl.Color{rs.color_r, rs.color_g, rs.color_b, 255},
+		}
+		
+		spark_buf_append(&w.sparks, new_spark)
+	}
+}
+
+// Initialize world by tiling auto-patterns across the grid
+init_world_from_auto_patterns :: proc(w: ^Byte_World) {
+	// Clear the world first
+	w.tick = 0
+	spark_buf_clear(&w.sparks)
+	spark_buf_clear(&w.sparks_next)
+	
+	for i in 0..<len(w.occ_stamp) {
+		w.occ_stamp[i] = 0
+	}
+	w.occ_gen = 1
+	
+	for i in 0..<len(w.alpha) {
+		w.alpha[i] = 0.05
+	}
+	
+	for i in 0..<len(w.grid) {
+		w.grid[i] = 0 // Fill with void
+	}
+
+	// Load all available auto_pattern files
+	patterns := make([dynamic]Pattern)
+	defer {
+		for &p in patterns {
+			free_pattern(&p)
+		}
+		delete(patterns)
+	}
+
+	// Try to load auto_pattern_0.dat through auto_pattern_99.dat
+	for i := 0; i < 100; i += 1 {
+		filename := fmt.tprintf("auto_pattern_%d.dat", i)
+		if pattern, ok := load_pattern_from_file(filename); ok {
+			append(&patterns, pattern)
+			fmt.println("Loaded", filename, "for tiling")
+		}
+	}
+
+	if len(patterns) == 0 {
+		fmt.println("No auto-patterns found. Using normal random seeding.")
+		byte_world_reseed(w, w.rng)
+		return
+	}
+
+	fmt.println("Tiling", len(patterns), "patterns across the grid...")
+
+	// Shuffle the patterns array for variety
+	for i := len(patterns)-1; i > 0; i -= 1 {
+		j := rng_int_inclusive(&w.rng, 0, i)
+		patterns[i], patterns[j] = patterns[j], patterns[i]
+	}
+
+	// Tile patterns across the grid
+	x_offset := 0
+	y_offset := 0
+	max_height_in_row := 0
+	pattern_idx := 0
+
+	for y_offset < w.size {
+		x_offset = 0
+		max_height_in_row = 0
+
+		for x_offset < w.size {
+			if len(patterns) == 0 { break }
+			
+			// Pick next pattern (cycle through them)
+			p := &patterns[pattern_idx % len(patterns)]
+			pattern_idx += 1
+
+			// Paste pattern at current offset
+			paste_pattern_to_world(w, p, x_offset, y_offset)
+
+			// Advance horizontally
+			x_offset += p.width
+			if p.height > max_height_in_row {
+				max_height_in_row = p.height
+			}
+		}
+
+		// Advance vertically
+		y_offset += max_height_in_row
+	}
+
+	fmt.println("Grid initialized with tiled patterns!")
 }
 
 // -----
@@ -1166,6 +1359,10 @@ main :: proc() {
 		if rl.IsKeyPressed(.R) {
 			seed = seed_from_system_time()
 			byte_world_reseed(&world, seed)
+		}
+		if rl.IsKeyPressed(.T) {
+			// Tile mode: Initialize grid from auto-patterns
+			init_world_from_auto_patterns(&world)
 		}
 		if rl.IsKeyPressed(.F) { zoom = 1.0; pan = rl.Vector2{0, 0} }
 		if rl.IsKeyPressed(.P) { pixel_perfect = !pixel_perfect }
@@ -1327,7 +1524,7 @@ main :: proc() {
 		hud_y: i32 = 8
 		rl.DrawText("Byte-Physics World", hud_x, hud_y, title_font_size, rl.RAYWHITE)
 		hud_y += title_font_size + pad_y
-		rl.DrawText("SPACE: pause   N: step   R: reseed   I: inject 5k   +/-: steps/frame   Ctrl+Wheel: zoom   Arrows: pan   P: pixel-perfect   F: reset view", hud_x, hud_y, body_font_size, rl.RAYWHITE)
+		rl.DrawText("SPACE: pause   N: step   R: reseed   T: tile-patterns   I: inject 5k   +/-: steps/frame   Ctrl+Wheel: zoom   Arrows: pan   P: pixel-perfect   F: reset view", hud_x, hud_y, body_font_size, rl.RAYWHITE)
 		hud_y += body_font_size + 2
 		rl.DrawText("RIGHT-DRAG: save   MIDDLE/L: paste   1-9: manual slots   A: toggle auto-mode   [/]: browse auto   D: detect   S: snapshot", hud_x, hud_y, body_font_size, rl.RAYWHITE)
 		hud_y += body_font_size + 2
