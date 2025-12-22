@@ -3,6 +3,8 @@ package main
 import rl "vendor:raylib"
 
 import "core:time"
+import "core:os"
+import "core:fmt"
 
 // --------------------------------------------
 // Byte-Physics World (Odin port of byte-world.md)
@@ -95,6 +97,32 @@ Byte_World :: struct {
 }
 
 // ----------------
+// Pattern/Blueprint System
+// ----------------
+
+// A spark relative to the top-left of a pattern
+Relative_Spark :: struct {
+	rel_x, rel_y: i16, // Relative offset
+	dx, dy:       i8,
+	register:     u8,
+	color_r:      u8,
+	color_g:      u8,
+	color_b:      u8,
+}
+
+// The blueprint structure
+Pattern :: struct {
+	width, height: int,
+	cells:         []u8,
+	sparks:        [dynamic]Relative_Spark,
+}
+
+free_pattern :: proc(p: ^Pattern) {
+	delete(p.cells)
+	delete(p.sparks)
+}
+
+// ----------------
 // Small utilities
 // ----------------
 
@@ -137,6 +165,10 @@ hsv_to_rgb :: proc(hue: u32, saturation: f32, value: f32) -> rl.Color {
 }
 
 abs :: proc(x: f32) -> f32 {
+	return x if x >= 0 else -x
+}
+
+abs_int :: proc(x: int) -> int {
 	return x if x >= 0 else -x
 }
 
@@ -782,6 +814,179 @@ render_world_pixels :: proc(w: ^Byte_World, pixels: []rl.Color) {
 	}
 }
 
+// --------------------------
+// Pattern Save/Load System
+// --------------------------
+
+// Converts screen pixel coordinates to World Grid coordinates
+screen_to_world :: proc(screen_pos: rl.Vector2, world_size: int, ui_top: f32, view_w, view_h: f32, pan: rl.Vector2, zoom: f32) -> (int, int) {
+	// Reconstruct the destination rectangle logic from your main loop to invert it.
+	base_scale := min_f32(view_w/f32(world_size), view_h/f32(world_size))
+	scale := base_scale * zoom
+	// Assuming pixel_perfect is usually on or close enough
+	if scale >= 1.0 { scale = f32(int(scale)) }
+
+	dst_w := f32(world_size) * scale
+	dst_h := f32(world_size) * scale
+	
+	// The drawing offset
+	dst_x := (view_w - dst_w) * 0.5 + pan.x
+	dst_y := ui_top + (view_h - dst_h) * 0.5 + pan.y
+	if dst_y < ui_top + 2 { dst_y = ui_top + 2 }
+
+	// Inverse transform
+	local_x := screen_pos.x - dst_x
+	local_y := screen_pos.y - dst_y
+
+	grid_x := int(local_x / scale)
+	grid_y := int(local_y / scale)
+
+	return grid_x, grid_y
+}
+
+save_pattern :: proc(w: ^Byte_World, x, y, width, height: int, filename: string) {
+	if width <= 0 || height <= 0 { return }
+
+	// 1. Collect Sparks in region
+	// We scan the active buffer
+	rel_sparks := make([dynamic]Relative_Spark)
+	defer delete(rel_sparks)
+
+	sparks_slice := spark_buf_slice(&w.sparks)
+	for s in sparks_slice {
+		// Check bounds
+		if s.x >= x && s.x < x + width && s.y >= y && s.y < y + height {
+			append(&rel_sparks, Relative_Spark{
+				rel_x    = i16(s.x - x),
+				rel_y    = i16(s.y - y),
+				dx       = i8(s.dx),
+				dy       = i8(s.dy),
+				register = s.register,
+				color_r  = s.color.r,
+				color_g  = s.color.g,
+				color_b  = s.color.b,
+			})
+		}
+	}
+
+	// 2. Build Buffer
+	// Header: W(4), H(4), SparkCount(4) = 12 bytes
+	// Grid: W*H bytes
+	// Sparks: Count * sizeof(Relative_Spark)
+	
+	buf: [dynamic]u8
+	
+	// Write Header
+	// (Simple generic write helpers)
+	append_int :: proc(b: ^[dynamic]u8, v: int) {
+		val := i32(v)
+		bytes_view := transmute([4]u8)val
+		append(b, bytes_view[0], bytes_view[1], bytes_view[2], bytes_view[3])
+	}
+	
+	append_int(&buf, width)
+	append_int(&buf, height)
+	append_int(&buf, len(rel_sparks))
+
+	// Write Grid Cells
+	for row := 0; row < height; row += 1 {
+		for col := 0; col < width; col += 1 {
+			// Handle wrapping or clamping? Let's use wrap_i just in case logic is weird,
+			// though usually selection is clamped.
+			wx := wrap_i(x + col, w.size)
+			wy := wrap_i(y + row, w.size)
+			val := w.grid[idx_of(w.size, wx, wy)]
+			append(&buf, val)
+		}
+	}
+
+	// Write Sparks
+	for s in rel_sparks {
+		// We can just cast the struct to bytes for simplicity in this prototype
+		data := transmute([size_of(Relative_Spark)]u8)s
+		for b in data { append(&buf, b) }
+	}
+
+	// 3. Write to Disk
+	os.write_entire_file(filename, buf[:])
+	fmt.println("Saved pattern to", filename)
+}
+
+load_and_paste_pattern :: proc(w: ^Byte_World, dest_x, dest_y: int, filename: string) {
+	data, ok := os.read_entire_file(filename)
+	if !ok {
+		fmt.println("Failed to load", filename)
+		return
+	}
+	defer delete(data)
+
+	if len(data) < 12 { return } // header too small
+
+	offset := 0
+	read_int :: proc(d: []u8, off: ^int) -> int {
+		if len(d) < off^ + 4 { return 0 }
+		val_bytes := [4]u8{d[off^], d[off^+1], d[off^+2], d[off^+3]}
+		off^ += 4
+		return int(transmute(i32)val_bytes)
+	}
+
+	p_w := read_int(data, &offset)
+	p_h := read_int(data, &offset)
+	s_count := read_int(data, &offset)
+
+	// Paste Grid
+	grid_size := p_w * p_h
+	if len(data) < offset + grid_size { return }
+
+	for row := 0; row < p_h; row += 1 {
+		for col := 0; col < p_w; col += 1 {
+			val := data[offset]
+			offset += 1
+			
+			// Paste into world with wrapping
+			wx := wrap_i(dest_x + col, w.size)
+			wy := wrap_i(dest_y + row, w.size)
+			idx := idx_of(w.size, wx, wy)
+			
+			// Hard overwrite is usually better for blueprints.
+			w.grid[idx] = val
+			w.alpha[idx] = 1.0 // Highlight pasted area
+		}
+	}
+
+	// Paste Sparks
+	spark_bytes := size_of(Relative_Spark)
+	for i := 0; i < s_count; i += 1 {
+		if len(data) < offset + spark_bytes { break }
+		
+		// Copy bytes to a temp array to transmute
+		temp_b: [size_of(Relative_Spark)]u8
+		for k := 0; k < spark_bytes; k+=1 { temp_b[k] = data[offset+k] }
+		offset += spark_bytes
+		
+		rs := transmute(Relative_Spark)temp_b
+		
+		// Inject spark
+		final_x := wrap_i(dest_x + int(rs.rel_x), w.size)
+		final_y := wrap_i(dest_y + int(rs.rel_y), w.size)
+		
+		new_spark := Spark{
+			x = final_x,
+			y = final_y,
+			dx = int(rs.dx),
+			dy = int(rs.dy),
+			energy = 100.0, // Give fresh energy
+			register = rs.register,
+			age = 0,
+			color = rl.Color{rs.color_r, rs.color_g, rs.color_b, 255},
+		}
+		
+		// Only add if buffer has space
+		spark_buf_append(&w.sparks, new_spark)
+	}
+	fmt.println("Loaded pattern from", filename)
+}
+
 // -----
 // Main
 // -----
@@ -810,6 +1015,14 @@ main :: proc() {
 	pan := rl.Vector2{0, 0}
 	pixel_perfect := true
 
+	// Selection State
+	selecting := false
+	sel_start_x, sel_start_y: int
+	sel_curr_x, sel_curr_y: int
+
+	// File logic
+	last_save_file := "pattern_01.dat"
+
 	for !rl.WindowShouldClose() {
 		// Controls
 		if rl.IsKeyPressed(.SPACE) { paused = !paused }
@@ -836,6 +1049,17 @@ main :: proc() {
 				if !spawn_spark_into(&world, &world.sparks) { break }
 			}
 		}
+
+		// Number keys: Switch pattern slot
+		if rl.IsKeyPressed(.ONE)   { last_save_file = "pattern_01.dat" }
+		if rl.IsKeyPressed(.TWO)   { last_save_file = "pattern_02.dat" }
+		if rl.IsKeyPressed(.THREE) { last_save_file = "pattern_03.dat" }
+		if rl.IsKeyPressed(.FOUR)  { last_save_file = "pattern_04.dat" }
+		if rl.IsKeyPressed(.FIVE)  { last_save_file = "pattern_05.dat" }
+		if rl.IsKeyPressed(.SIX)   { last_save_file = "pattern_06.dat" }
+		if rl.IsKeyPressed(.SEVEN) { last_save_file = "pattern_07.dat" }
+		if rl.IsKeyPressed(.EIGHT) { last_save_file = "pattern_08.dat" }
+		if rl.IsKeyPressed(.NINE)  { last_save_file = "pattern_09.dat" }
 
 		// Pan with arrows (screen space)
 		dt := rl.GetFrameTime()
@@ -915,9 +1139,9 @@ main :: proc() {
 		hud_y: i32 = 8
 		rl.DrawText("Byte-Physics World", hud_x, hud_y, title_font_size, rl.RAYWHITE)
 		hud_y += title_font_size + pad_y
-		rl.DrawText("SPACE: pause   N: step (paused)   R: reseed   I: inject 5k sparks   +/-: steps/frame   Ctrl+Wheel: zoom   Arrows: pan   P: pixel-perfect   F: reset view", hud_x, hud_y, body_font_size, rl.RAYWHITE)
+		rl.DrawText("SPACE: pause   N: step   R: reseed   I: inject 5k   +/-: steps/frame   Ctrl+Wheel: zoom   Arrows: pan   P: pixel-perfect   F: reset view", hud_x, hud_y, body_font_size, rl.RAYWHITE)
 		hud_y += body_font_size + 2
-		rl.DrawText("Ranges: 0-63(Void/Black), 64-127(Wall/Blue), 128-191(Solar/Green-Yellow), 192+(Ops/Colored)", hud_x, hud_y, body_font_size, rl.RAYWHITE)
+		rl.DrawText("RIGHT-DRAG: save pattern   MIDDLE/L: paste pattern   1-9: switch pattern slot   Ranges: 0-63(Void), 64-127(Wall), 128-191(Solar), 192+(Ops)", hud_x, hud_y, body_font_size, rl.RAYWHITE)
 		hud_y += body_font_size + 2
 		
 		// Draw OP code legend with actual colors
@@ -941,7 +1165,7 @@ main :: proc() {
 		rl.DrawText("BRANCH", legend_x, hud_y, body_font_size, rl.Color{255, 20, 147, 255}) // Hot Pink
 		hud_y += body_font_size + 2
 		
-		rl.DrawText(rl.TextFormat("tick=%d   sparks=%d/%d   steps/frame=%d   zoom=%.2f", world.tick, world.sparks.count, int(SPARK_CAP), steps_per_frame, zoom), hud_x, hud_y, body_font_size, rl.RAYWHITE)
+		rl.DrawText(rl.TextFormat("tick=%d   sparks=%d/%d   steps/frame=%d   zoom=%.2f   [Pattern: %s]", world.tick, world.sparks.count, int(SPARK_CAP), steps_per_frame, zoom, cstring(raw_data(last_save_file))), hud_x, hud_y, body_font_size, rl.RAYWHITE)
 
 		// Solar Bonus Max slider
 		slider_x: i32 = sw - 400
@@ -984,6 +1208,55 @@ main :: proc() {
 
 		origin := rl.Vector2{0, 0}
 		rl.DrawTexturePro(texture, src, dst, origin, 0, rl.WHITE)
+
+		// --- Grid Interaction Logic (Pattern Selection) ---
+		// Get World Coordinates
+		gx, gy := screen_to_world(mouse_pos, world.size, f32(ui_top), f32(view_w), f32(view_h), pan, zoom)
+
+		// Right Mouse: Select Region
+		if rl.IsMouseButtonPressed(.RIGHT) {
+			selecting = true
+			sel_start_x = gx
+			sel_start_y = gy
+		}
+
+		if selecting {
+			sel_curr_x = gx
+			sel_curr_y = gy
+			
+			if rl.IsMouseButtonReleased(.RIGHT) {
+				selecting = false
+				// Normalize rectangle
+				rx := min(sel_start_x, sel_curr_x)
+				ry := min(sel_start_y, sel_curr_y)
+				rw := abs_int(sel_curr_x - sel_start_x) + 1
+				rh := abs_int(sel_curr_y - sel_start_y) + 1
+				
+				// Save automatically on release
+				save_pattern(&world, rx, ry, rw, rh, last_save_file)
+			}
+		}
+
+		// Middle Mouse (or 'L' key): Load/Paste Pattern
+		if rl.IsMouseButtonPressed(.MIDDLE) || (rl.IsKeyPressed(.L) && !paused) {
+			load_and_paste_pattern(&world, gx, gy, last_save_file)
+		}
+
+		// Visual Feedback: Draw Selection Rectangle
+		if selecting {
+			min_gx := min(sel_start_x, sel_curr_x)
+			min_gy := min(sel_start_y, sel_curr_y)
+			w_gx   := abs_int(sel_curr_x - sel_start_x) + 1
+			h_gy   := abs_int(sel_curr_y - sel_start_y) + 1
+
+			rect_x := dst.x + f32(min_gx) * scale
+			rect_y := dst.y + f32(min_gy) * scale
+			rect_w := f32(w_gx) * scale
+			rect_h := f32(h_gy) * scale
+			
+			rl.DrawRectangleLinesEx(rl.Rectangle{rect_x, rect_y, rect_w, rect_h}, 2, rl.GREEN)
+		}
+
 		rl.DrawFPS(10, ui_top + 10)
 
 		rl.EndDrawing()
