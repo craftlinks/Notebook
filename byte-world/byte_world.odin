@@ -8,10 +8,10 @@ import "core:time"
 // Byte-Physics World (Odin port of byte-world.md)
 // --------------------------------------------
 
-GRID_SIZE :: 750
+GRID_SIZE :: 800
 
-WINDOW_W :: 1024
-WINDOW_H :: 1024
+WINDOW_W :: 2048
+WINDOW_H :: 2048
 
 // Value ranges (ontology)
 RANGE_VOID_MAX  : u8 = 63   // Empty space / Passive data
@@ -22,6 +22,7 @@ RANGE_SOLAR_MAX : u8 = 191  // Energy sources (metabolism)
 // Metabolic costs
 COST_MOVE   : f32 = 0.2   // Entropy: cost to exist/move per tick
 COST_WRITE  : f32 = 1.0   // Work: cost to change a grid value
+COST_WRITE_WALL : f32 = 2.0  // Work: cost to overwrite a wall (structural change)
 COST_SPLIT  : f32 = 6.0  // Reproduction: cost to create a child
 COST_MATH   : f32 = 0.1   // Processing: cost to compute (INC/DEC)
 PENALTY_HIT : f32 = 0.5   // Damage: cost when hitting a wall
@@ -38,6 +39,10 @@ ENERGY_CAP : f32 = 500.0
 // Rendering alpha dynamics
 ALPHA_DECAY_PER_TICK : f32 = 0.002  // Small fade per tick for unused cells
 ALPHA_GAIN_ON_VISIT  : f32 = 0.090   // Large boost when spark visits (>> decay)
+
+// Randomization of forgotten regions
+RANDOMIZE_THRESHOLD : f32 = 0.05  // Alpha level below which cells can be randomized
+RANDOMIZE_CHANCE    : f32 = 0.5   // Probability of randomizing a low-alpha cell
 
 // Op codes
 OP_LOAD   : u8 = 200 // Register = Grid[Ahead]
@@ -450,6 +455,25 @@ attempt_with_dir :: proc(w: ^Byte_World, s0: Spark, dirx, diry: int) -> Attempt_
 	nidx := idx_of(w.size, nx, ny)
 	val := w.grid[nidx]
 
+	// Randomize low-alpha cells on-demand (forgotten regions become new random code)
+	if w.alpha[nidx] < RANDOMIZE_THRESHOLD {
+		roll := f32(rng_next_u32(&w.rng)) / f32(max(u32))
+		if roll < RANDOMIZE_CHANCE {
+			// Randomize using same distribution as initial seeding
+			r := rng_u32_bounded(&w.rng, 100)
+			if r < 10 {
+				val = u8(rng_u32_bounded(&w.rng, u32(RANGE_VOID_MAX) + 1))
+			} else if r < 11 {
+				val = u8(rng_int_inclusive(&w.rng, int(RANGE_VOID_MAX) + 1, int(RANGE_WALL_MAX)))
+			} else if r < 12 {
+				val = u8(rng_int_inclusive(&w.rng, int(RANGE_WALL_MAX) + 1, int(RANGE_SOLAR_MAX)))
+			} else {
+				val = u8(rng_int_inclusive(&w.rng, int(RANGE_SOLAR_MAX) + 1, 255))
+			}
+			w.grid[nidx] = val
+		}
+	}
+
 	res := Attempt_Result{
 		ok = true,
 		s = s,
@@ -462,7 +486,8 @@ attempt_with_dir :: proc(w: ^Byte_World, s0: Spark, dirx, diry: int) -> Attempt_
 		res.dest_x, res.dest_y, res.dest_idx = nx, ny, nidx
 		return res
 	} else if val <= RANGE_WALL_MAX {
-		// Wall/mirror: bounce in place, reflect direction, pay hit penalty.
+		// Wall/mirror: enter the cell, reflect direction, pay hit penalty.
+		res.dest_x, res.dest_y, res.dest_idx = nx, ny, nidx
 		if (val % 2) == 0 {
 			res.s.dx = -res.s.dx
 		} else {
@@ -494,11 +519,17 @@ attempt_with_dir :: proc(w: ^Byte_World, s0: Spark, dirx, diry: int) -> Attempt_
 		res.s.register = w.grid[ahead_idx]
 
 	case OP_STORE:
-		if res.s.energy > COST_WRITE {
+		ahead_val := w.grid[ahead_idx]
+		write_cost := COST_WRITE
+		// Overwriting walls costs more (structural change)
+		if ahead_val > RANGE_VOID_MAX && ahead_val <= RANGE_WALL_MAX {
+			write_cost = COST_WRITE_WALL
+		}
+		if res.s.energy > write_cost {
 			res.do_store = true
 			res.store_idx = ahead_idx
 			res.store_value = res.s.register
-			res.s.energy -= COST_WRITE
+			res.s.energy -= write_cost
 		}
 
 	case OP_SPLIT:
