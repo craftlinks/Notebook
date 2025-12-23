@@ -56,6 +56,8 @@ OP_INC    : u8 = 205 // Register++
 OP_DEC    : u8 = 206 // Register--
 OP_BRANCH : u8 = 207 // If Register < 128 -> LEFT else RIGHT
 OP_SWAP   : u8 = 208 // Swap Register <-> Grid[Ahead]
+OP_PICKUP : u8 = 209 // Inventory = Grid[Ahead], Grid[Ahead] = VOID (if inventory empty)
+OP_DROP   : u8 = 210 // Grid[Ahead] = Inventory, Inventory = EMPTY (if grid ahead is VOID)
 
 SPARK_COUNT_MIN : int = 150000
 
@@ -75,6 +77,7 @@ Spark :: struct {
 	age: int,
 	solar_writes: int, // Number of SOLAR cells written during lifetime
 	color: rl.Color,  // Lineage color (inherited from parent)
+	inventory: u8,    // Cargo slot (holds a Grid Byte, separate from register)
 }
 
 Spark_Buffer :: struct {
@@ -113,6 +116,7 @@ Relative_Spark :: struct {
 	color_r:      u8,
 	color_g:      u8,
 	color_b:      u8,
+	inventory:    u8,  // Cargo slot
 }
 
 // The blueprint structure
@@ -513,6 +517,7 @@ spawn_spark_into :: proc(w: ^Byte_World, sparks: ^Spark_Buffer) -> bool {
 		age = 0,
 		solar_writes = 0,
 		color = color,
+		inventory = RANGE_VOID_MAX, // Empty inventory (max void value = empty)
 	}
 	// Ensure it's moving.
 	if s.dx == 0 && s.dy == 0 {
@@ -550,6 +555,7 @@ spawn_spark_into_unique :: proc(w: ^Byte_World, sparks: ^Spark_Buffer) -> bool {
 			age = 0,
 			solar_writes = 0,
 			color = color,
+			inventory = RANGE_VOID_MAX, // Empty inventory (max void value = empty)
 		}
 		if s.dx == 0 && s.dy == 0 {
 			s.dx = 1
@@ -724,6 +730,7 @@ attempt_with_dir :: proc(w: ^Byte_World, s0: Spark, dirx, diry: int) -> Attempt_
 				age = half_age,
 				solar_writes = 0, // Child starts with fresh solar write counter
 				color = res.s.color,
+				inventory = res.s.inventory, // Child inherits inventory
 			}
 			res.do_split = true
 			res.child = child
@@ -774,6 +781,37 @@ attempt_with_dir :: proc(w: ^Byte_World, s0: Spark, dirx, diry: int) -> Attempt_
 			res.store_value = old_register
 			
 			res.s.energy -= swap_cost
+		}
+
+	case OP_PICKUP:
+		ahead_val := w.grid[ahead_idx]
+		// Check if inventory is empty AND Grid[Ahead] is a movable block (Wall or Op)
+		is_inventory_empty := res.s.inventory == RANGE_VOID_MAX
+		is_movable := (ahead_val > RANGE_VOID_MAX && ahead_val <= RANGE_WALL_MAX) || (ahead_val > RANGE_SOLAR_MAX) // Wall or Op
+		
+		if is_inventory_empty && is_movable && res.s.energy > COST_WRITE {
+			// Pick up the block
+			res.s.inventory = ahead_val
+			// Leave VOID in its place
+			res.do_store = true
+			res.store_idx = ahead_idx
+			res.store_value = 0 // VOID
+			res.s.energy -= COST_WRITE
+		}
+
+	case OP_DROP:
+		ahead_val := w.grid[ahead_idx]
+		// Check if inventory has a block AND Grid[Ahead] is VOID
+		has_cargo := res.s.inventory != RANGE_VOID_MAX
+		is_ahead_void := ahead_val <= RANGE_VOID_MAX
+		
+		if has_cargo && is_ahead_void && res.s.energy > COST_WRITE {
+			// Drop the block
+			res.do_store = true
+			res.store_idx = ahead_idx
+			res.store_value = res.s.inventory
+			res.s.inventory = RANGE_VOID_MAX // Empty the inventory
+			res.s.energy -= COST_WRITE
 		}
 
 	case:
@@ -969,6 +1007,10 @@ color_from_cell_value :: proc(v: u8, alpha: f32) -> rl.Color {
 		return rl.Color{255, 20, 147, a}
 	case OP_SWAP:   // 208: Violet (atomic exchange/transport)
 		return rl.Color{138, 43, 226, a}
+	case OP_PICKUP: // 209: Teal (pickup cargo)
+		return rl.Color{0, 200, 200, a}
+	case OP_DROP:   // 210: Brown/Orange (drop cargo)
+		return rl.Color{200, 100, 0, a}
 	case:
 		// Unknown ops (192-255): Default dim magenta
 		return rl.Color{150, 0, 100, a}
@@ -1039,6 +1081,7 @@ save_pattern :: proc(w: ^Byte_World, x, y, width, height: int, filename: string)
 				color_r  = s.color.r,
 				color_g  = s.color.g,
 				color_b  = s.color.b,
+				inventory = s.inventory,
 			})
 		}
 	}
@@ -1154,6 +1197,7 @@ load_and_paste_pattern :: proc(w: ^Byte_World, dest_x, dest_y: int, filename: st
 			age = 0,
 			solar_writes = 0,
 			color = rl.Color{rs.color_r, rs.color_g, rs.color_b, 255},
+			inventory = rs.inventory,
 		}
 		
 		// Only add if buffer has space
@@ -1247,6 +1291,7 @@ paste_pattern_to_world :: proc(w: ^Byte_World, p: ^Pattern, dest_x, dest_y: int)
 			age = 0,
 			solar_writes = 0,
 			color = rl.Color{rs.color_r, rs.color_g, rs.color_b, 255},
+			inventory = rs.inventory,
 		}
 		
 		spark_buf_append(&w.sparks, new_spark)
@@ -1578,6 +1623,10 @@ main :: proc() {
 		rl.DrawText("BRANCH", legend_x, hud_y, body_font_size, rl.Color{255, 20, 147, 255}) // Hot Pink
 		legend_x += 80
 		rl.DrawText("SWAP", legend_x, hud_y, body_font_size, rl.Color{138, 43, 226, 255}) // Violet
+		legend_x += 60
+		rl.DrawText("PICKUP", legend_x, hud_y, body_font_size, rl.Color{0, 200, 200, 255}) // Teal
+		legend_x += 80
+		rl.DrawText("DROP", legend_x, hud_y, body_font_size, rl.Color{200, 100, 0, 255}) // Brown/Orange
 		hud_y += body_font_size + 2
 		
 		// Display current pattern info based on mode
