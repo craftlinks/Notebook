@@ -27,7 +27,7 @@ COST_WRITE  : f32 = 1.0   // Work: cost to change a grid value
 COST_WRITE_WALL : f32 = 2.0  // Work: cost to overwrite a wall (structural change)
 COST_SPLIT  : f32 = 6.0  // Reproduction: cost to create a child
 COST_MATH   : f32 = 0.1   // Processing: cost to compute (INC/DEC)
-PENALTY_HIT : f32 = 0.5   // Damage: cost when hitting a wall
+PENALTY_HIT : f32 = -0.5   // Damage: cost when hitting a wall
 PENALTY_BLOCKED : f32 = 0.5 // Damage: cost when trying to move into an occupied cell
 
 // Metabolic gains
@@ -454,13 +454,13 @@ byte_world_reseed :: proc(w: ^Byte_World, seed: u32) {
 	// Base noise (void/data)
 	for i in 0..<len(w.grid) {
 		r := rng_u32_bounded(&w.rng, 100)
-		if r < 10 {
+		if r < 5 {
 			// Void (0..63) - 40% of universe
 			w.grid[i] = u8(rng_u32_bounded(&w.rng, u32(RANGE_VOID_MAX) + 1))
 		} else if r < 15 {
 			// Wall (64..127) - 5% of universe
 			w.grid[i] = u8(rng_int_inclusive(&w.rng, int(RANGE_VOID_MAX) + 1, int(RANGE_WALL_MAX)))
-		} else if r < 20 {
+		} else if r < 25 {
 			// Solar (128..191) - 5% of universe
 			w.grid[i] = u8(rng_int_inclusive(&w.rng, int(RANGE_WALL_MAX) + 1, int(RANGE_SOLAR_MAX)))
 		} else {
@@ -785,17 +785,16 @@ attempt_with_dir :: proc(w: ^Byte_World, s0: Spark, dirx, diry: int) -> Attempt_
 
 	case OP_PICKUP:
 		ahead_val := w.grid[ahead_idx]
-		// Check if inventory is empty AND Grid[Ahead] is a movable block (Wall or Op)
-		is_inventory_empty := res.s.inventory == RANGE_VOID_MAX
-		is_movable := (ahead_val > RANGE_VOID_MAX && ahead_val <= RANGE_WALL_MAX) || (ahead_val > RANGE_SOLAR_MAX) // Wall or Op
-		
-		if is_inventory_empty && is_movable && res.s.energy > COST_WRITE {
-			// Pick up the block
+		// Swap inventory with the cell ahead
+		if res.s.energy > COST_WRITE {
+			// What's currently in inventory goes to the grid
+			old_inventory := res.s.inventory
+			// What's in the grid comes to inventory
 			res.s.inventory = ahead_val
-			// Leave VOID in its place
+			// Place old inventory value in the grid
 			res.do_store = true
 			res.store_idx = ahead_idx
-			res.store_value = 0 // VOID
+			res.store_value = old_inventory
 			res.s.energy -= COST_WRITE
 		}
 
