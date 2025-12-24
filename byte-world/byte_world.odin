@@ -27,7 +27,7 @@ COST_WRITE  : f32 = 1.0   // Work: cost to change a grid value
 COST_WRITE_WALL : f32 = 2.0  // Work: cost to overwrite a wall (structural change)
 COST_SPLIT  : f32 = 6.0  // Reproduction: cost to create a child
 COST_MATH   : f32 = 0.1   // Processing: cost to compute (INC/DEC)
-PENALTY_HIT : f32 = -0.5   // Damage: cost when hitting a wall
+PENALTY_HIT : f32 = -0.01   // Damage: cost when hitting a wall
 PENALTY_BLOCKED : f32 = 0.5 // Damage: cost when trying to move into an occupied cell
 
 // Metabolic gains
@@ -1016,11 +1016,19 @@ color_from_cell_value :: proc(v: u8, alpha: f32) -> rl.Color {
 	}
 }
 
-render_world_pixels :: proc(w: ^Byte_World, pixels: []rl.Color) {
+render_world_pixels :: proc(w: ^Byte_World, pixels: []rl.Color, show_trails: bool) {
 	assert(len(pixels) == len(w.grid))
 
-	for i in 0..<len(w.grid) {
-		pixels[i] = color_from_cell_value(w.grid[i], w.alpha[i])
+	if show_trails {
+		// Render grid with trails (alpha visualization)
+		for i in 0..<len(w.grid) {
+			pixels[i] = color_from_cell_value(w.grid[i], w.alpha[i])
+		}
+	} else {
+		// No trails, just black background
+		for i in 0..<len(pixels) {
+			pixels[i] = rl.BLACK
+		}
 	}
 
 	// Sparks render on top with their lineage color.
@@ -1410,6 +1418,7 @@ main :: proc() {
 	zoom: f32 = 1.0
 	pan := rl.Vector2{0, 0}
 	pixel_perfect := true
+	show_trails := true
 
 	// Selection State
 	selecting := false
@@ -1428,6 +1437,7 @@ main :: proc() {
 	for !rl.WindowShouldClose() {
 		// Controls
 		if rl.IsKeyPressed(.SPACE) { paused = !paused }
+		if rl.IsKeyPressed(.C) { show_trails = !show_trails }
 		if rl.IsKeyPressed(.R) {
 			seed = seed_from_system_time()
 			byte_world_reseed(&world, seed)
@@ -1556,7 +1566,7 @@ main :: proc() {
 		}
 
 		// Upload pixels
-		render_world_pixels(&world, pixels)
+		render_world_pixels(&world, pixels, show_trails)
 		rl.UpdateTexture(texture, raw_data(pixels))
 
 		// Layout
@@ -1596,7 +1606,7 @@ main :: proc() {
 		hud_y: i32 = 8
 		rl.DrawText("Byte-Physics World", hud_x, hud_y, title_font_size, rl.RAYWHITE)
 		hud_y += title_font_size + pad_y
-		rl.DrawText("SPACE: pause   N: step   R: reseed   T: tile-patterns   I: inject 5k   +/-: steps/frame   Ctrl+Wheel: zoom   Arrows: pan   P: pixel-perfect   F: reset view", hud_x, hud_y, body_font_size, rl.RAYWHITE)
+		rl.DrawText("SPACE: pause   N: step   R: reseed   T: tile-patterns   I: inject 5k   +/-: steps/frame   Ctrl+Wheel: zoom   Arrows: pan   P: pixel-perfect   C: trails   F: reset view", hud_x, hud_y, body_font_size, rl.RAYWHITE)
 		hud_y += body_font_size + 2
 		rl.DrawText("RIGHT-DRAG: save   MIDDLE/L: paste   1-9: manual slots   A: toggle auto-mode   [/]: browse auto   D: detect   S: snapshot", hud_x, hud_y, body_font_size, rl.RAYWHITE)
 		hud_y += body_font_size + 2
@@ -1634,7 +1644,7 @@ main :: proc() {
 			pattern_display = fmt.tprintf("auto_pattern_%d.dat [%c/%c]", auto_pattern_index, '[', ']')
 		}
 		mode_indicator := auto_pattern_mode ? "AUTO" : "MANUAL"
-		rl.DrawText(rl.TextFormat("tick=%d   sparks=%d/%d   steps/frame=%d   zoom=%.2f   [%s: %s]", world.tick, world.sparks.count, int(SPARK_CAP), steps_per_frame, zoom, cstring(raw_data(mode_indicator)), cstring(raw_data(pattern_display))), hud_x, hud_y, body_font_size, rl.RAYWHITE)
+		rl.DrawText(rl.TextFormat("tick=%d   sparks=%d/%d   steps/frame=%d   zoom=%.2f   trails=%s   [%s: %s]", world.tick, world.sparks.count, int(SPARK_CAP), steps_per_frame, zoom, show_trails ? "ON" : "OFF", cstring(raw_data(mode_indicator)), cstring(raw_data(pattern_display))), hud_x, hud_y, body_font_size, rl.RAYWHITE)
 
 		// Slider helper procedure
 		draw_slider_f32 :: proc(x, y, width, height: i32, value: ^f32, min_val, max_val: f32, label: cstring, mouse_pos: rl.Vector2) {
