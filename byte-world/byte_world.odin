@@ -36,7 +36,7 @@ solar_bonus_max_setting : f32 = 20.0 // Max solar bonus (adjustable via slider, 
 solar_bonus_max : f32 = 20.0 // Actual solar bonus (computed dynamically based on spark count)
 SOLAR_DRAIN_PER_HARVEST  : u8 = 2 // When a spark steps onto solar
 
-ENERGY_CAP : f32 = 500.0
+ENERGY_CAP : f32 = 1000.0
 
 // Rendering alpha dynamics
 ALPHA_DECAY_PER_TICK : f32 = 0.002  // Small fade per tick for unused cells
@@ -99,6 +99,9 @@ Byte_World :: struct {
 	// Spark occupancy for the *next* generation.
 	// Uses a stamp buffer so we don't clear GRID_SIZE^2 booleans every tick.
 	occ_stamp: []u32,
+	// Owner (index into `sparks_next.data`) for each occupied cell in the current
+	// `occ_gen`. Only valid when `occ_stamp[idx] == occ_gen`.
+	occ_owner: []int,
 	occ_gen: u32,
 
 	rng: u32,
@@ -413,6 +416,7 @@ byte_world_make :: proc(size: int, seed: u32) -> Byte_World {
 	grid := make([]u8, cell_count)
 	alpha := make([]f32, cell_count)
 	occ_stamp := make([]u32, cell_count)
+	occ_owner := make([]int, cell_count)
 
 	// Fixed-capacity spark pools (hard cap); no per-tick allocations.
 	sparks_a := Spark_Buffer{data = make([]Spark, SPARK_CAP), count = 0}
@@ -426,6 +430,7 @@ byte_world_make :: proc(size: int, seed: u32) -> Byte_World {
 		sparks = sparks_a,
 		sparks_next = sparks_b,
 		occ_stamp = occ_stamp,
+		occ_owner = occ_owner,
 		occ_gen = 1,
 		rng = seed,
 	}
@@ -443,6 +448,7 @@ byte_world_reseed :: proc(w: ^Byte_World, seed: u32) {
 	// Reset occupancy stamping.
 	for i in 0..<len(w.occ_stamp) {
 		w.occ_stamp[i] = 0
+		w.occ_owner[i] = 0
 	}
 	w.occ_gen = 1
 
@@ -561,8 +567,10 @@ spawn_spark_into_unique :: proc(w: ^Byte_World, sparks: ^Spark_Buffer) -> bool {
 			s.dx = 1
 		}
 
+		owner_idx := sparks.count
 		if spark_buf_append(sparks, s) {
 			w.occ_stamp[i] = w.occ_gen
+			w.occ_owner[i] = owner_idx
 			return true
 		}
 		return false
@@ -586,6 +594,7 @@ occ_begin_step :: proc(w: ^Byte_World) {
 	if w.occ_gen == 0 {
 		for i in 0..<len(w.occ_stamp) {
 			w.occ_stamp[i] = 0
+			w.occ_owner[i] = 0
 		}
 		w.occ_gen = 1
 	}
@@ -616,6 +625,34 @@ Attempt_Result :: struct {
 	// Split spawning (also subject to occupancy)
 	do_split: bool,
 	child: Spark,
+}
+
+color_equal :: proc(a, b: rl.Color) -> bool {
+	return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a
+}
+
+occ_claim_or_takeover :: proc(w: ^Byte_World, cell_idx: int, s_new: Spark) -> (ok: bool, did_takeover: bool) {
+	// Unclaimed: append new occupant.
+	if w.occ_stamp[cell_idx] != w.occ_gen {
+		if w.sparks_next.count >= len(w.sparks_next.data) {
+			return false, false
+		}
+		owner_idx := w.sparks_next.count
+		w.sparks_next.data[owner_idx] = s_new
+		w.sparks_next.count += 1
+		w.occ_stamp[cell_idx] = w.occ_gen
+		w.occ_owner[cell_idx] = owner_idx
+		return true, false
+	}
+
+	// Claimed: allow takeover only when different color AND strictly higher energy.
+	owner_idx := w.occ_owner[cell_idx]
+	occupant := w.sparks_next.data[owner_idx]
+	if !color_equal(occupant.color, s_new.color) && s_new.energy > occupant.energy {
+		w.sparks_next.data[owner_idx] = s_new
+		return true, true
+	}
+	return false, false
 }
 
 attempt_with_dir :: proc(w: ^Byte_World, s0: Spark, dirx, diry: int) -> Attempt_Result {
@@ -827,7 +864,7 @@ try_spawn_child_adjacent :: proc(w: ^Byte_World, parent_x, parent_y: int, child0
 	tx := wrap_i(parent_x + child.dx, w.size)
 	ty := wrap_i(parent_y + child.dy, w.size)
 	tidx := idx_of(w.size, tx, ty)
-	if is_permeable_for_spawn(w.grid[tidx]) && occ_try_claim(w, tidx) {
+	if is_permeable_for_spawn(w.grid[tidx]) && w.occ_stamp[tidx] != w.occ_gen {
 		child.x, child.y = tx, ty
 		return true, child
 	}
@@ -836,7 +873,7 @@ try_spawn_child_adjacent :: proc(w: ^Byte_World, parent_x, parent_y: int, child0
 	tx2 := wrap_i(parent_x + child.dx, w.size)
 	ty2 := wrap_i(parent_y + child.dy, w.size)
 	tidx2 := idx_of(w.size, tx2, ty2)
-	if is_permeable_for_spawn(w.grid[tidx2]) && occ_try_claim(w, tidx2) {
+	if is_permeable_for_spawn(w.grid[tidx2]) && w.occ_stamp[tidx2] != w.occ_gen {
 		child.x, child.y = tx2, ty2
 		return true, child
 	}
@@ -865,9 +902,10 @@ byte_world_step :: proc(w: ^Byte_World) {
 		w.alpha[current_idx] = min_f32(w.alpha[current_idx] + ALPHA_GAIN_ON_VISIT, 1.0)
 
 		// --- Physics interpreter with occupancy ---
-		// Rule: if the intended destination is already occupied for the next generation,
-		// the move is a no-op (stay put) and we apply a penalty.
-		claimed := false
+		// Rule update:
+		// - If target cell is occupied: a different-color spark with strictly higher energy
+		//   takes over the cell (kills the occupant).
+		// - If same color OR equal energy: keep old rule (first mover keeps the cell).
 		blocked := false
 
 		attempt := attempt_with_dir(w, s, s.dx, s.dy)
@@ -875,13 +913,16 @@ byte_world_step :: proc(w: ^Byte_World) {
 		s_attempt.x, s_attempt.y = attempt.dest_x, attempt.dest_y
 
 		// Would the parent survive if it took this attempt?
-		energy_tmp := s_attempt.energy - COST_MOVE
-		survives := energy_tmp > 0 && energy_tmp < ENERGY_CAP && s_attempt.age < SPARK_MAX_AGE_TICKS
+		energy_move := s_attempt.energy - COST_MOVE
+		survives_move := energy_move > 0 && energy_move < ENERGY_CAP && s_attempt.age < SPARK_MAX_AGE_TICKS
 
-		if survives {
-			if occ_try_claim(w, attempt.dest_idx) {
-				claimed = true
-				s = s_attempt
+		if survives_move {
+			// Candidate occupant if we can enter/take this destination.
+			s_move := s_attempt
+			s_move.energy = energy_move
+
+			if ok, _ := occ_claim_or_takeover(w, attempt.dest_idx, s_move); ok {
+				s = s_move
 
 				// Commit deferred grid mutations now that we actually entered/stayed.
 				if attempt.do_solar_drain {
@@ -895,20 +936,17 @@ byte_world_step :: proc(w: ^Byte_World) {
 				if attempt.do_split {
 					if w.sparks_next.count < len(w.sparks_next.data) {
 						if ok, child := try_spawn_child_adjacent(w, s.x, s.y, attempt.child); ok {
+							child_owner_idx := w.sparks_next.count
 							_ = spark_buf_append(&w.sparks_next, child)
+							cidx := idx_of(w.size, child.x, child.y)
+							w.occ_stamp[cidx] = w.occ_gen
+							w.occ_owner[cidx] = child_owner_idx
 						}
 					}
 				}
 			} else {
 				// Blocked by occupancy: no-op (no movement, no op/solar execution).
-				if occ_try_claim(w, current_idx) {
-					claimed = true
-					blocked = true
-					// Keep s as-is (same position/direction/register); we already incremented age above.
-				} else {
-					// Can't even stay (someone else claimed this cell) -> removed.
-					continue
-				}
+				blocked = true
 			}
 		} else {
 			// Parent won't persist; still execute physical/op effects, but don't claim occupancy.
@@ -923,26 +961,29 @@ byte_world_step :: proc(w: ^Byte_World) {
 				if w.sparks_next.count < len(w.sparks_next.data) {
 					// Child is a next-gen spark, so it must obey occupancy.
 					if ok, child := try_spawn_child_adjacent(w, s.x, s.y, attempt.child); ok {
+						child_owner_idx := w.sparks_next.count
 						_ = spark_buf_append(&w.sparks_next, child)
+						cidx := idx_of(w.size, child.x, child.y)
+						w.occ_stamp[cidx] = w.occ_gen
+						w.occ_owner[cidx] = child_owner_idx
 					}
 				}
 			}
 		}
 
-		// Entropy + cap
+		// If we were blocked, attempt to stay in-place (also subject to takeover rule).
 		if blocked {
-			s.energy -= PENALTY_BLOCKED
-		}
-		s.energy -= COST_MOVE
-		// If a spark ever reaches the energy cap, it "burns out" and is removed.
-		// This makes ENERGY_CAP a death threshold instead of a clamp.
-		if s.energy >= ENERGY_CAP {
-			continue
-		}
+			s_stay := s0
+			s_stay.age = s.age // keep age increment
+			s_stay.energy -= PENALTY_BLOCKED
+			s_stay.energy -= COST_MOVE
 
-		// Survival
-		if claimed && s.energy > 0 && s.age < SPARK_MAX_AGE_TICKS {
-			_ = spark_buf_append(&w.sparks_next, s)
+			stay_survives := s_stay.energy > 0 && s_stay.energy < ENERGY_CAP && s_stay.age < SPARK_MAX_AGE_TICKS
+			if stay_survives {
+				_, _ = occ_claim_or_takeover(w, current_idx, s_stay)
+			}
+
+			continue
 		}
 	}
 
