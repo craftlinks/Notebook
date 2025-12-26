@@ -61,10 +61,10 @@ OP_DROP   : u8 = 210 // Grid[Ahead] = Inventory, Inventory = EMPTY (if grid ahea
 
 SPARK_COUNT_MIN : int = 150000
 
-SPARK_MAX_AGE_TICKS : int = 500
+SPARK_MAX_AGE_TICKS : int = 1000
 
 // Maximum number of SOLAR writes a spark can perform in its lifetime
-SPARK_MAX_SOLAR_WRITES : int = 2
+SPARK_MAX_SOLAR_WRITES : int = 4
 
 // Hard upper bound on total sparks alive at once.
 SPARK_CAP :: 150_000
@@ -631,28 +631,64 @@ color_equal :: proc(a, b: rl.Color) -> bool {
 	return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a
 }
 
-occ_claim_or_takeover :: proc(w: ^Byte_World, cell_idx: int, s_new: Spark) -> (ok: bool, did_takeover: bool) {
+clamp :: proc(v, min_v, max_v: i32) -> i32 {
+	if v < min_v { return min_v }
+	if v > max_v { return max_v }
+	return v
+}
+
+mutate_color :: proc(c: rl.Color, rng: ^u32) -> rl.Color {
+	// Small chance to mutate color slightly
+	r := c.r
+	g := c.g
+	b := c.b
+	
+	// 10% chance to drift each channel
+	drift :: 15
+	if rng_u32_bounded(rng, 100) < 10 {
+		delta := i32(rng_u32_bounded(rng, drift*2 + 1)) - drift
+		new_r := clamp(i32(r) + delta, 50, 255) // Keep it visible (>50)
+		r = u8(new_r)
+	}
+	if rng_u32_bounded(rng, 100) < 10 {
+		delta := i32(rng_u32_bounded(rng, drift*2 + 1)) - drift
+		new_g := clamp(i32(g) + delta, 50, 255)
+		g = u8(new_g)
+	}
+	if rng_u32_bounded(rng, 100) < 10 {
+		delta := i32(rng_u32_bounded(rng, drift*2 + 1)) - drift
+		new_b := clamp(i32(b) + delta, 50, 255)
+		b = u8(new_b)
+	}
+	return rl.Color{r, g, b, 255}
+}
+
+occ_claim_or_takeover :: proc(w: ^Byte_World, cell_idx: int, s_new: Spark) -> (ok: bool, did_takeover: bool, loot: f32) {
 	// Unclaimed: append new occupant.
 	if w.occ_stamp[cell_idx] != w.occ_gen {
 		if w.sparks_next.count >= len(w.sparks_next.data) {
-			return false, false
+			return false, false, 0.0
 		}
 		owner_idx := w.sparks_next.count
 		w.sparks_next.data[owner_idx] = s_new
 		w.sparks_next.count += 1
 		w.occ_stamp[cell_idx] = w.occ_gen
 		w.occ_owner[cell_idx] = owner_idx
-		return true, false
+		return true, false, 0.0
 	}
 
 	// Claimed: allow takeover only when different color AND strictly higher energy.
 	owner_idx := w.occ_owner[cell_idx]
 	occupant := w.sparks_next.data[owner_idx]
 	if !color_equal(occupant.color, s_new.color) && s_new.energy > occupant.energy {
+		// --- INJECTED MECHANIC: VAMPIRISM ---
+		// The victor absorbs 50% of the victim's remaining energy.
+		loot := occupant.energy * 0.5
+		
 		w.sparks_next.data[owner_idx] = s_new
-		return true, true
+		return true, true, loot
 	}
-	return false, false
+	return false, false, 0.0
 }
 
 attempt_with_dir :: proc(w: ^Byte_World, s0: Spark, dirx, diry: int) -> Attempt_Result {
@@ -757,6 +793,10 @@ attempt_with_dir :: proc(w: ^Byte_World, s0: Spark, dirx, diry: int) -> Attempt_
 		if res.s.energy > COST_SPLIT {
 			half_energy := res.s.energy * 0.5
 			half_age := res.s.age / 2
+			
+			// --- INJECTED MECHANIC: MUTATION ---
+			new_color := mutate_color(res.s.color, &w.rng)
+			
 			child := Spark{
 				x = nx,
 				y = ny,
@@ -766,7 +806,7 @@ attempt_with_dir :: proc(w: ^Byte_World, s0: Spark, dirx, diry: int) -> Attempt_
 				register = res.s.register,
 				age = half_age,
 				solar_writes = 0, // Child starts with fresh solar write counter
-				color = res.s.color,
+				color = new_color, // Use the mutated color
 				inventory = res.s.inventory, // Child inherits inventory
 			}
 			res.do_split = true
@@ -921,8 +961,12 @@ byte_world_step :: proc(w: ^Byte_World) {
 			s_move := s_attempt
 			s_move.energy = energy_move
 
-			if ok, _ := occ_claim_or_takeover(w, attempt.dest_idx, s_move); ok {
+			if ok, _, loot := occ_claim_or_takeover(w, attempt.dest_idx, s_move); ok {
 				s = s_move
+				
+				// Apply the predatory gain (Vampirism)
+				s.energy += loot
+				if s.energy > ENERGY_CAP { s.energy = ENERGY_CAP }
 
 				// Commit deferred grid mutations now that we actually entered/stayed.
 				if attempt.do_solar_drain {
@@ -980,7 +1024,11 @@ byte_world_step :: proc(w: ^Byte_World) {
 
 			stay_survives := s_stay.energy > 0 && s_stay.energy < ENERGY_CAP && s_stay.age < SPARK_MAX_AGE_TICKS
 			if stay_survives {
-				_, _ = occ_claim_or_takeover(w, current_idx, s_stay)
+				if ok, _, loot := occ_claim_or_takeover(w, current_idx, s_stay); ok {
+					// Apply loot even when staying in place
+					s_stay.energy += loot
+					if s_stay.energy > ENERGY_CAP { s_stay.energy = ENERGY_CAP }
+				}
 			}
 
 			continue
