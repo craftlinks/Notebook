@@ -44,7 +44,7 @@ ALPHA_GAIN_ON_VISIT  : f32 = 0.090   // Large boost when spark visits (>> decay)
 
 // Randomization of forgotten regions
 RANDOMIZE_THRESHOLD : f32 = 0.05  // Alpha level below which cells can be randomized
-RANDOMIZE_CHANCE    : f32 = 0.5   // Probability of randomizing a low-alpha cell
+RANDOMIZE_CHANCE    : f32 = 0.0   // Probability of randomizing a low-alpha cell
 
 // Op codes
 OP_LOAD   : u8 = 200 // Register = Grid[Ahead]
@@ -55,7 +55,7 @@ OP_RIGHT  : u8 = 204 // Turn 90° clockwise
 OP_INC    : u8 = 205 // Register++
 OP_DEC    : u8 = 206 // Register--
 OP_BRANCH : u8 = 207 // If Register < 128 -> LEFT else RIGHT
-OP_SWAP   : u8 = 208 // Swap Register <-> Grid[Ahead]
+OP_SENSE  : u8 = 208 // Sonar: Sense 3 cells ahead (Wall=0, Solar=255, Empty=128, Spark=50)
 OP_PICKUP : u8 = 209 // Inventory = Grid[Ahead], Grid[Ahead] = VOID (if inventory empty)
 OP_DROP   : u8 = 210 // Grid[Ahead] = Inventory, Inventory = EMPTY (if grid ahead is VOID)
 
@@ -68,6 +68,12 @@ SPARK_MAX_SOLAR_WRITES : int = 4
 
 // Hard upper bound on total sparks alive at once.
 SPARK_CAP :: 150_000
+
+// ENVIRONMENTAL DYNAMICS (Natural Selection Pressures)
+SOLAR_REGROWTH_RATE : int = 2000  // How many random cells we check per tick for regrowth
+SOLAR_REGROWTH_CHANCE : u32 = 50  // 1 in X chance a checked void becomes solar
+HEAT_DAMAGE_THRESHOLD : f32 = 0.85 // If Alpha > this, cell takes damage
+HEAT_DAMAGE_CHANCE    : u32 = 100  // 1 in X chance high heat turns cell to Wall
 
 Spark :: struct {
 	x, y: int,
@@ -615,9 +621,6 @@ Attempt_Result :: struct {
 	dest_idx: int,
 
 	// Deferred mutations (apply only if we actually take this attempt)
-	do_solar_drain: bool,
-	solar_idx: int,
-
 	do_store: bool,
 	store_idx: int,
 	store_value: u8,
@@ -745,13 +748,18 @@ attempt_with_dir :: proc(w: ^Byte_World, s0: Spark, dirx, diry: int) -> Attempt_
 		res.s.energy -= PENALTY_HIT
 		return res
 	} else if val <= RANGE_SOLAR_MAX {
-		// Solar: enter, gain energy, drain tile.
+		// Solar: enter, gain energy, CONSUME the tile (turn to void).
+		// This forces sparks to become nomadic and prevents infinite camping.
 		res.dest_x, res.dest_y, res.dest_idx = nx, ny, nidx
 		efficiency := (f32(val) - 128.0) / 64.0
 		gain := SOLAR_BASE_GAIN + efficiency*solar_bonus_max
 		res.s.energy += gain
-		res.do_solar_drain = true
-		res.solar_idx = nidx
+		
+		// NEW: Instead of draining, we destroy the solar tile completely
+		res.do_store = true
+		res.store_idx = nidx
+		res.store_value = RANGE_VOID_MAX // Turn to Void (Empty)
+		
 		return res
 	}
 
@@ -836,29 +844,31 @@ attempt_with_dir :: proc(w: ^Byte_World, s0: Spark, dirx, diry: int) -> Attempt_
 			res.s.dx, res.s.dy = -res.s.dy, res.s.dx
 		}
 
-	case OP_SWAP:
-		ahead_val := w.grid[ahead_idx]
+	case OP_SENSE:
+		// "Sonar": Look 3 cells ahead.
+		// If Wall -> Register = 0
+		// If Solar -> Register = 255
+		// If Empty -> Register = 128
+		// If Spark (Occupied) -> Register = 50
 		
-		// Determine cost based on what we are swapping with
-		swap_cost := COST_WRITE
-		if ahead_val > RANGE_VOID_MAX && ahead_val <= RANGE_WALL_MAX {
-			swap_cost = COST_WRITE_WALL
+		dist := 3
+		scan_x := wrap_i(res.s.x + (res.s.dx * dist), w.size)
+		scan_y := wrap_i(res.s.y + (res.s.dy * dist), w.size)
+		scan_idx := idx_of(w.size, scan_x, scan_y)
+		
+		target_val := w.grid[scan_idx]
+		result: u8 = 128 // Default Void
+		
+		if w.occ_stamp[scan_idx] == w.occ_gen {
+			result = 50 // Detected Life
+		} else if target_val > RANGE_VOID_MAX && target_val <= RANGE_WALL_MAX {
+			result = 0 // Detected Obstacle
+		} else if target_val > RANGE_WALL_MAX && target_val <= RANGE_SOLAR_MAX {
+			result = 255 // Detected Food
 		}
 		
-		// If we have energy, perform the swap
-		if res.s.energy > swap_cost {
-			// Atomic exchange: Register <-> Grid[Ahead]
-			// 1. Update Spark Register (immediate effect)
-			old_register := res.s.register
-			res.s.register = ahead_val
-			
-			// 2. Schedule Grid Update (deferred effect)
-			res.do_store = true
-			res.store_idx = ahead_idx
-			res.store_value = old_register
-			
-			res.s.energy -= swap_cost
-		}
+		res.s.register = result
+		res.s.energy -= COST_MATH // Cheap operation, encourage using it
 
 	case OP_PICKUP:
 		ahead_val := w.grid[ahead_idx]
@@ -921,11 +931,44 @@ try_spawn_child_adjacent :: proc(w: ^Byte_World, parent_x, parent_y: int, child0
 	return false, child0
 }
 
+environmental_physics_step :: proc(w: ^Byte_World) {
+	// Stochastic update: We don't update every cell every tick (too slow).
+	// We pick N random cells to apply environmental physics.
+	
+	for _ in 0..<SOLAR_REGROWTH_RATE {
+		idx := int(rng_u32_bounded(&w.rng, u32(w.size * w.size)))
+		val := w.grid[idx]
+		alpha := w.alpha[idx]
+
+		// 1. Solar Regrowth (Nature reclaiming the void)
+		// Only Void tiles can grow into Solar.
+		if val <= RANGE_VOID_MAX {
+			if rng_u32_bounded(&w.rng, SOLAR_REGROWTH_CHANCE) == 0 {
+				// Grow a weak solar tile
+				w.grid[idx] = u8(rng_int_inclusive(&w.rng, int(RANGE_WALL_MAX) + 1, int(RANGE_SOLAR_MAX)))
+			}
+		}
+
+		// 2. Heat Damage (Entropy)
+		// If a cell is being executed constantly (high alpha), the "machinery" breaks.
+		// It turns into a Wall (slag).
+		if alpha > HEAT_DAMAGE_THRESHOLD {
+			if rng_u32_bounded(&w.rng, HEAT_DAMAGE_CHANCE) == 0 {
+				w.grid[idx] = RANGE_WALL_MAX // Becomes a wall
+				w.alpha[idx] = 0.0 // Reset heat
+			}
+		}
+	}
+}
+
 byte_world_step :: proc(w: ^Byte_World) {
 	shuffle_sparks(spark_buf_slice(&w.sparks), &w.rng)
 
 	spark_buf_clear(&w.sparks_next)
 	occ_begin_step(w)
+	
+	// --- NEW: Run Environmental Physics ---
+	environmental_physics_step(w)
 
 	// Decay alpha for all cells (emphasizes actively used code paths)
 	for i in 0..<len(w.alpha) {
@@ -969,9 +1012,6 @@ byte_world_step :: proc(w: ^Byte_World) {
 				if s.energy > ENERGY_CAP { s.energy = ENERGY_CAP }
 
 				// Commit deferred grid mutations now that we actually entered/stayed.
-				if attempt.do_solar_drain {
-					w.grid[attempt.solar_idx] -= SOLAR_DRAIN_PER_HARVEST
-				}
 				if attempt.do_store {
 					w.grid[attempt.store_idx] = attempt.store_value
 				}
@@ -993,11 +1033,23 @@ byte_world_step :: proc(w: ^Byte_World) {
 				blocked = true
 			}
 		} else {
-			// Parent won't persist; still execute physical/op effects, but don't claim occupancy.
-			s = s_attempt
-			if attempt.do_solar_drain {
-				w.grid[attempt.solar_idx] -= SOLAR_DRAIN_PER_HARVEST
+			// Parent won't persist (starved or old age).
+			// --- NEW: CORPSE RECYCLING ---
+			// The spark has died. We deposit its remaining energy into the grid as Solar.
+			if s0.energy > 10.0 {
+				// Determine how much energy to deposit (convert float energy to byte intensity)
+				// Map energy 0..100 to range 128..191
+				solar_val := u8(clamp(i32(128.0 + (s0.energy / 2.0)), 129, 191))
+				
+				// Overwrite the cell where it died with Biomass (Solar)
+				// Only if it's not a wall
+				if w.grid[current_idx] <= RANGE_VOID_MAX {
+					w.grid[current_idx] = solar_val
+				}
 			}
+			
+			// Still execute physical/op effects (death rattle)
+			s = s_attempt
 			if attempt.do_store {
 				w.grid[attempt.store_idx] = attempt.store_value
 			}
@@ -1028,6 +1080,14 @@ byte_world_step :: proc(w: ^Byte_World) {
 					// Apply loot even when staying in place
 					s_stay.energy += loot
 					if s_stay.energy > ENERGY_CAP { s_stay.energy = ENERGY_CAP }
+				}
+			} else {
+				// --- NEW: CORPSE RECYCLING (Blocked Death) ---
+				if s0.energy > 10.0 {
+					solar_val := u8(clamp(i32(128.0 + (s0.energy / 2.0)), 129, 191))
+					if w.grid[current_idx] <= RANGE_VOID_MAX {
+						w.grid[current_idx] = solar_val
+					}
 				}
 			}
 
@@ -1093,7 +1153,7 @@ color_from_cell_value :: proc(v: u8, alpha: f32) -> rl.Color {
 		return rl.Color{255, 100, 100, a}
 	case OP_BRANCH: // 207: Hot Pink (conditional)
 		return rl.Color{255, 20, 147, a}
-	case OP_SWAP:   // 208: Violet (atomic exchange/transport)
+	case OP_SENSE:  // 208: Violet (sonar/sense ahead)
 		return rl.Color{138, 43, 226, a}
 	case OP_PICKUP: // 209: Teal (pickup cargo)
 		return rl.Color{0, 200, 200, a}
@@ -1720,8 +1780,8 @@ main :: proc() {
 		legend_x += 50
 		rl.DrawText("BRANCH", legend_x, hud_y, body_font_size, rl.Color{255, 20, 147, 255}) // Hot Pink
 		legend_x += 80
-		rl.DrawText("SWAP", legend_x, hud_y, body_font_size, rl.Color{138, 43, 226, 255}) // Violet
-		legend_x += 60
+		rl.DrawText("SENSE", legend_x, hud_y, body_font_size, rl.Color{138, 43, 226, 255}) // Violet
+		legend_x += 70
 		rl.DrawText("PICKUP", legend_x, hud_y, body_font_size, rl.Color{0, 200, 200, 255}) // Teal
 		legend_x += 80
 		rl.DrawText("DROP", legend_x, hud_y, body_font_size, rl.Color{200, 100, 0, 255}) // Brown/Orange
