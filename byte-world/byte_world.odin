@@ -5,6 +5,7 @@ import rl "vendor:raylib"
 import "core:time"
 import "core:os"
 import "core:fmt"
+import "core:math"
 
 // --------------------------------------------
 // Byte-Physics World (Odin port of byte-world.md)
@@ -34,6 +35,19 @@ PENALTY_BLOCKED : f32 = 0.5 // Damage: cost when trying to move into an occupied
 SOLAR_BASE_GAIN : f32 = 0.0 // Minimum energy from a solar tile
 solar_bonus_max_setting : f32 = 20.0 // Max solar bonus (adjustable via slider, when few sparks)
 solar_bonus_max : f32 = 20.0 // Actual solar bonus (computed dynamically based on spark count)
+
+// Auto-Solar Mode (Seasons/Tides)
+auto_solar_enabled : bool = false  // Toggle automatic solar variation
+auto_solar_time : f32 = 0.0        // Phase accumulator for smooth variation
+auto_solar_speed : f32 = 0.05      // Speed multiplier for the cycle (adjustable)
+auto_solar_amplitude : f32 = 15.0  // How much to vary (0 to amplitude)
+auto_solar_base : f32 = 10.0       // Minimum value (center point)
+
+// Auto-Injection Mode (Immigration/Panspermia)
+auto_inject_enabled : bool = false  // Toggle automatic spark injection
+auto_inject_timer : f32 = 0.0       // Time accumulator until next injection
+auto_inject_interval : f32 = 60.0   // Seconds between injections (adjustable)
+auto_inject_count : int = 5000      // Number of sparks to inject each time (adjustable)
 SOLAR_DRAIN_PER_HARVEST  : u8 = 2 // When a spark steps onto solar
 
 ENERGY_CAP : f32 = 1000.0
@@ -319,6 +333,25 @@ abs :: proc(x: f32) -> f32 {
 
 abs_int :: proc(x: int) -> int {
 	return x if x >= 0 else -x
+}
+
+// Smooth cyclic function for natural-looking variation (like tides or seasons)
+// Combines multiple sine waves at different frequencies for organic patterns
+smooth_solar_cycle :: proc(time: f32) -> f32 {
+	// Primary cycle (slow, like seasons)
+	wave1 := math.sin(time * 0.3) * 0.5
+	
+	// Secondary cycle (medium speed, like lunar phases)
+	wave2 := math.sin(time * 0.7) * 0.3
+	
+	// Tertiary cycle (faster, like daily variation)
+	wave3 := math.sin(time * 1.5) * 0.2
+	
+	// Combine waves (normalized to 0..1 range)
+	combined := wave1 + wave2 + wave3
+	normalized := (combined + 1.0) * 0.5  // Convert from [-1,1] to [0,1]
+	
+	return normalized
 }
 
 wrap_i :: proc(i, n: int) -> int {
@@ -1642,6 +1675,19 @@ main :: proc() {
 			auto_pattern_mode = !auto_pattern_mode
 			fmt.println(auto_pattern_mode ? "Auto-pattern mode enabled" : "Manual pattern mode enabled")
 		}
+		
+		// 'G' to toggle auto-solar mode (Generates tides/seasons)
+		if rl.IsKeyPressed(.G) {
+			auto_solar_enabled = !auto_solar_enabled
+			fmt.println(auto_solar_enabled ? "Auto-Solar mode enabled (Tides/Seasons)" : "Manual Solar mode enabled")
+		}
+		
+		// 'J' to toggle auto-injection mode (periodic Immigration/Panspermia)
+		if rl.IsKeyPressed(.J) {
+			auto_inject_enabled = !auto_inject_enabled
+			auto_inject_timer = 0.0 // Reset timer when toggling
+			fmt.println(auto_inject_enabled ? "Auto-Injection mode enabled (Immigration/Panspermia)" : "Auto-Injection mode disabled")
+		}
 
 		// '[' and ']' to navigate through auto-patterns
 		if auto_pattern_mode {
@@ -1691,6 +1737,32 @@ main :: proc() {
 		if zoom < 0.25 { zoom = 0.25 }
 		if zoom > 64.0 { zoom = 64.0 }
 
+		// Auto-Solar Mode: Smooth cyclic variation (like tides/seasons)
+		if auto_solar_enabled {
+			auto_solar_time += dt * auto_solar_speed
+			cycle_value := smooth_solar_cycle(auto_solar_time)
+			// Map cycle (0..1) to (base .. base+amplitude)
+			solar_bonus_max_setting = auto_solar_base + (cycle_value * auto_solar_amplitude)
+		}
+		
+		// Auto-Injection Mode: Periodic spark injection (immigration/panspermia events)
+		if auto_inject_enabled {
+			auto_inject_timer += dt
+			if auto_inject_timer >= auto_inject_interval {
+				auto_inject_timer = 0.0
+				// Inject sparks
+				injected := 0
+				for _ in 0..<auto_inject_count {
+					if spawn_spark_into(&world, &world.sparks) {
+						injected += 1
+					} else {
+						break
+					}
+				}
+				fmt.println("Auto-Injection:", injected, "sparks injected (panspermia event)")
+			}
+		}
+		
 		// Update solar bonus based on spark population (self-regulating)
 		// When spark count is low, solar bonus is high (helps recovery)
 		// When spark count approaches cap, solar bonus approaches zero (limits growth)
@@ -1757,7 +1829,7 @@ main :: proc() {
 		hud_y += title_font_size + pad_y
 		rl.DrawText("SPACE: pause   N: step   R: reseed   T: tile-patterns   I: inject 5k   +/-: steps/frame   Ctrl+Wheel: zoom   Arrows: pan   P: pixel-perfect   C: trails   F: reset view", hud_x, hud_y, body_font_size, rl.RAYWHITE)
 		hud_y += body_font_size + 2
-		rl.DrawText("RIGHT-DRAG: save   MIDDLE/L: paste   1-9: manual slots   A: toggle auto-mode   [/]: browse auto   D: detect   S: snapshot", hud_x, hud_y, body_font_size, rl.RAYWHITE)
+		rl.DrawText("RIGHT-DRAG: save   MIDDLE/L: paste   1-9: manual slots   A: toggle auto-mode   [/]: browse auto   D: detect   S: snapshot   G: auto-solar   J: auto-inject", hud_x, hud_y, body_font_size, rl.RAYWHITE)
 		hud_y += body_font_size + 2
 		
 		// Draw OP code legend with actual colors
@@ -1793,7 +1865,17 @@ main :: proc() {
 			pattern_display = fmt.tprintf("auto_pattern_%d.dat [%c/%c]", auto_pattern_index, '[', ']')
 		}
 		mode_indicator := auto_pattern_mode ? "AUTO" : "MANUAL"
-		rl.DrawText(rl.TextFormat("tick=%d   sparks=%d/%d   steps/frame=%d   zoom=%.2f   trails=%s   [%s: %s]", world.tick, world.sparks.count, int(SPARK_CAP), steps_per_frame, zoom, show_trails ? "ON" : "OFF", cstring(raw_data(mode_indicator)), cstring(raw_data(pattern_display))), hud_x, hud_y, body_font_size, rl.RAYWHITE)
+		
+		// Build status indicators for auto modes
+		status_extras := ""
+		if auto_solar_enabled {
+			status_extras = fmt.tprintf("%s  [Solar:AUTO]", status_extras)
+		}
+		if auto_inject_enabled {
+			status_extras = fmt.tprintf("%s  [Inject:%.0fs]", status_extras, auto_inject_interval - auto_inject_timer)
+		}
+		
+		rl.DrawText(rl.TextFormat("tick=%d   sparks=%d/%d   steps/frame=%d   zoom=%.2f   trails=%s   [%s: %s]%s", world.tick, world.sparks.count, int(SPARK_CAP), steps_per_frame, zoom, show_trails ? "ON" : "OFF", cstring(raw_data(mode_indicator)), cstring(raw_data(pattern_display)), cstring(raw_data(status_extras))), hud_x, hud_y, body_font_size, rl.RAYWHITE)
 
 		// Slider helper procedure
 		draw_slider_f32 :: proc(x, y, width, height: i32, value: ^f32, min_val, max_val: f32, label: cstring, mouse_pos: rl.Vector2) {
@@ -1859,13 +1941,18 @@ main :: proc() {
 		slider_min: f32 = 0.0
 		slider_max: f32 = 50.0
 		slider_fill_width := (solar_bonus_max_setting - slider_min) / (slider_max - slider_min) * f32(slider_width)
+		// Change color if auto-solar is enabled
+		fill_color := auto_solar_enabled ? rl.Color{200, 150, 50, 255} : rl.Color{100, 200, 100, 255}
 		slider_fill_rect := rl.Rectangle{f32(slider_x), f32(slider_y), slider_fill_width, f32(slider_height)}
-		rl.DrawRectangleRec(slider_fill_rect, rl.Color{100, 200, 100, 255})
+		rl.DrawRectangleRec(slider_fill_rect, fill_color)
 		handle_x := f32(slider_x) + slider_fill_width
+		handle_color := auto_solar_enabled ? rl.GOLD : rl.RAYWHITE
 		handle_rect := rl.Rectangle{handle_x - 5, f32(slider_y) - 2, 10, f32(slider_height) + 4}
-		rl.DrawRectangleRec(handle_rect, rl.RAYWHITE)
-		rl.DrawText(rl.TextFormat("Solar Max: %.1f (actual: %.1f)", solar_bonus_max_setting, solar_bonus_max), slider_x, slider_y + slider_height + 5, 14, rl.RAYWHITE)
-		if rl.IsMouseButtonDown(.LEFT) {
+		rl.DrawRectangleRec(handle_rect, handle_color)
+		solar_label := auto_solar_enabled ? "Solar Max [AUTO]:" : "Solar Max:"
+		rl.DrawText(rl.TextFormat("%s %.1f (actual: %.1f)", cstring(raw_data(solar_label)), solar_bonus_max_setting, solar_bonus_max), slider_x, slider_y + slider_height + 5, 14, rl.RAYWHITE)
+		// Only allow manual adjustment when auto-solar is disabled
+		if !auto_solar_enabled && rl.IsMouseButtonDown(.LEFT) {
 			if rl.CheckCollisionPointRec(mouse_pos, slider_rect) {
 				local_x := mouse_pos.x - f32(slider_x)
 				if local_x < 0 { local_x = 0 }
@@ -1873,6 +1960,30 @@ main :: proc() {
 				t := local_x / f32(slider_width)
 				solar_bonus_max_setting = slider_min + t * (slider_max - slider_min)
 			}
+		}
+		
+		// Auto-Solar Parameter Sliders (only show when auto-solar is enabled)
+		if auto_solar_enabled {
+			slider_y += 45
+			rl.DrawText("--- Auto-Solar (Tides/Seasons) ---", slider_x, slider_y - 5, 14, rl.GOLD)
+			slider_y += 20
+			draw_slider_f32(slider_x, slider_y, slider_width, slider_height, &auto_solar_speed, 0.01, 0.5, "Speed", mouse_pos)
+			slider_y += 40
+			draw_slider_f32(slider_x, slider_y, slider_width, slider_height, &auto_solar_amplitude, 5.0, 40.0, "Amplitude", mouse_pos)
+			slider_y += 40
+			draw_slider_f32(slider_x, slider_y, slider_width, slider_height, &auto_solar_base, 0.0, 30.0, "Base Level", mouse_pos)
+		}
+		
+		// Auto-Injection Parameter Sliders (only show when auto-inject is enabled)
+		if auto_inject_enabled {
+			slider_y += 45
+			time_left := auto_inject_interval - auto_inject_timer
+			countdown_text := rl.TextFormat("--- Auto-Inject (%.0fs) ---", time_left)
+			rl.DrawText(countdown_text, slider_x, slider_y - 5, 14, rl.LIME)
+			slider_y += 20
+			draw_slider_f32(slider_x, slider_y, slider_width, slider_height, &auto_inject_interval, 10.0, 300.0, "Interval (sec)", mouse_pos)
+			slider_y += 40
+			draw_slider_int(slider_x, slider_y, slider_width, slider_height, &auto_inject_count, 100, 20000, "Spark Count", mouse_pos)
 		}
 		
 		// Pattern Detection Sliders (only show when detection is active)
