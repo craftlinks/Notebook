@@ -77,6 +77,10 @@ OP_TUNNEL : u8 = 211 // Quantum Leap: Move 2 cells forward, skipping immediate n
 OP_MEME   : u8 = 212 // Information Contagion: XOR Register with spark ahead (bidirectional)
 OP_RAND   : u8 = 213 // The Oracle: Register = Random(0..255)
 OP_MARK   : u8 = 214 // Pheromones: Write Register to current cell (stigmergy)
+// Minimal opcodes (sensory input and data management)
+OP_THERMAL  : u8 = 215 // Heat Vision: Register = CurrentCell.Alpha (0..255)
+OP_CROWD    : u8 = 216 // Social Density: Register = Number of adjacent sparks (0..8)
+OP_SWAP_INV : u8 = 217 // Internal Data Bus: Swap Register <-> Inventory
 
 SPARK_COUNT_MIN : int = 150000
 
@@ -1013,6 +1017,40 @@ attempt_with_dir :: proc(w: ^Byte_World, s0: Spark, dirx, diry: int) -> Attempt_
 			}
 		}
 
+	case OP_THERMAL:
+		// Heat Vision: Read alpha from current cell (s.x, s.y)
+		// Convert float 0..1 to byte 0..255
+		curr_idx := idx_of(w.size, s.x, s.y)
+		res.s.register = u8(w.alpha[curr_idx] * 255.0)
+		res.s.energy -= COST_MATH
+
+	case OP_CROWD:
+		// Social Density: Count how many of the 8 neighbors are occupied by sparks
+		count: u8 = 0
+		// Iterate 3x3 grid centered on spark
+		for dy := -1; dy <= 1; dy += 1 {
+			for dx := -1; dx <= 1; dx += 1 {
+				if dx == 0 && dy == 0 { continue } // Skip self
+				
+				nx := wrap_i(s.x + dx, w.size)
+				ny := wrap_i(s.y + dy, w.size)
+				nidx := idx_of(w.size, nx, ny)
+				
+				if w.occ_stamp[nidx] == w.occ_gen {
+					count += 1
+				}
+			}
+		}
+		res.s.register = count
+		res.s.energy -= COST_MATH
+
+	case OP_SWAP_INV:
+		// Internal Data Bus: Swap Register and Inventory values
+		tmp := res.s.register
+		res.s.register = res.s.inventory
+		res.s.inventory = tmp
+		res.s.energy -= COST_MATH
+
 	case:
 		// Unknown op tile: treated as permeable no-op.
 	}
@@ -1280,6 +1318,12 @@ color_from_cell_value :: proc(v: u8, alpha: f32) -> rl.Color {
 		return rl.Color{220, 220, 220, a}
 	case OP_MARK:   // 214: Deep Orange (pheromone trail)
 		return rl.Color{255, 80, 0, a}
+	case OP_THERMAL:  // 215: Dark Red (Infrared look)
+		return rl.Color{139, 0, 0, a}
+	case OP_CROWD:    // 216: White (Population/Census)
+		return rl.Color{200, 200, 200, a}
+	case OP_SWAP_INV: // 217: Gold (Cargo manipulation)
+		return rl.Color{218, 165, 32, a}
 	case:
 		// Unknown ops (192-255): Default dim magenta
 		return rl.Color{150, 0, 100, a}
