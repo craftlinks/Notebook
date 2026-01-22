@@ -20,3 +20,7 @@ pnpm-debug.log*
 
 # jetbrains setting folder
 .idea/
+
+prebiotic-lambda/lamb/grid_experiments_*
+prebiotic-lambda/lamb/experiments_*
+prebiotic-lambda/lamb/external/*
