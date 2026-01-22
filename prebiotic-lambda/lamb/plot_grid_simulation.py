@@ -40,9 +40,10 @@ def load_log(filepath: Path) -> pd.DataFrame:
 
 
 def plot_detailed(df: pd.DataFrame, output_path: Path, title: str = "Grid Simulation") -> None:
-    """Create a detailed 6-panel plot for Metabolic Model."""
-    # Check if we have metabolic stats
+    """Create a detailed 6-panel plot for Metabolic Model with phenotypic behaviors."""
+    # Check if we have metabolic stats and phenotypic behavior stats
     has_metabolic = 'deaths_age' in df.columns or 'cosmic_spawns' in df.columns
+    has_phenotypic = 'attacks' in df.columns or 'evasions' in df.columns
     
     if has_metabolic:
         fig, axes = plt.subplots(2, 3, figsize=(18, 10))
@@ -60,6 +61,8 @@ def plot_detailed(df: pd.DataFrame, output_path: Path, title: str = "Grid Simula
         'movements': '#1abc9c',
         'deaths': '#c0392b',
         'spawns': '#f39c12',
+        'attacks': '#e74c3c',
+        'evasions': '#3498db',
     }
     
     # 1. Population over time
@@ -94,19 +97,25 @@ def plot_detailed(df: pd.DataFrame, output_path: Path, title: str = "Grid Simula
     ax3.set_ylim(0, 105)
     ax3.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, p: f'{x/1000:.0f}k' if x >= 1000 else f'{x:.0f}'))
     
-    # 4. Reactions (if available)
+    # 4. Reactions and Phenotypic Behaviors (if available)
     if has_metabolic:
         ax4 = axes[1, 0]
     else:
         ax4 = axes[1, 1]
     if 'reactions_success' in df.columns:
-        ax4.plot(df['step'], df['reactions_success'], color=colors['reactions'], linewidth=1.5, label='Successful')
+        ax4.plot(df['step'], df['reactions_success'], color=colors['reactions'], linewidth=1.5, label='Replications')
         if 'reactions_diverged' in df.columns:
             ax4.plot(df['step'], df['reactions_diverged'], color=colors['diverged'], linewidth=1.5, label='Diverged')
+        # Add phenotypic behavior lines if available
+        if has_phenotypic:
+            if 'attacks' in df.columns:
+                ax4.plot(df['step'], df['attacks'], color=colors['attacks'], linewidth=1.5, linestyle='--', label='Attacks')
+            if 'evasions' in df.columns:
+                ax4.plot(df['step'], df['evasions'], color=colors['evasions'], linewidth=1.5, linestyle=':', label='Evasions')
         ax4.set_xlabel('Step')
-        ax4.set_ylabel('Cumulative Reactions')
-        ax4.set_title('Reaction Statistics')
-        ax4.legend(loc='upper left')
+        ax4.set_ylabel('Cumulative Count')
+        ax4.set_title('Reactions & Behaviors')
+        ax4.legend(loc='upper left', fontsize='small')
         ax4.grid(True, alpha=0.3)
         ax4.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, p: f'{x/1000:.0f}k' if x >= 1000 else f'{x:.0f}'))
     elif 'movements' in df.columns:

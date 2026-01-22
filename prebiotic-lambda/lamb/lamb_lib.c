@@ -1061,6 +1061,44 @@ bool is_identity(Expr_Index expr) {
     return false;
 }
 
+// Detect Church True: λx.λy.x (selects first argument)
+// Structure: FUN(x, FUN(y, VAR(x)))
+bool is_church_true(Expr_Index expr) {
+    if (expr_slot(expr).kind != EXPR_FUN) return false;
+    
+    Symbol x = expr_slot(expr).as.fun.param;
+    Expr_Index inner = expr_slot(expr).as.fun.body;
+    
+    if (expr_slot(inner).kind != EXPR_FUN) return false;
+    
+    // Symbol y = expr_slot(inner).as.fun.param;  // Not needed for check
+    Expr_Index body = expr_slot(inner).as.fun.body;
+    
+    // Body should be VAR(x)
+    if (expr_slot(body).kind != EXPR_VAR) return false;
+    
+    return symbol_eq(expr_slot(body).as.var, x);
+}
+
+// Detect Church False: λx.λy.y (selects second argument)
+// Structure: FUN(x, FUN(y, VAR(y)))
+bool is_church_false(Expr_Index expr) {
+    if (expr_slot(expr).kind != EXPR_FUN) return false;
+    
+    // Symbol x = expr_slot(expr).as.fun.param;  // Not needed for check
+    Expr_Index inner = expr_slot(expr).as.fun.body;
+    
+    if (expr_slot(inner).kind != EXPR_FUN) return false;
+    
+    Symbol y = expr_slot(inner).as.fun.param;
+    Expr_Index body = expr_slot(inner).as.fun.body;
+    
+    // Body should be VAR(y)
+    if (expr_slot(body).kind != EXPR_VAR) return false;
+    
+    return symbol_eq(expr_slot(body).as.var, y);
+}
+
 // ============================================================================
 // SHARED HELPERS
 // ============================================================================

@@ -193,7 +193,7 @@ typedef enum { EVAL_DONE, EVAL_LIMIT, EVAL_ERROR } Eval_Result;
 // ============================================================================
 
 // Metabolic Model Constants
-#define MAX_AGE 200
+#define MAX_AGE 50
 // Cosmic ray rate: probability = COSMIC_RAY_RATE / 100000 per empty cell per step
 // For 120x80 grid (~5000 empty cells at 50% density): rate 10 → ~0.5 spawns/step
 #define COSMIC_RAY_RATE 1  // 0.01% per cell → ~0.5 spawns/step on typical grid
@@ -214,12 +214,16 @@ typedef struct {
     int height;
     Cell *cells;
     long steps;
+    int population;       // Cached population count (maintained incrementally)
     // Statistics
     long reactions_success;
     long reactions_diverged;
     long movements;
     long deaths_age;      // Deaths from old age
     long cosmic_spawns;   // Spontaneous generations
+    // Phenotypic behavior statistics (brain-based decision making)
+    long attacks;         // Aggressive: A(B) -> True, A eats B
+    long evasions;        // Evasive: A(B) -> False, A moves away
 } Grid;
 
 // ============================================================================
@@ -367,7 +371,14 @@ size_t gc_dead_count(void);           // Get dead slot count for diagnostics
 // ============================================================================
 
 Expr_Index generate_rich_combinator(int current_depth, int max_depth, const char **env, int env_count);
+Expr_Index generate_ski_combinator(int depth);  // Generate random SKI combinator tree
 bool is_identity(Expr_Index expr);
+
+// Church boolean detection (for phenotypic behavior)
+// True  = λx.λy.x (selects first argument)
+// False = λx.λy.y (selects second argument)
+bool is_church_true(Expr_Index expr);
+bool is_church_false(Expr_Index expr);
 
 // ============================================================================
 // FUNCTION PROTOTYPES - Shared Helpers

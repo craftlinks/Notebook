@@ -1018,7 +1018,7 @@ bool is_identity(Expr_Index expr);
 void expr_display_no_tags(Expr_Index expr, String_Builder *sb);
 
 // Metabolic Model Constants
-#define MAX_AGE 100
+#define MAX_AGE 50
 #define COSMIC_RAY_RATE 0  // Disabled by default. Set to 5 for 0.5% spawn chance per empty cell per step
 
 typedef struct {
