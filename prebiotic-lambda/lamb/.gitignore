@@ -1,0 +1,11 @@
+lamb
+lamb.exe
+*.o
+*.a
+*.exe
+lamb_view
+lamb_repl
+external/raylib/src/*.o
+external/raylib/src/*.a
+grid_experiments_*
+experiments_*

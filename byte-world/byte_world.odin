@@ -72,6 +72,11 @@ OP_BRANCH : u8 = 207 // If Register < 128 -> LEFT else RIGHT
 OP_SENSE  : u8 = 208 // Sonar: Sense 3 cells ahead (Wall=0, Solar=255, Empty=128, Spark=50)
 OP_PICKUP : u8 = 209 // Inventory = Grid[Ahead], Grid[Ahead] = VOID (if inventory empty)
 OP_DROP   : u8 = 210 // Grid[Ahead] = Inventory, Inventory = EMPTY (if grid ahead is VOID)
+// Esoteric opcodes (introducing chaos and emergent complexity)
+OP_TUNNEL : u8 = 211 // Quantum Leap: Move 2 cells forward, skipping immediate neighbor
+OP_MEME   : u8 = 212 // Information Contagion: XOR Register with spark ahead (bidirectional)
+OP_RAND   : u8 = 213 // The Oracle: Register = Random(0..255)
+OP_MARK   : u8 = 214 // Pheromones: Write Register to current cell (stigmergy)
 
 SPARK_COUNT_MIN : int = 150000
 
@@ -933,6 +938,81 @@ attempt_with_dir :: proc(w: ^Byte_World, s0: Spark, dirx, diry: int) -> Attempt_
 			res.s.energy -= COST_WRITE
 		}
 
+	case OP_TUNNEL:
+		// Quantum Leap: Attempt to move 2 cells forward, skipping immediate neighbor
+		// This allows sparks to breach containment and hop over walls
+		dist := 2
+		tx := wrap_i(res.s.x + (res.s.dx * dist), w.size)
+		ty := wrap_i(res.s.y + (res.s.dy * dist), w.size)
+		tidx := idx_of(w.size, tx, ty)
+		
+		tunnel_cost := COST_MOVE * 4.0
+		
+		// Check if landing spot is permeable and unoccupied
+		if is_permeable_for_spawn(w.grid[tidx]) && w.occ_stamp[tidx] != w.occ_gen && res.s.energy > tunnel_cost {
+			// Success: Teleport the spark (by updating result destination)
+			// Note: The main loop will handle the actual position update
+			res.dest_x = tx
+			res.dest_y = ty
+			res.dest_idx = tidx
+			res.s.energy -= tunnel_cost
+		} else {
+			// Fizzle: Can't tunnel, pay small penalty
+			res.s.energy -= COST_MOVE
+		}
+
+	case OP_MEME:
+		// Information Contagion: XOR register with spark ahead (if exists)
+		// This creates "ideologies" and "behavior viruses" without killing
+		if w.occ_stamp[ahead_idx] == w.occ_gen {
+			owner_id := w.occ_owner[ahead_idx]
+			// Read from the 'next' buffer since they claimed the spot
+			victim := &w.sparks_next.data[owner_id]
+			
+			// Bidirectional mixing: XOR both registers
+			// This changes victim's behavior without killing them
+			temp := res.s.register ~ victim.register
+			victim.register = victim.register ~ res.s.register
+			res.s.register = temp
+			
+			res.s.energy -= COST_MATH
+		} else {
+			// No one ahead, just a cheap no-op
+			res.s.energy -= COST_MATH
+		}
+
+	case OP_RAND:
+		// The Oracle: Pure stochasticity to break loops and enable probabilistic behavior
+		res.s.register = u8(rng_u32_bounded(&w.rng, 256))
+		res.s.energy -= COST_MATH
+
+	case OP_MARK:
+		// Pheromones/Stigmergy: Write Register to CURRENT cell (where spark is standing)
+		// This enables ant-colony style trail-following behavior
+		curr_idx := idx_of(w.size, s.x, s.y)
+		curr_val := w.grid[curr_idx]
+		
+		write_cost := COST_WRITE
+		// Overwriting walls costs more
+		if curr_val > RANGE_VOID_MAX && curr_val <= RANGE_WALL_MAX {
+			write_cost = COST_WRITE_WALL
+		}
+		
+		// Check if we're trying to write a SOLAR value
+		is_solar_write := res.s.register > RANGE_WALL_MAX && res.s.register <= RANGE_SOLAR_MAX
+		can_write_solar := !is_solar_write || res.s.solar_writes < SPARK_MAX_SOLAR_WRITES
+		
+		if res.s.energy > write_cost && can_write_solar {
+			res.do_store = true
+			res.store_idx = curr_idx
+			res.store_value = res.s.register
+			res.s.energy -= write_cost
+			// Track SOLAR writes
+			if is_solar_write {
+				res.s.solar_writes += 1
+			}
+		}
+
 	case:
 		// Unknown op tile: treated as permeable no-op.
 	}
@@ -1192,6 +1272,14 @@ color_from_cell_value :: proc(v: u8, alpha: f32) -> rl.Color {
 		return rl.Color{0, 200, 200, a}
 	case OP_DROP:   // 210: Brown/Orange (drop cargo)
 		return rl.Color{200, 100, 0, a}
+	case OP_TUNNEL: // 211: Electric Purple (quantum leap)
+		return rl.Color{200, 0, 255, a}
+	case OP_MEME:   // 212: Neon Green (information contagion)
+		return rl.Color{0, 255, 100, a}
+	case OP_RAND:   // 213: White/Silver (stochasticity)
+		return rl.Color{220, 220, 220, a}
+	case OP_MARK:   // 214: Deep Orange (pheromone trail)
+		return rl.Color{255, 80, 0, a}
 	case:
 		// Unknown ops (192-255): Default dim magenta
 		return rl.Color{150, 0, 100, a}
@@ -1797,7 +1885,7 @@ main :: proc() {
 		title_font_size :: 20
 		body_font_size  :: 18
 		pad_y           :: 6
-		ui_top: i32 = i32(8 + title_font_size + pad_y + (body_font_size+2)*4 + pad_y)
+		ui_top: i32 = i32(8 + title_font_size + pad_y + (body_font_size+2)*5 + pad_y)
 		if ui_top > sh-1 { ui_top = sh-1 }
 
 		src := rl.Rectangle{0, 0, f32(world.size), f32(world.size)}
@@ -1832,7 +1920,7 @@ main :: proc() {
 		rl.DrawText("RIGHT-DRAG: save   MIDDLE/L: paste   1-9: manual slots   A: toggle auto-mode   [/]: browse auto   D: detect   S: snapshot   G: auto-solar   J: auto-inject", hud_x, hud_y, body_font_size, rl.RAYWHITE)
 		hud_y += body_font_size + 2
 		
-		// Draw OP code legend with actual colors
+		// Draw OP code legend with actual colors (Line 1)
 		legend_x := hud_x
 		rl.DrawText("Ops: ", legend_x, hud_y, body_font_size, rl.RAYWHITE)
 		legend_x += 45
@@ -1857,6 +1945,17 @@ main :: proc() {
 		rl.DrawText("PICKUP", legend_x, hud_y, body_font_size, rl.Color{0, 200, 200, 255}) // Teal
 		legend_x += 80
 		rl.DrawText("DROP", legend_x, hud_y, body_font_size, rl.Color{200, 100, 0, 255}) // Brown/Orange
+		hud_y += body_font_size + 2
+		
+		// Draw esoteric opcodes legend (Line 2)
+		legend_x = hud_x + 45
+		rl.DrawText("TUNNEL", legend_x, hud_y, body_font_size, rl.Color{200, 0, 255, 255}) // Electric Purple
+		legend_x += 85
+		rl.DrawText("MEME", legend_x, hud_y, body_font_size, rl.Color{0, 255, 100, 255}) // Neon Green
+		legend_x += 70
+		rl.DrawText("RAND", legend_x, hud_y, body_font_size, rl.Color{220, 220, 220, 255}) // White/Silver
+		legend_x += 65
+		rl.DrawText("MARK", legend_x, hud_y, body_font_size, rl.Color{255, 80, 0, 255}) // Deep Orange
 		hud_y += body_font_size + 2
 		
 		// Display current pattern info based on mode

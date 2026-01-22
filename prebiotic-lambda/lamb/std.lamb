@@ -1,0 +1,35 @@
+id     = \x.x;
+Y      = \f.(\x.f (x x)) (\x.f (x x));
+
+// Booleans
+true   = \x.y.x;
+false  = \x.y.y;
+and    = \x.y.x y false;
+or     = \x.y.x true y;
+not    = \x.x false true;
+xor    = \x.y.x (not y) y;
+if     = id;
+
+// Numerals
+zero   = \f.x.x;
+inc    = \n.f.x.f (n f x);
+one    = inc zero;
+two    = inc one;
+three  = inc two;
+four   = inc three;
+plus   = \n.m.f.x.m f (n f x);
+mult   = \n.m.f.x.m (n f) x;
+
+// Pairs
+pair   = \x.y.f.f x y;
+first  = \p.p true;
+second = \p.p false;
+
+// Lists
+nil    = pair true true;
+isnil  = first;
+cons   = \h.t.pair false (pair h t);
+head   = \l.first (second l);
+tail   = \l.second (second l);
+
+trace_list = Y \rec.\xs.isnil xs nil (cons (#trace (head xs))) (rec (tail xs));
