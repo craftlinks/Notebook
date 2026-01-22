@@ -152,6 +152,47 @@ void gc_compact(Bindings *bindings) {
     free(remap);
 }
 
+
+// ============================================================================
+// HASHING FUNCTIONS (for fast species comparison)
+// ============================================================================
+
+static uint32_t hash_string(const char *str) {
+    uint32_t hash = 5381;
+    int c;
+    while ((c = *str++)) {
+        hash = ((hash << 5) + hash) + (uint32_t)c;
+    }
+    return hash;
+}
+
+// Recursive AST Hasher (No allocation)
+// Walks the GC slots directly to compute a structural ID
+static uint32_t hash_expr(Expr_Index expr) {
+    if (expr.unwrap >= GC.slots.count) return 0;
+    Expr *e = &expr_slot_unsafe(expr);
+    if (!e->live) return 0;
+    
+    uint32_t h = 0;
+    
+    switch (e->kind) {
+    case EXPR_VAR:
+        h = hash_string(e->as.var.label);
+        h = h ^ ((uint32_t)e->as.var.tag * 33);
+        return h;
+    case EXPR_MAG:
+        return hash_string(e->as.mag) ^ 0xAAAAAAAA;
+    case EXPR_FUN:
+        h = hash_string(e->as.fun.param.label);
+        return (h << 3) ^ hash_expr(e->as.fun.body);
+    case EXPR_APP:
+        return (hash_expr(e->as.app.lhs) * 33) ^ 
+               hash_expr(e->as.app.rhs);
+    default: 
+        return 0;
+    }
+}
+
 // ============================================================================
 // GRID FUNCTIONS
 // ============================================================================
@@ -161,11 +202,14 @@ void grid_init(Grid *g, int w, int h) {
     g->width = w;
     g->height = h;
     g->steps = 0;
+    g->population = 0;
     g->reactions_success = 0;
     g->reactions_diverged = 0;
     g->movements = 0;
     g->deaths_age = 0;
     g->cosmic_spawns = 0;
+    g->attacks = 0;
+    g->evasions = 0;
     g->cells = calloc((size_t)(w * h), sizeof(Cell));
     assert(g->cells != NULL);
 }
@@ -191,7 +235,7 @@ int grid_idx(Grid *g, int x, int y) {
     return wy * g->width + wx;
 }
 
-// Populate grid randomly with rich combinators
+// Populate grid randomly with SKI combinators
 void grid_seed(Grid *g, int count, int depth) {
     int placed = 0;
     int attempts = 0;
@@ -203,7 +247,8 @@ void grid_seed(Grid *g, int count, int depth) {
         int idx = grid_idx(g, x, y);
         
         if (!g->cells[idx].occupied) {
-            // Generate a rich combinator, retry if identity
+            // Generate an SKI combinator tree
+            // Skip pure I combinators as they're trivial
             Expr_Index e;
             int sub_attempts = 0;
             do {
@@ -216,20 +261,16 @@ void grid_seed(Grid *g, int count, int depth) {
             g->cells[idx].age = 0;
             g->cells[idx].generation = 0;
             g->cells[idx].cache_valid = false;  // Invalidate cache for new cell
+            g->population++;  // Increment population counter
             placed++;
         }
         attempts++;
     }
 }
 
-// Count occupied cells
+// Return cached population count (O(1) instead of O(n))
 int grid_population(Grid *g) {
-    int count = 0;
-    int total = g->width * g->height;
-    for (int i = 0; i < total; ++i) {
-        if (g->cells[i].occupied) count++;
-    }
-    return count;
+    return g->population;
 }
 
 // The heart of the spatial simulation - METABOLIC MODEL
@@ -263,12 +304,14 @@ void grid_step(Grid *g, Bindings bindings, size_t eval_steps, size_t max_mass) {
             if (g->cells[curr_idx].age > MAX_AGE) {
                 g->cells[curr_idx].occupied = false;
                 g->cells[curr_idx].cache_valid = false;  // Invalidate cache
+                g->population--;
                 g->deaths_age++;
                 continue; // Slot is now empty, skip to next
             }
         }
         
         // --- COSMIC RAYS (Spontaneous Generation) ---
+        // Spawns SKI combinators only - the "chemical" building blocks
         if (!g->cells[curr_idx].occupied) {
             if ((rand() % 100000) < COSMIC_RAY_RATE) {
                 g->cells[curr_idx].atom = generate_rich_combinator(0, 3, NULL, 0);
@@ -276,6 +319,7 @@ void grid_step(Grid *g, Bindings bindings, size_t eval_steps, size_t max_mass) {
                 g->cells[curr_idx].age = 0;
                 g->cells[curr_idx].generation = 0;
                 g->cells[curr_idx].cache_valid = false;  // Invalidate cache
+                g->population++;
                 g->cosmic_spawns++;
             }
             continue; // Empty cell processed, move on
@@ -332,7 +376,8 @@ void grid_step(Grid *g, Bindings bindings, size_t eval_steps, size_t max_mass) {
                 // Divergence/Explosion: The victim B dies from instability
                 // A survives (it was the catalyst)
                 g->cells[target_idx].occupied = false;
-                g->cells[target_idx].cache_valid = false;  // Invalidate cache
+                g->cells[target_idx].cache_valid = false;
+                g->population--;
                 g->reactions_diverged++;
             }
         }
@@ -352,7 +397,17 @@ void grid_step(Grid *g, Bindings bindings, size_t eval_steps, size_t max_mass) {
     }
 }
 
+// Hash comparison for qsort
+static int compare_hashes(const void *a, const void *b) {
+    uint32_t ha = *(const uint32_t*)a;
+    uint32_t hb = *(const uint32_t*)b;
+    if (ha < hb) return -1;
+    if (ha > hb) return 1;
+    return 0;
+}
+
 // Analyze unique species in the grid (returns unique count)
+// OPTIMIZED: Uses hashes instead of string conversion for speed
 size_t grid_analyze(Grid *g, bool verbose) {
     int total = g->width * g->height;
     int pop = grid_population(g);
@@ -362,29 +417,39 @@ size_t grid_analyze(Grid *g, bool verbose) {
         return 0;
     }
     
-    // Snapshot all expressions as strings
-    char **snapshots = malloc((size_t)pop * sizeof(char*));
-    int snap_idx = 0;
-    for (int i = 0; i < total && snap_idx < pop; ++i) {
+    // Collect hashes of all expressions (much faster than string conversion)
+    uint32_t *hashes = malloc((size_t)pop * sizeof(uint32_t));
+    int hash_idx = 0;
+    int most_common_cell = -1;
+    
+    for (int i = 0; i < total && hash_idx < pop; ++i) {
         if (g->cells[i].occupied) {
-            snapshots[snap_idx++] = expr_to_string(g->cells[i].atom);
+            // Use cached hash if available
+            if (!g->cells[i].cache_valid) {
+                g->cells[i].cached_hash = hash_expr(g->cells[i].atom);
+                g->cells[i].cached_mass = expr_mass(g->cells[i].atom);
+                g->cells[i].cache_valid = true;
+            }
+            hashes[hash_idx] = g->cells[i].cached_hash;
+            if (most_common_cell < 0) most_common_cell = i;
+            hash_idx++;
         }
     }
     
-    // Sort to group identical species
-    qsort(snapshots, (size_t)pop, sizeof(char*), compare_strings);
+    // Sort hashes to group identical species
+    qsort(hashes, (size_t)pop, sizeof(uint32_t), compare_hashes);
     
-    // Count unique
+    // Count unique (note: hash collisions may slightly undercount)
     size_t unique = 1;
     size_t max_freq = 1;
     size_t cur_freq = 1;
-    char *most_common = snapshots[0];
+    uint32_t most_common_hash = hashes[0];
     
     for (int i = 1; i < pop; ++i) {
-        if (strcmp(snapshots[i], snapshots[i-1]) != 0) {
+        if (hashes[i] != hashes[i-1]) {
             if (cur_freq > max_freq) {
                 max_freq = cur_freq;
-                most_common = snapshots[i-1];
+                most_common_hash = hashes[i-1];
             }
             unique++;
             cur_freq = 1;
@@ -394,19 +459,25 @@ size_t grid_analyze(Grid *g, bool verbose) {
     }
     if (cur_freq > max_freq) {
         max_freq = cur_freq;
-        most_common = snapshots[pop-1];
+        most_common_hash = hashes[pop-1];
     }
     
     if (verbose) {
         printf("Population:  %d\n", pop);
         printf("Unique:      %zu (%.2f%% diversity)\n", unique, ((float)unique / pop) * 100.0f);
-        printf("Dominant:    %s (%zu, %.2f%%)\n", most_common, max_freq, ((float)max_freq / pop) * 100.0f);
+        
+        // Find and print the most common expression (only when verbose)
+        for (int i = 0; i < total; ++i) {
+            if (g->cells[i].occupied && g->cells[i].cached_hash == most_common_hash) {
+                char *expr_str = expr_to_string(g->cells[i].atom);
+                printf("Dominant:    %s (%zu, %.2f%%)\n", expr_str, max_freq, ((float)max_freq / pop) * 100.0f);
+                free(expr_str);
+                break;
+            }
+        }
     }
     
-    // Cleanup
-    for (int i = 0; i < pop; ++i) free(snapshots[i]);
-    free(snapshots);
-    
+    free(hashes);
     return unique;
 }
 
@@ -416,8 +487,8 @@ void grid_render(Grid *g, bool clear_screen) {
         printf("\033[H\033[J"); // ANSI clear screen
     }
     printf("--- STEP %ld | Pop: %d | React: %ld | Div: %ld | Deaths: %ld | Spawns: %ld ---\n", 
-           g->steps, grid_population(g), g->reactions_success, g->reactions_diverged, 
-           g->deaths_age, g->cosmic_spawns);
+           g->steps, grid_population(g), g->reactions_success, 
+           g->reactions_diverged, g->deaths_age, g->cosmic_spawns);
     
     for (int y = 0; y < g->height; ++y) {
         for (int x = 0; x < g->width; ++x) {
@@ -425,7 +496,13 @@ void grid_render(Grid *g, bool clear_screen) {
             if (!g->cells[idx].occupied) {
                 printf(". ");
             } else {
-                size_t mass = expr_mass(g->cells[idx].atom);
+                // Use cached mass if available
+                if (!g->cells[idx].cache_valid) {
+                    g->cells[idx].cached_mass = expr_mass(g->cells[idx].atom);
+                    g->cells[idx].cached_hash = hash_expr(g->cells[idx].atom);
+                    g->cells[idx].cache_valid = true;
+                }
+                size_t mass = g->cells[idx].cached_mass;
                 char c = '?';
                 
                 // Visualization based on complexity (mass)
@@ -992,9 +1069,9 @@ again:
                 }
                 
                 printf("\n--- FINAL STATE ---\n");
-                printf("Reactions: %ld ok, %ld div | Deaths: %ld | Spawns: %ld\n",
+                printf("Reactions: %ld ok, %ld div | Deaths: %ld\n",
                        active_grid.reactions_success, active_grid.reactions_diverged,
-                       active_grid.deaths_age, active_grid.cosmic_spawns);
+                       active_grid.deaths_age);
                 grid_analyze(&active_grid, true);
                 printf("-------------------\n");
                 fflush(stdout);
